@@ -175,7 +175,7 @@ export default function CreateHabitScreen() {
               </View>
               <View style={styles.rewardDivider} />
               <View style={styles.rewardItem}>
-                <Text style={styles.rewardValue}>+{difficulty === 'hard' ? 3 : difficulty === 'medium' ? 2 : 1}</Text>
+                <Text style={styles.rewardValue}>+{reward.energy}</Text>
                 <Text style={styles.rewardLabel}>ENERGY</Text>
               </View>
             </View>

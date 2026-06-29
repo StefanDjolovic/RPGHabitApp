@@ -1,6 +1,6 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 
-const DATABASE_VERSION = 1;
+const DATABASE_VERSION = 2;
 
 const seedHabits = [
   ['Morning workout', 'Complete 30 minutes', 'hard', 'strength'],
@@ -61,6 +61,91 @@ export async function migrateDatabase(db: SQLiteDatabase) {
         );
       }
     }
+  }
+
+  if (currentVersion < 2) {
+    await db.execAsync(`
+      ALTER TABLE habit_completions
+        ADD COLUMN status TEXT NOT NULL DEFAULT 'complete'
+        CHECK (status IN ('complete', 'undone'));
+
+      ALTER TABLE habit_completions
+        ADD COLUMN updated_at TEXT;
+
+      CREATE TABLE IF NOT EXISTS xp_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        client_event_id TEXT NOT NULL UNIQUE,
+        completion_id INTEGER NOT NULL,
+        transition_number INTEGER NOT NULL,
+        amount INTEGER NOT NULL CHECK (amount != 0),
+        reason TEXT NOT NULL CHECK (reason IN ('completion', 'undo')),
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (completion_id) REFERENCES habit_completions(id) ON DELETE CASCADE,
+        UNIQUE (completion_id, transition_number)
+      );
+
+      CREATE TABLE IF NOT EXISTS attribute_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        client_event_id TEXT NOT NULL UNIQUE,
+        completion_id INTEGER NOT NULL,
+        transition_number INTEGER NOT NULL,
+        attribute TEXT NOT NULL CHECK (attribute IN ('strength', 'intelligence', 'discipline', 'vitality', 'creativity')),
+        amount INTEGER NOT NULL CHECK (amount != 0),
+        reason TEXT NOT NULL CHECK (reason IN ('completion', 'undo')),
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (completion_id) REFERENCES habit_completions(id) ON DELETE CASCADE,
+        UNIQUE (completion_id, transition_number)
+      );
+
+      CREATE TABLE IF NOT EXISTS energy_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        client_event_id TEXT NOT NULL UNIQUE,
+        completion_id INTEGER NOT NULL,
+        transition_number INTEGER NOT NULL,
+        amount INTEGER NOT NULL CHECK (amount != 0),
+        reason TEXT NOT NULL CHECK (reason IN ('completion', 'undo')),
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (completion_id) REFERENCES habit_completions(id) ON DELETE CASCADE,
+        UNIQUE (completion_id, transition_number)
+      );
+
+      INSERT OR IGNORE INTO xp_events (
+        client_event_id, completion_id, transition_number, amount, reason
+      )
+      SELECT
+        'legacy-xp-' || hc.id,
+        hc.id,
+        1,
+        CASE h.difficulty WHEN 'easy' THEN 10 WHEN 'medium' THEN 30 ELSE 80 END,
+        'completion'
+      FROM habit_completions hc
+      JOIN habits h ON h.id = hc.habit_id;
+
+      INSERT OR IGNORE INTO attribute_events (
+        client_event_id, completion_id, transition_number, attribute, amount, reason
+      )
+      SELECT
+        'legacy-attribute-' || hc.id,
+        hc.id,
+        1,
+        h.attribute,
+        CASE h.difficulty WHEN 'easy' THEN 1 WHEN 'medium' THEN 3 ELSE 8 END,
+        'completion'
+      FROM habit_completions hc
+      JOIN habits h ON h.id = hc.habit_id;
+
+      INSERT OR IGNORE INTO energy_events (
+        client_event_id, completion_id, transition_number, amount, reason
+      )
+      SELECT
+        'legacy-energy-' || hc.id,
+        hc.id,
+        1,
+        CASE h.difficulty WHEN 'easy' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END,
+        'completion'
+      FROM habit_completions hc
+      JOIN habits h ON h.id = hc.habit_id;
+    `);
   }
 
   await db.execAsync(`PRAGMA user_version = ${DATABASE_VERSION}`);

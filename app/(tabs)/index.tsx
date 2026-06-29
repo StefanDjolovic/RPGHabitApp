@@ -20,6 +20,11 @@ import {
   rewardByDifficulty,
   setHabitCompletion,
 } from '@/src/database/habit-repository';
+import {
+  getPlayerProgress,
+  MAX_DUNGEON_ENERGY,
+  type PlayerProgress,
+} from '@/src/progression/player-progression';
 
 const difficultyColors = {
   easy: '#68E1A8',
@@ -38,6 +43,23 @@ const attributeIcons: Record<
   creativity: 'palette',
 };
 
+const initialPlayerProgress: PlayerProgress = {
+  level: 1,
+  rankLabel: 'Unawakened',
+  rankShort: 'U',
+  totalXp: 0,
+  xpIntoLevel: 0,
+  xpForNextLevel: 100,
+  dungeonEnergy: 0,
+  attributeXp: {
+    strength: 0,
+    intelligence: 0,
+    discipline: 0,
+    vitality: 0,
+    creativity: 0,
+  },
+};
+
 function formatAttribute(attribute: HabitAttribute) {
   return attribute.charAt(0).toUpperCase() + attribute.slice(1);
 }
@@ -45,13 +67,23 @@ function formatAttribute(attribute: HabitAttribute) {
 export default function TodayScreen() {
   const db = useSQLiteContext();
   const [habits, setHabits] = useState<Habit[]>([]);
+  const [playerProgress, setPlayerProgress] = useState<PlayerProgress>(initialPlayerProgress);
   const [loading, setLoading] = useState(true);
   const completed = useMemo(() => habits.filter((habit) => habit.complete).length, [habits]);
   const progress = habits.length > 0 ? completed / habits.length : 0;
+  const xpProgress =
+    playerProgress.xpForNextLevel > 0
+      ? playerProgress.xpIntoLevel / playerProgress.xpForNextLevel
+      : 1;
 
-  const loadHabits = useCallback(async () => {
+  const loadTodayData = useCallback(async () => {
     try {
-      setHabits(await getTodayHabits(db));
+      const [todayHabits, progressSummary] = await Promise.all([
+        getTodayHabits(db),
+        getPlayerProgress(db),
+      ]);
+      setHabits(todayHabits);
+      setPlayerProgress(progressSummary);
     } finally {
       setLoading(false);
     }
@@ -59,8 +91,8 @@ export default function TodayScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      void loadHabits();
-    }, [loadHabits]),
+      void loadTodayData();
+    }, [loadTodayData]),
   );
 
   const toggleHabit = async (id: number) => {
@@ -74,6 +106,7 @@ export default function TodayScreen() {
 
     try {
       await setHabitCompletion(db, id, nextComplete);
+      setPlayerProgress(await getPlayerProgress(db));
     } catch {
       setHabits((current) =>
         current.map((item) => (item.id === id ? { ...item, complete: habit.complete } : item)),
@@ -113,29 +146,33 @@ export default function TodayScreen() {
           <View style={styles.playerTopRow}>
             <View style={styles.levelBadge}>
               <Text style={styles.levelCaption}>LEVEL</Text>
-              <Text style={styles.levelNumber}>07</Text>
+              <Text style={styles.levelNumber}>{String(playerProgress.level).padStart(2, '0')}</Text>
             </View>
 
             <View style={styles.playerIdentity}>
               <Text style={styles.playerName}>Shadow Candidate</Text>
-              <Text style={styles.playerSubtitle}>Unawakened · Rank E Trial</Text>
+              <Text style={styles.playerSubtitle}>{playerProgress.rankLabel} · Path in progress</Text>
             </View>
 
             <View style={styles.rankBadge}>
-              <Text style={styles.rankLetter}>E</Text>
+              <Text style={styles.rankLetter}>{playerProgress.rankShort}</Text>
             </View>
           </View>
 
           <View style={styles.xpHeader}>
             <Text style={styles.xpLabel}>PLAYER EXP</Text>
-            <Text style={styles.xpValue}>1,840 / 2,300</Text>
+            <Text style={styles.xpValue}>
+              {playerProgress.xpForNextLevel > 0
+                ? `${playerProgress.xpIntoLevel.toLocaleString()} / ${playerProgress.xpForNextLevel.toLocaleString()}`
+                : `${playerProgress.totalXp.toLocaleString()} TOTAL`}
+            </Text>
           </View>
           <View style={styles.progressTrack}>
             <LinearGradient
               colors={['#755BFF', '#44D7FF']}
               end={{ x: 1, y: 0 }}
               start={{ x: 0, y: 0 }}
-              style={[styles.progressFill, { width: '80%' }]}
+              style={[styles.progressFill, { width: `${xpProgress * 100}%` }]}
             />
           </View>
 
@@ -151,7 +188,9 @@ export default function TodayScreen() {
             <View style={styles.quickStatItem}>
               <MaterialCommunityIcons name="lightning-bolt" size={20} color="#63E4FF" />
               <View>
-                <Text style={styles.quickStatValue}>18 / 30</Text>
+                <Text style={styles.quickStatValue}>
+                  {playerProgress.dungeonEnergy} / {MAX_DUNGEON_ENERGY}
+                </Text>
                 <Text style={styles.quickStatLabel}>Dungeon energy</Text>
               </View>
             </View>

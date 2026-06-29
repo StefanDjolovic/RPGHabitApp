@@ -27,6 +27,17 @@ const emptyAttributeXp: Record<HabitAttribute, number> = {
   creativity: 0,
 };
 
+export const INITIAL_PLAYER_PROGRESS: PlayerProgress = {
+  level: 1,
+  rankLabel: 'Unawakened',
+  rankShort: 'U',
+  totalXp: 0,
+  xpIntoLevel: 0,
+  xpForNextLevel: 100,
+  dungeonEnergy: 0,
+  attributeXp: { ...emptyAttributeXp },
+};
+
 export function xpRequiredForNextLevel(level: number) {
   if (level >= MAX_LEVEL) return 0;
   if (level < 10) return 100 + 25 * (level - 1);

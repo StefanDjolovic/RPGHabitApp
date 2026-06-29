@@ -20,8 +20,10 @@ import {
   rewardByDifficulty,
   setHabitCompletion,
 } from '@/src/database/habit-repository';
+import { getActivityStreak } from '@/src/progression/activity-streak';
 import {
   getPlayerProgress,
+  INITIAL_PLAYER_PROGRESS,
   MAX_DUNGEON_ENERGY,
   type PlayerProgress,
 } from '@/src/progression/player-progression';
@@ -43,23 +45,6 @@ const attributeIcons: Record<
   creativity: 'palette',
 };
 
-const initialPlayerProgress: PlayerProgress = {
-  level: 1,
-  rankLabel: 'Unawakened',
-  rankShort: 'U',
-  totalXp: 0,
-  xpIntoLevel: 0,
-  xpForNextLevel: 100,
-  dungeonEnergy: 0,
-  attributeXp: {
-    strength: 0,
-    intelligence: 0,
-    discipline: 0,
-    vitality: 0,
-    creativity: 0,
-  },
-};
-
 function formatAttribute(attribute: HabitAttribute) {
   return attribute.charAt(0).toUpperCase() + attribute.slice(1);
 }
@@ -67,7 +52,8 @@ function formatAttribute(attribute: HabitAttribute) {
 export default function TodayScreen() {
   const db = useSQLiteContext();
   const [habits, setHabits] = useState<Habit[]>([]);
-  const [playerProgress, setPlayerProgress] = useState<PlayerProgress>(initialPlayerProgress);
+  const [playerProgress, setPlayerProgress] = useState<PlayerProgress>(INITIAL_PLAYER_PROGRESS);
+  const [activityStreak, setActivityStreak] = useState(0);
   const [loading, setLoading] = useState(true);
   const completed = useMemo(() => habits.filter((habit) => habit.complete).length, [habits]);
   const progress = habits.length > 0 ? completed / habits.length : 0;
@@ -78,12 +64,14 @@ export default function TodayScreen() {
 
   const loadTodayData = useCallback(async () => {
     try {
-      const [todayHabits, progressSummary] = await Promise.all([
+      const [todayHabits, progressSummary, streak] = await Promise.all([
         getTodayHabits(db),
         getPlayerProgress(db),
+        getActivityStreak(db),
       ]);
       setHabits(todayHabits);
       setPlayerProgress(progressSummary);
+      setActivityStreak(streak);
     } finally {
       setLoading(false);
     }
@@ -106,7 +94,12 @@ export default function TodayScreen() {
 
     try {
       await setHabitCompletion(db, id, nextComplete);
-      setPlayerProgress(await getPlayerProgress(db));
+      const [progressSummary, streak] = await Promise.all([
+        getPlayerProgress(db),
+        getActivityStreak(db),
+      ]);
+      setPlayerProgress(progressSummary);
+      setActivityStreak(streak);
     } catch {
       setHabits((current) =>
         current.map((item) => (item.id === id ? { ...item, complete: habit.complete } : item)),
@@ -180,7 +173,9 @@ export default function TodayScreen() {
             <View style={styles.quickStatItem}>
               <MaterialCommunityIcons name="fire" size={20} color="#FF6D8C" />
               <View>
-                <Text style={styles.quickStatValue}>12 days</Text>
+                <Text style={styles.quickStatValue}>
+                  {activityStreak} {activityStreak === 1 ? 'day' : 'days'}
+                </Text>
                 <Text style={styles.quickStatLabel}>Activity streak</Text>
               </View>
             </View>

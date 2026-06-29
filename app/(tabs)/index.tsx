@@ -1,7 +1,10 @@
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { useMemo, useState } from 'react';
+import { router, type Href, useFocusEffect } from 'expo-router';
+import { useSQLiteContext } from 'expo-sqlite';
+import { useCallback, useMemo, useState } from 'react';
 import {
+  ActivityIndicator,
   Pressable,
   SafeAreaView,
   ScrollView,
@@ -10,75 +13,72 @@ import {
   View,
 } from 'react-native';
 
-type Habit = {
-  id: number;
-  title: string;
-  detail: string;
-  difficulty: 'EASY' | 'MEDIUM' | 'HARD';
-  xp: number;
-  stat: string;
-  icon: keyof typeof MaterialCommunityIcons.glyphMap;
-  complete: boolean;
-};
-
-const initialHabits: Habit[] = [
-  {
-    id: 1,
-    title: 'Morning workout',
-    detail: 'Complete 30 minutes',
-    difficulty: 'HARD',
-    xp: 80,
-    stat: '+8 Strength',
-    icon: 'dumbbell',
-    complete: true,
-  },
-  {
-    id: 2,
-    title: 'Deep work',
-    detail: 'Focus for 45 minutes',
-    difficulty: 'MEDIUM',
-    xp: 30,
-    stat: '+3 Discipline',
-    icon: 'brain',
-    complete: true,
-  },
-  {
-    id: 3,
-    title: 'Read a book',
-    detail: 'Read for 20 minutes',
-    difficulty: 'MEDIUM',
-    xp: 30,
-    stat: '+3 Intelligence',
-    icon: 'book-open-page-variant',
-    complete: false,
-  },
-  {
-    id: 4,
-    title: 'Evening walk',
-    detail: 'Reach 3,000 steps',
-    difficulty: 'EASY',
-    xp: 10,
-    stat: '+1 Vitality',
-    icon: 'walk',
-    complete: false,
-  },
-];
+import {
+  getTodayHabits,
+  Habit,
+  HabitAttribute,
+  rewardByDifficulty,
+  setHabitCompletion,
+} from '@/src/database/habit-repository';
 
 const difficultyColors = {
-  EASY: '#68E1A8',
-  MEDIUM: '#61D4FF',
-  HARD: '#C68CFF',
+  easy: '#68E1A8',
+  medium: '#61D4FF',
+  hard: '#C68CFF',
 };
 
-export default function TodayScreen() {
-  const [habits, setHabits] = useState(initialHabits);
-  const completed = useMemo(() => habits.filter((habit) => habit.complete).length, [habits]);
-  const progress = completed / habits.length;
+const attributeIcons: Record<
+  HabitAttribute,
+  keyof typeof MaterialCommunityIcons.glyphMap
+> = {
+  strength: 'dumbbell',
+  intelligence: 'brain',
+  discipline: 'shield-check',
+  vitality: 'heart-pulse',
+  creativity: 'palette',
+};
 
-  const toggleHabit = (id: number) => {
+function formatAttribute(attribute: HabitAttribute) {
+  return attribute.charAt(0).toUpperCase() + attribute.slice(1);
+}
+
+export default function TodayScreen() {
+  const db = useSQLiteContext();
+  const [habits, setHabits] = useState<Habit[]>([]);
+  const [loading, setLoading] = useState(true);
+  const completed = useMemo(() => habits.filter((habit) => habit.complete).length, [habits]);
+  const progress = habits.length > 0 ? completed / habits.length : 0;
+
+  const loadHabits = useCallback(async () => {
+    try {
+      setHabits(await getTodayHabits(db));
+    } finally {
+      setLoading(false);
+    }
+  }, [db]);
+
+  useFocusEffect(
+    useCallback(() => {
+      void loadHabits();
+    }, [loadHabits]),
+  );
+
+  const toggleHabit = async (id: number) => {
+    const habit = habits.find((item) => item.id === id);
+    if (!habit) return;
+
+    const nextComplete = !habit.complete;
     setHabits((current) =>
-      current.map((habit) => (habit.id === id ? { ...habit, complete: !habit.complete } : habit)),
+      current.map((item) => (item.id === id ? { ...item, complete: nextComplete } : item)),
     );
+
+    try {
+      await setHabitCompletion(db, id, nextComplete);
+    } catch {
+      setHabits((current) =>
+        current.map((item) => (item.id === id ? { ...item, complete: habit.complete } : item)),
+      );
+    }
   };
 
   return (
@@ -96,7 +96,10 @@ export default function TodayScreen() {
             <Text style={styles.heading}>Today</Text>
           </View>
 
-          <Pressable accessibilityLabel="Open profile" style={styles.avatarButton}>
+          <Pressable
+            accessibilityLabel="Open profile"
+            onPress={() => router.push('/profile')}
+            style={styles.avatarButton}>
             <MaterialCommunityIcons name="account" size={26} color="#9BE8FF" />
           </Pressable>
         </View>
@@ -184,21 +187,40 @@ export default function TodayScreen() {
         </View>
 
         <View style={styles.habitList}>
+          {loading ? (
+            <View style={styles.loadingState}>
+              <ActivityIndicator color="#63DFFF" />
+              <Text style={styles.loadingText}>Loading daily quests...</Text>
+            </View>
+          ) : null}
+
+          {!loading && habits.length === 0 ? (
+            <View style={styles.loadingState}>
+              <MaterialCommunityIcons name="sword-cross" size={28} color="#707894" />
+              <Text style={styles.loadingText}>No daily quests yet.</Text>
+            </View>
+          ) : null}
+
           {habits.map((habit) => {
             const accent = difficultyColors[habit.difficulty];
+            const reward = rewardByDifficulty[habit.difficulty];
             return (
               <Pressable
                 accessibilityRole="checkbox"
                 accessibilityState={{ checked: habit.complete }}
                 key={habit.id}
-                onPress={() => toggleHabit(habit.id)}
+                onPress={() => void toggleHabit(habit.id)}
                 style={({ pressed }) => [
                   styles.habitCard,
                   habit.complete && styles.habitCardComplete,
                   pressed && styles.habitCardPressed,
                 ]}>
                 <View style={[styles.habitIcon, { borderColor: `${accent}55` }]}>
-                  <MaterialCommunityIcons name={habit.icon} size={23} color={accent} />
+                  <MaterialCommunityIcons
+                    name={attributeIcons[habit.attribute]}
+                    size={23}
+                    color={accent}
+                  />
                 </View>
 
                 <View style={styles.habitInfo}>
@@ -206,13 +228,17 @@ export default function TodayScreen() {
                     <Text style={[styles.habitTitle, habit.complete && styles.habitTitleComplete]}>
                       {habit.title}
                     </Text>
-                    <Text style={[styles.difficulty, { color: accent }]}>{habit.difficulty}</Text>
+                    <Text style={[styles.difficulty, { color: accent }]}>
+                      {habit.difficulty.toUpperCase()}
+                    </Text>
                   </View>
-                  <Text style={styles.habitDetail}>{habit.detail}</Text>
+                  <Text style={styles.habitDetail}>{habit.description || 'Complete this daily quest'}</Text>
                   <View style={styles.rewardRow}>
-                    <Text style={styles.rewardText}>+{habit.xp} EXP</Text>
+                    <Text style={styles.rewardText}>+{reward.xp} EXP</Text>
                     <View style={styles.rewardDot} />
-                    <Text style={styles.rewardText}>{habit.stat}</Text>
+                    <Text style={styles.rewardText}>
+                      +{reward.statXp} {formatAttribute(habit.attribute)}
+                    </Text>
                   </View>
                 </View>
 
@@ -226,7 +252,9 @@ export default function TodayScreen() {
           })}
         </View>
 
-        <Pressable style={({ pressed }) => [styles.addButton, pressed && styles.addButtonPressed]}>
+        <Pressable
+          onPress={() => router.push('/create-habit' as Href)}
+          style={({ pressed }) => [styles.addButton, pressed && styles.addButtonPressed]}>
           <MaterialCommunityIcons name="plus" size={20} color="#7EE7FF" />
           <Text style={styles.addButtonText}>Add new habit</Text>
         </Pressable>
@@ -257,7 +285,7 @@ const styles = StyleSheet.create({
     top: 260,
     left: -150,
   },
-  content: { paddingHorizontal: 18, paddingTop: 18, paddingBottom: 36 },
+  content: { paddingHorizontal: 18, paddingTop: 18, paddingBottom: 110 },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -375,6 +403,17 @@ const styles = StyleSheet.create({
   dailyFill: { height: '100%', borderRadius: 3 },
   dailyHint: { color: '#69718F', fontSize: 10, marginTop: 9 },
   habitList: { gap: 10 },
+  loadingState: {
+    minHeight: 90,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 9,
+    backgroundColor: 'rgba(12, 16, 31, 0.7)',
+    borderWidth: 1,
+    borderColor: '#222842',
+  },
+  loadingText: { color: '#737B98', fontSize: 11, fontWeight: '700' },
   habitCard: {
     flexDirection: 'row',
     alignItems: 'center',

@@ -1,7 +1,10 @@
 import { DarkTheme, ThemeProvider } from '@react-navigation/native';
 import { Stack } from 'expo-router';
+import { SQLiteProvider } from 'expo-sqlite';
 import { StatusBar } from 'expo-status-bar';
 import 'react-native-reanimated';
+
+import { migrateDatabase } from '@/src/database/database';
 
 const habitRpgTheme = {
   ...DarkTheme,
@@ -21,12 +24,18 @@ export const unstable_settings = {
 
 export default function RootLayout() {
   return (
-    <ThemeProvider value={habitRpgTheme}>
-      <Stack screenOptions={{ contentStyle: { backgroundColor: '#050711' } }}>
-        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Habit RPG' }} />
-      </Stack>
-      <StatusBar style="light" />
-    </ThemeProvider>
+    <SQLiteProvider databaseName="habit-rpg.db" onInit={migrateDatabase}>
+      <ThemeProvider value={habitRpgTheme}>
+        <Stack screenOptions={{ contentStyle: { backgroundColor: '#050711' } }}>
+          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+          <Stack.Screen
+            name="create-habit"
+            options={{ animation: 'slide_from_bottom', headerShown: false, presentation: 'modal' }}
+          />
+          <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Habit RPG' }} />
+        </Stack>
+        <StatusBar style="light" />
+      </ThemeProvider>
+    </SQLiteProvider>
   );
 }

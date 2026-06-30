@@ -22,6 +22,7 @@ import {
   createHabit,
   getHabitForEdit,
   HabitAttribute,
+  HabitCadence,
   HabitDifficulty,
   HabitGoalType,
   ReminderTone,
@@ -82,8 +83,10 @@ export default function CreateHabitScreen() {
   const [description, setDescription] = useState('');
   const [difficulty, setDifficulty] = useState<HabitDifficulty>('medium');
   const [attribute, setAttribute] = useState<HabitAttribute>('discipline');
+  const [cadence, setCadence] = useState<HabitCadence>('daily');
   const [goalType, setGoalType] = useState<HabitGoalType>('single');
   const [targetCount, setTargetCount] = useState(3);
+  const [targetDurationMinutes, setTargetDurationMinutes] = useState(20);
   const [scheduleDays, setScheduleDays] = useState<number[]>(everyDaySchedule);
   const [isRequired, setIsRequired] = useState(true);
   const [reminderEnabled, setReminderEnabled] = useState(false);
@@ -115,8 +118,10 @@ export default function CreateHabitScreen() {
         setDescription(habit.description);
         setDifficulty(habit.difficulty);
         setAttribute(habit.attribute);
+        setCadence(habit.cadence);
         setGoalType(habit.goalType);
         setTargetCount(habit.targetCount);
+        setTargetDurationMinutes(habit.targetDurationMinutes);
         setScheduleDays(habit.scheduleDays);
         setIsRequired(habit.isRequired);
         setReminderEnabled(habit.reminderEnabled);
@@ -162,8 +167,10 @@ export default function CreateHabitScreen() {
         description,
         difficulty,
         attribute,
+        cadence,
         goalType,
         targetCount,
+        targetDurationMinutes,
         scheduleDays,
         isRequired,
         reminderEnabled,
@@ -196,12 +203,29 @@ export default function CreateHabitScreen() {
 
   const toggleScheduleDay = (day: number) => {
     setScheduleDays((current) => {
+      let nextSchedule: number[];
       if (current.includes(day)) {
-        return current.length > 1 ? current.filter((item) => item !== day) : current;
+        nextSchedule = current.length > 1 ? current.filter((item) => item !== day) : current;
+      } else {
+        nextSchedule = [...current, day].sort((first, second) => first - second);
       }
 
-      return [...current, day].sort((first, second) => first - second);
+      if (cadence === 'weekly') {
+        setTargetCount((target) => Math.min(target, nextSchedule.length));
+      }
+      return nextSchedule;
     });
+  };
+
+  const selectCadence = (nextCadence: HabitCadence) => {
+    setCadence(nextCadence);
+    if (nextCadence === 'weekly') {
+      setGoalType('single');
+      setIsRequired(false);
+      setTargetCount((current) =>
+        Math.min(scheduleDays.length, current <= 1 ? 3 : current),
+      );
+    }
   };
 
   const adjustReminderTime = (minutes: number) => {
@@ -225,7 +249,7 @@ export default function CreateHabitScreen() {
               <MaterialCommunityIcons name="close" color="#BFC5DB" size={23} />
             </Pressable>
             <View style={styles.headerText}>
-              <Text style={styles.eyebrow}>{editing ? 'EDIT DAILY QUEST' : 'NEW DAILY QUEST'}</Text>
+              <Text style={styles.eyebrow}>{editing ? 'EDIT QUEST' : 'NEW QUEST'}</Text>
               <Text style={styles.title}>{editing ? 'Edit habit' : 'Create habit'}</Text>
             </View>
             <View style={styles.headerSpacer} />
@@ -254,73 +278,124 @@ export default function CreateHabitScreen() {
             value={description}
           />
 
-          <Text style={styles.label}>QUEST MODE</Text>
+          <Text style={styles.label}>CADENCE</Text>
           <View style={styles.modeRow}>
             <Pressable
               accessibilityRole="radio"
-              accessibilityState={{ checked: isRequired }}
-              onPress={() => setIsRequired(true)}
-              style={[styles.modeOption, isRequired && styles.modeOptionSelected]}>
+              accessibilityState={{ checked: cadence === 'daily' }}
+              onPress={() => selectCadence('daily')}
+              style={[styles.modeOption, cadence === 'daily' && styles.modeOptionSelected]}>
               <MaterialCommunityIcons
-                color={isRequired ? '#7EE7FF' : '#707894'}
-                name="checkbox-marked-circle-outline"
+                color={cadence === 'daily' ? '#7EE7FF' : '#707894'}
+                name="calendar-today"
                 size={18}
               />
-              <Text style={[styles.modeText, isRequired && styles.modeTextSelected]}>
-                Required
+              <Text style={[styles.modeText, cadence === 'daily' && styles.modeTextSelected]}>
+                Daily
               </Text>
             </Pressable>
             <Pressable
               accessibilityRole="radio"
-              accessibilityState={{ checked: !isRequired }}
-              onPress={() => setIsRequired(false)}
-              style={[styles.modeOption, !isRequired && styles.modeOptionSelected]}>
+              accessibilityState={{ checked: cadence === 'weekly' }}
+              onPress={() => selectCadence('weekly')}
+              style={[styles.modeOption, cadence === 'weekly' && styles.modeOptionSelected]}>
               <MaterialCommunityIcons
-                color={!isRequired ? '#7EE7FF' : '#707894'}
-                name="star-outline"
+                color={cadence === 'weekly' ? '#7EE7FF' : '#707894'}
+                name="calendar-week"
                 size={18}
               />
-              <Text style={[styles.modeText, !isRequired && styles.modeTextSelected]}>
-                Optional
+              <Text style={[styles.modeText, cadence === 'weekly' && styles.modeTextSelected]}>
+                Weekly
               </Text>
             </Pressable>
           </View>
 
-          <Text style={styles.label}>GOAL TYPE</Text>
-          <View style={styles.modeRow}>
-            <Pressable
-              accessibilityRole="radio"
-              accessibilityState={{ checked: goalType === 'single' }}
-              onPress={() => setGoalType('single')}
-              style={[styles.modeOption, goalType === 'single' && styles.modeOptionSelected]}>
-              <MaterialCommunityIcons
-                color={goalType === 'single' ? '#7EE7FF' : '#707894'}
-                name="check-circle-outline"
-                size={18}
-              />
-              <Text
-                style={[styles.modeText, goalType === 'single' && styles.modeTextSelected]}>
-                Check-in
-              </Text>
-            </Pressable>
-            <Pressable
-              accessibilityRole="radio"
-              accessibilityState={{ checked: goalType === 'counter' }}
-              onPress={() => setGoalType('counter')}
-              style={[styles.modeOption, goalType === 'counter' && styles.modeOptionSelected]}>
-              <MaterialCommunityIcons
-                color={goalType === 'counter' ? '#7EE7FF' : '#707894'}
-                name="counter"
-                size={19}
-              />
-              <Text
-                style={[styles.modeText, goalType === 'counter' && styles.modeTextSelected]}>
-                Counter
-              </Text>
-            </Pressable>
-          </View>
+          {cadence === 'daily' ? (
+            <>
+              <Text style={styles.label}>QUEST MODE</Text>
+              <View style={styles.modeRow}>
+                <Pressable
+                  accessibilityRole="radio"
+                  accessibilityState={{ checked: isRequired }}
+                  onPress={() => setIsRequired(true)}
+                  style={[styles.modeOption, isRequired && styles.modeOptionSelected]}>
+                  <MaterialCommunityIcons
+                    color={isRequired ? '#7EE7FF' : '#707894'}
+                    name="checkbox-marked-circle-outline"
+                    size={18}
+                  />
+                  <Text style={[styles.modeText, isRequired && styles.modeTextSelected]}>
+                    Required
+                  </Text>
+                </Pressable>
+                <Pressable
+                  accessibilityRole="radio"
+                  accessibilityState={{ checked: !isRequired }}
+                  onPress={() => setIsRequired(false)}
+                  style={[styles.modeOption, !isRequired && styles.modeOptionSelected]}>
+                  <MaterialCommunityIcons
+                    color={!isRequired ? '#7EE7FF' : '#707894'}
+                    name="star-outline"
+                    size={18}
+                  />
+                  <Text style={[styles.modeText, !isRequired && styles.modeTextSelected]}>
+                    Optional
+                  </Text>
+                </Pressable>
+              </View>
 
-          {goalType === 'counter' ? (
+              <Text style={styles.label}>GOAL TYPE</Text>
+              <View style={styles.modeRow}>
+                <Pressable
+                  accessibilityRole="radio"
+                  accessibilityState={{ checked: goalType === 'single' }}
+                  onPress={() => setGoalType('single')}
+                  style={[styles.modeOption, goalType === 'single' && styles.modeOptionSelected]}>
+                  <MaterialCommunityIcons
+                    color={goalType === 'single' ? '#7EE7FF' : '#707894'}
+                    name="check-circle-outline"
+                    size={18}
+                  />
+                  <Text
+                    style={[styles.modeText, goalType === 'single' && styles.modeTextSelected]}>
+                    Check-in
+                  </Text>
+                </Pressable>
+                <Pressable
+                  accessibilityRole="radio"
+                  accessibilityState={{ checked: goalType === 'counter' }}
+                  onPress={() => setGoalType('counter')}
+                  style={[styles.modeOption, goalType === 'counter' && styles.modeOptionSelected]}>
+                  <MaterialCommunityIcons
+                    color={goalType === 'counter' ? '#7EE7FF' : '#707894'}
+                    name="counter"
+                    size={19}
+                  />
+                  <Text
+                    style={[styles.modeText, goalType === 'counter' && styles.modeTextSelected]}>
+                    Counter
+                  </Text>
+                </Pressable>
+                <Pressable
+                  accessibilityRole="radio"
+                  accessibilityState={{ checked: goalType === 'timer' }}
+                  onPress={() => setGoalType('timer')}
+                  style={[styles.modeOption, goalType === 'timer' && styles.modeOptionSelected]}>
+                  <MaterialCommunityIcons
+                    color={goalType === 'timer' ? '#7EE7FF' : '#707894'}
+                    name="timer-outline"
+                    size={19}
+                  />
+                  <Text
+                    style={[styles.modeText, goalType === 'timer' && styles.modeTextSelected]}>
+                    Timer
+                  </Text>
+                </Pressable>
+              </View>
+            </>
+          ) : null}
+
+          {cadence === 'daily' && goalType === 'counter' ? (
             <>
               <Text style={styles.label}>DAILY TARGET</Text>
               <View style={styles.targetRow}>
@@ -355,7 +430,83 @@ export default function CreateHabitScreen() {
             </>
           ) : null}
 
-          <Text style={styles.label}>SCHEDULE</Text>
+          {cadence === 'daily' && goalType === 'timer' ? (
+            <>
+              <Text style={styles.label}>DURATION TARGET</Text>
+              <View style={styles.targetRow}>
+                <MaterialCommunityIcons name="timer-sand" size={20} color="#8E72FF" />
+                <Text style={styles.targetLabel}>Minutes</Text>
+                <View style={styles.targetStepper}>
+                  <Pressable
+                    accessibilityLabel="Decrease duration target"
+                    disabled={targetDurationMinutes <= 5}
+                    onPress={() =>
+                      setTargetDurationMinutes((current) => Math.max(5, current - 5))
+                    }
+                    style={({ pressed }) => [
+                      styles.targetButton,
+                      targetDurationMinutes <= 5 && styles.targetButtonDisabled,
+                      pressed && styles.targetButtonPressed,
+                    ]}>
+                    <MaterialCommunityIcons name="minus" size={18} color="#AEB6CF" />
+                  </Pressable>
+                  <Text style={styles.targetValue}>{targetDurationMinutes}</Text>
+                  <Pressable
+                    accessibilityLabel="Increase duration target"
+                    disabled={targetDurationMinutes >= 180}
+                    onPress={() =>
+                      setTargetDurationMinutes((current) => Math.min(180, current + 5))
+                    }
+                    style={({ pressed }) => [
+                      styles.targetButton,
+                      targetDurationMinutes >= 180 && styles.targetButtonDisabled,
+                      pressed && styles.targetButtonPressed,
+                    ]}>
+                    <MaterialCommunityIcons name="plus" size={18} color="#7EE7FF" />
+                  </Pressable>
+                </View>
+              </View>
+            </>
+          ) : null}
+
+          {cadence === 'weekly' ? (
+            <>
+              <Text style={styles.label}>WEEKLY TARGET</Text>
+              <View style={styles.targetRow}>
+                <MaterialCommunityIcons name="calendar-check" size={20} color="#8E72FF" />
+                <Text style={styles.targetLabel}>Check-ins</Text>
+                <View style={styles.targetStepper}>
+                  <Pressable
+                    accessibilityLabel="Decrease weekly target"
+                    disabled={targetCount <= 1}
+                    onPress={() => setTargetCount((current) => Math.max(1, current - 1))}
+                    style={({ pressed }) => [
+                      styles.targetButton,
+                      targetCount <= 1 && styles.targetButtonDisabled,
+                      pressed && styles.targetButtonPressed,
+                    ]}>
+                    <MaterialCommunityIcons name="minus" size={18} color="#AEB6CF" />
+                  </Pressable>
+                  <Text style={styles.targetValue}>{targetCount}</Text>
+                  <Pressable
+                    accessibilityLabel="Increase weekly target"
+                    disabled={targetCount >= scheduleDays.length}
+                    onPress={() =>
+                      setTargetCount((current) => Math.min(scheduleDays.length, current + 1))
+                    }
+                    style={({ pressed }) => [
+                      styles.targetButton,
+                      targetCount >= scheduleDays.length && styles.targetButtonDisabled,
+                      pressed && styles.targetButtonPressed,
+                    ]}>
+                    <MaterialCommunityIcons name="plus" size={18} color="#7EE7FF" />
+                  </Pressable>
+                </View>
+              </View>
+            </>
+          ) : null}
+
+          <Text style={styles.label}>{cadence === 'weekly' ? 'CHECK-IN DAYS' : 'SCHEDULE'}</Text>
           <View style={styles.weekdayRow}>
             {weekdayOptions.map((day) => {
               const selected = scheduleDays.includes(day.value);
@@ -546,7 +697,7 @@ export default function CreateHabitScreen() {
                     size={21}
                   />
                   <Text style={styles.saveText}>
-                    {editing ? 'Save daily quest' : 'Create daily quest'}
+                    {editing ? 'Save quest' : 'Create quest'}
                   </Text>
                 </>
               )}

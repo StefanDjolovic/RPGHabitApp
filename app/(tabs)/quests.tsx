@@ -68,6 +68,20 @@ function formatSchedule(scheduleDays: number[]) {
   return sortedDays.map((day) => dayLabels[day]).join(', ');
 }
 
+function formatTimedProgress(quest: QuestLogHabit) {
+  const nowEpoch = Math.floor(Date.now() / 1000);
+  const activeSeconds = quest.timerStartedAtEpoch
+    ? Math.max(0, nowEpoch - quest.timerStartedAtEpoch)
+    : 0;
+  const elapsedSeconds = Math.min(
+    quest.targetDurationMinutes * 60,
+    quest.elapsedSeconds + activeSeconds,
+  );
+  const elapsedMinutes = Math.floor(elapsedSeconds / 60);
+  const seconds = elapsedSeconds % 60;
+  return `${String(elapsedMinutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')} / ${quest.targetDurationMinutes}m`;
+}
+
 export default function QuestsScreen() {
   const db = useSQLiteContext();
   const [quests, setQuests] = useState<QuestLogHabit[]>([]);
@@ -154,7 +168,7 @@ export default function QuestsScreen() {
     (quest: QuestLogHabit) => {
       Alert.alert(
         'Archive quest?',
-        'This removes it from active daily quests but keeps completion history and rewards.',
+        'This removes it from active quests but keeps completion history and rewards.',
         [
           { text: 'Cancel', style: 'cancel' },
           {
@@ -183,7 +197,10 @@ export default function QuestsScreen() {
         ? quests
         : quests.filter(
             (quest) =>
-              !quest.isPaused && quest.isRequired && quest.scheduleDays.includes(todayDay),
+              quest.cadence === 'daily' &&
+              !quest.isPaused &&
+              quest.isRequired &&
+              quest.scheduleDays.includes(todayDay),
           );
 
     return summaryQuests.reduce(
@@ -222,7 +239,7 @@ export default function QuestsScreen() {
           </View>
 
           <Pressable
-            accessibilityLabel="Create daily quest"
+            accessibilityLabel="Create quest"
             onPress={() => router.push('/create-habit')}
             style={styles.addIconButton}>
             <MaterialCommunityIcons name="plus" size={24} color="#7EE8FF" />
@@ -341,7 +358,7 @@ export default function QuestsScreen() {
               <Text style={styles.emptyText}>
                 {showingArchived
                   ? 'Archived quests will appear here with their history intact.'
-                  : 'Create your first daily quest to start earning XP.'}
+                  : 'Create your first quest to start earning XP.'}
               </Text>
             </View>
           ) : null}
@@ -372,7 +389,11 @@ export default function QuestsScreen() {
                     <Text style={styles.questTitle}>{quest.title}</Text>
                     <View style={styles.questActions}>
                       <Text style={[styles.modeBadge, !quest.isRequired && styles.modeBadgeOptional]}>
-                        {quest.isRequired ? 'REQ' : 'OPT'}
+                        {quest.cadence === 'weekly'
+                          ? 'WEEKLY'
+                          : quest.isRequired
+                            ? 'REQ'
+                            : 'OPT'}
                       </Text>
                       <Text style={[styles.difficulty, { color: difficulty.color }]}>
                         {difficulty.label.toUpperCase()}
@@ -428,14 +449,22 @@ export default function QuestsScreen() {
                   </View>
                   <Text style={styles.questDescription}>
                     {quest.description ||
-                      (quest.goalType === 'counter'
+                      (quest.cadence === 'weekly'
+                        ? `Check in ${quest.targetCount} times this week`
+                        : quest.goalType === 'timer'
+                          ? `Focus for ${quest.targetDurationMinutes} minutes`
+                        : quest.goalType === 'counter'
                         ? `Reach ${quest.targetCount} completions today`
                         : 'Complete this daily quest')}
                   </Text>
 
                   <View style={styles.rewardRow}>
                     <Text style={styles.goalTypeText}>
-                      {quest.goalType === 'counter'
+                      {quest.cadence === 'weekly'
+                        ? `WEEKLY x${quest.targetCount}`
+                        : quest.goalType === 'timer'
+                          ? `TIMER ${quest.targetDurationMinutes}m`
+                        : quest.goalType === 'counter'
                         ? `COUNTER x${quest.targetCount}`
                         : 'CHECK-IN'}
                     </Text>
@@ -451,9 +480,15 @@ export default function QuestsScreen() {
 
                   <View style={styles.questMetaRow}>
                     <View style={styles.streakPill}>
-                      <MaterialCommunityIcons name="fire" size={13} color="#FF8FC7" />
+                      <MaterialCommunityIcons
+                        name={quest.cadence === 'weekly' ? 'calendar-week' : 'fire'}
+                        size={13}
+                        color={quest.cadence === 'weekly' ? '#7EE8FF' : '#FF8FC7'}
+                      />
                       <Text style={styles.streakText}>
-                        {habitStreak} {habitStreak === 1 ? 'day' : 'days'}
+                        {quest.cadence === 'weekly'
+                          ? 'This week'
+                          : `${habitStreak} ${habitStreak === 1 ? 'day' : 'days'}`}
                       </Text>
                     </View>
                     <View
@@ -477,7 +512,15 @@ export default function QuestsScreen() {
                         ]}>
                         {quest.isPaused
                           ? 'Paused'
-                          : quest.goalType === 'counter'
+                          : quest.cadence === 'weekly'
+                            ? quest.complete
+                              ? 'Weekly goal reached'
+                              : `${quest.currentCount} / ${quest.targetCount} this week`
+                            : quest.goalType === 'timer'
+                              ? quest.complete
+                                ? 'Duration reached'
+                                : formatTimedProgress(quest)
+                            : quest.goalType === 'counter'
                             ? quest.complete
                               ? 'Goal reached'
                               : `${quest.currentCount} / ${quest.targetCount} today`
@@ -497,7 +540,10 @@ export default function QuestsScreen() {
                       </View>
                     ) : null}
                     <Text style={styles.historyText}>
-                      {formatSchedule(quest.scheduleDays)} - {quest.totalCompletions} clears -{' '}
+                      {quest.cadence === 'weekly'
+                        ? `Weekly on ${formatSchedule(quest.scheduleDays)}`
+                        : formatSchedule(quest.scheduleDays)}{' '}
+                      - {quest.totalCompletions} clears -{' '}
                       {formatLastCompleted(quest.lastCompletedDate)}
                     </Text>
                   </View>
@@ -511,7 +557,7 @@ export default function QuestsScreen() {
           onPress={() => router.push('/create-habit')}
           style={({ pressed }) => [styles.addButton, pressed && styles.addButtonPressed]}>
           <MaterialCommunityIcons name="plus-circle" size={20} color="#7EE7FF" />
-          <Text style={styles.addButtonText}>Create daily quest</Text>
+          <Text style={styles.addButtonText}>Create quest</Text>
         </Pressable>
       </ScrollView>
     </SafeAreaView>

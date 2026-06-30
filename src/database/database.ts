@@ -1,6 +1,6 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 
-const DATABASE_VERSION = 11;
+const DATABASE_VERSION = 13;
 
 export async function migrateDatabase(db: SQLiteDatabase) {
   await db.execAsync('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
@@ -290,6 +290,44 @@ export async function migrateDatabase(db: SQLiteDatabase) {
 
       CREATE INDEX IF NOT EXISTS idx_habit_reminder_notifications_habit
         ON habit_reminder_notifications(habit_id);
+    `);
+  }
+
+  if (currentVersion < 12) {
+    await db.execAsync(`
+      CREATE TABLE IF NOT EXISTS habit_weekly_checkins (
+        habit_id INTEGER NOT NULL,
+        checkin_date TEXT NOT NULL,
+        week_start TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (habit_id, checkin_date),
+        FOREIGN KEY (habit_id) REFERENCES habits(id) ON DELETE CASCADE
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_habit_weekly_checkins_week
+        ON habit_weekly_checkins(habit_id, week_start);
+    `);
+  }
+
+  if (currentVersion < 13) {
+    await db.execAsync(`
+      ALTER TABLE habits
+        ADD COLUMN target_duration_minutes INTEGER NOT NULL DEFAULT 0
+        CHECK (target_duration_minutes >= 0);
+
+      CREATE TABLE IF NOT EXISTS habit_timer_progress (
+        habit_id INTEGER NOT NULL,
+        progress_date TEXT NOT NULL,
+        accumulated_seconds INTEGER NOT NULL DEFAULT 0
+          CHECK (accumulated_seconds >= 0),
+        started_at TEXT,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (habit_id, progress_date),
+        FOREIGN KEY (habit_id) REFERENCES habits(id) ON DELETE CASCADE
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_habit_timer_progress_date
+        ON habit_timer_progress(progress_date);
     `);
   }
 

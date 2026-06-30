@@ -2,7 +2,7 @@ import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, type Href, useFocusEffect } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -21,8 +21,11 @@ import {
   getTodayHabits,
   Habit,
   HabitAttribute,
+  resetTimedHabitForToday,
   rewardByDifficulty,
   setHabitCompletion,
+  setTimedHabitRunning,
+  setWeeklyHabitCheckIn,
 } from '@/src/database/habit-repository';
 import { getActivityStreak } from '@/src/progression/activity-streak';
 import {
@@ -65,6 +68,23 @@ function formatAttribute(attribute: HabitAttribute) {
   return attribute.charAt(0).toUpperCase() + attribute.slice(1);
 }
 
+function getTimedHabitElapsedSeconds(habit: Habit, nowEpoch: number) {
+  const activeSeconds = habit.timerStartedAtEpoch
+    ? Math.max(0, nowEpoch - habit.timerStartedAtEpoch)
+    : 0;
+  return Math.min(
+    habit.targetDurationMinutes * 60,
+    habit.elapsedSeconds + activeSeconds,
+  );
+}
+
+function formatTimerDuration(totalSeconds: number) {
+  const safeSeconds = Math.max(0, Math.floor(totalSeconds));
+  const minutes = Math.floor(safeSeconds / 60);
+  const seconds = safeSeconds % 60;
+  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+}
+
 const initialRecoveryStatus: RecoveryQuestStatus = {
   available: false,
   completedToday: false,
@@ -95,6 +115,7 @@ export default function TodayScreen() {
     useState<DailyClearStatus>(initialDailyClearStatus);
   const [claimingDailyClear, setClaimingDailyClear] = useState(false);
   const [updatingHabitId, setUpdatingHabitId] = useState<number | null>(null);
+  const [clockEpoch, setClockEpoch] = useState(() => Math.floor(Date.now() / 1000));
   const [loading, setLoading] = useState(true);
   const requiredProgress =
     dailyClearStatus.required > 0
@@ -240,6 +261,177 @@ export default function TodayScreen() {
     }
   };
 
+  const updateWeeklyCheckIn = async (habit: Habit) => {
+    if (habit.cadence !== 'weekly' || updatingHabitId === habit.id) return;
+
+    const nextChecked = !habit.checkedToday;
+    if (nextChecked && habit.complete) return;
+    const nextCount = Math.max(0, habit.currentCount + (nextChecked ? 1 : -1));
+    const nextComplete = nextCount >= habit.targetCount;
+    setUpdatingHabitId(habit.id);
+    setHabits((current) =>
+      current.map((item) =>
+        item.id === habit.id
+          ? {
+              ...item,
+              checkedToday: nextChecked,
+              currentCount: nextCount,
+              complete: nextComplete,
+            }
+          : item,
+      ),
+    );
+
+    try {
+      const savedCount = await setWeeklyHabitCheckIn(db, habit.id, nextChecked);
+      setHabits((current) =>
+        current.map((item) =>
+          item.id === habit.id
+            ? {
+                ...item,
+                checkedToday: nextChecked,
+                currentCount: savedCount,
+                complete: savedCount >= item.targetCount,
+              }
+            : item,
+        ),
+      );
+      const [progressSummary, streak, recovery, dailyClear] = await Promise.all([
+        getPlayerProgress(db),
+        getActivityStreak(db),
+        getRecoveryQuestStatus(db),
+        getDailyClearStatus(db),
+      ]);
+      setPlayerProgress(progressSummary);
+      setActivityStreak(streak);
+      setRecoveryStatus(recovery);
+      setDailyClearStatus(dailyClear);
+    } catch {
+      setHabits((current) =>
+        current.map((item) => (item.id === habit.id ? habit : item)),
+      );
+    } finally {
+      setUpdatingHabitId(null);
+    }
+  };
+
+  const updateTimedHabit = useCallback(
+    async (habit: Habit, running: boolean) => {
+      if (habit.goalType !== 'timer' || updatingHabitId === habit.id) return;
+
+      const nowEpoch = Math.floor(Date.now() / 1000);
+      const elapsedSeconds = getTimedHabitElapsedSeconds(habit, nowEpoch);
+      setUpdatingHabitId(habit.id);
+      setClockEpoch(nowEpoch);
+      setHabits((current) =>
+        current.map((item) =>
+          item.id === habit.id
+            ? {
+                ...item,
+                elapsedSeconds,
+                timerStartedAtEpoch: running ? nowEpoch : null,
+              }
+            : item,
+        ),
+      );
+
+      try {
+        const savedProgress = await setTimedHabitRunning(db, habit.id, running);
+        setHabits((current) =>
+          current.map((item) =>
+            item.id === habit.id
+              ? {
+                  ...item,
+                  elapsedSeconds: savedProgress.elapsedSeconds,
+                  timerStartedAtEpoch: savedProgress.timerStartedAtEpoch,
+                  complete: savedProgress.complete,
+                }
+              : item,
+          ),
+        );
+        const [progressSummary, streak, recovery, dailyClear] = await Promise.all([
+          getPlayerProgress(db),
+          getActivityStreak(db),
+          getRecoveryQuestStatus(db),
+          getDailyClearStatus(db),
+        ]);
+        setPlayerProgress(progressSummary);
+        setActivityStreak(streak);
+        setRecoveryStatus(recovery);
+        setDailyClearStatus(dailyClear);
+      } catch {
+        setHabits((current) =>
+          current.map((item) => (item.id === habit.id ? habit : item)),
+        );
+      } finally {
+        setUpdatingHabitId(null);
+      }
+    },
+    [db, updatingHabitId],
+  );
+
+  const resetTimedHabit = async (habit: Habit) => {
+    if (habit.goalType !== 'timer' || updatingHabitId === habit.id) return;
+
+    setUpdatingHabitId(habit.id);
+    setHabits((current) =>
+      current.map((item) =>
+        item.id === habit.id
+          ? {
+              ...item,
+              elapsedSeconds: 0,
+              timerStartedAtEpoch: null,
+              complete: false,
+            }
+          : item,
+      ),
+    );
+
+    try {
+      await resetTimedHabitForToday(db, habit.id);
+      const [progressSummary, streak, recovery, dailyClear] = await Promise.all([
+        getPlayerProgress(db),
+        getActivityStreak(db),
+        getRecoveryQuestStatus(db),
+        getDailyClearStatus(db),
+      ]);
+      setPlayerProgress(progressSummary);
+      setActivityStreak(streak);
+      setRecoveryStatus(recovery);
+      setDailyClearStatus(dailyClear);
+    } catch {
+      setHabits((current) =>
+        current.map((item) => (item.id === habit.id ? habit : item)),
+      );
+    } finally {
+      setUpdatingHabitId(null);
+    }
+  };
+
+  useEffect(() => {
+    const hasRunningTimer = habits.some(
+      (habit) => habit.goalType === 'timer' && habit.timerStartedAtEpoch !== null,
+    );
+    if (!hasRunningTimer) return;
+
+    const interval = setInterval(() => {
+      setClockEpoch(Math.floor(Date.now() / 1000));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [habits]);
+
+  useEffect(() => {
+    if (updatingHabitId !== null) return;
+    const finishedTimer = habits.find(
+      (habit) =>
+        habit.goalType === 'timer' &&
+        !habit.complete &&
+        habit.timerStartedAtEpoch !== null &&
+        getTimedHabitElapsedSeconds(habit, clockEpoch) >= habit.targetDurationMinutes * 60,
+    );
+    if (finishedTimer) void updateTimedHabit(finishedTimer, false);
+  }, [clockEpoch, habits, updateTimedHabit, updatingHabitId]);
+
   const claimDailyClear = async () => {
     if (!dailyClearStatus.eligible || dailyClearStatus.claimed || claimingDailyClear) return;
 
@@ -348,7 +540,7 @@ export default function TodayScreen() {
 
         <View style={styles.sectionHeader}>
           <View>
-            <Text style={styles.sectionEyebrow}>DAILY QUEST</Text>
+            <Text style={styles.sectionEyebrow}>{"TODAY'S QUESTS"}</Text>
             <Text style={styles.sectionTitle}>{"Today's objectives"}</Text>
           </View>
           <View style={styles.completionBadge}>
@@ -452,7 +644,7 @@ export default function TodayScreen() {
           {loading ? (
             <View style={styles.loadingState}>
               <ActivityIndicator color="#63DFFF" />
-              <Text style={styles.loadingText}>Loading daily quests...</Text>
+              <Text style={styles.loadingText}>Loading quests...</Text>
             </View>
           ) : null}
 
@@ -466,6 +658,7 @@ export default function TodayScreen() {
           {habits.map((habit) => {
             const accent = difficultyColors[habit.difficulty];
             const reward = rewardByDifficulty[habit.difficulty];
+            const timerElapsedSeconds = getTimedHabitElapsedSeconds(habit, clockEpoch);
             return (
               <View
                 key={habit.id}
@@ -488,14 +681,21 @@ export default function TodayScreen() {
                     </Text>
                     <View style={styles.habitBadgeRow}>
                       <Text style={[styles.modeBadge, !habit.isRequired && styles.modeBadgeOptional]}>
-                        {habit.isRequired ? 'REQ' : 'OPT'}
+                        {habit.cadence === 'weekly' ? 'WEEKLY' : habit.isRequired ? 'REQ' : 'OPT'}
                       </Text>
                       <Text style={[styles.difficulty, { color: accent }]}>
                         {habit.difficulty.toUpperCase()}
                       </Text>
                     </View>
                   </View>
-                  <Text style={styles.habitDetail}>{habit.description || 'Complete this daily quest'}</Text>
+                  <Text style={styles.habitDetail}>
+                    {habit.description ||
+                      (habit.cadence === 'weekly'
+                        ? `Check in ${habit.targetCount} times this week`
+                        : habit.goalType === 'timer'
+                          ? `${habit.targetDurationMinutes} minute focused session`
+                        : 'Complete this daily quest')}
+                  </Text>
                   <View style={styles.rewardRow}>
                     <Text style={styles.rewardText}>+{reward.xp} EXP</Text>
                     <View style={styles.rewardDot} />
@@ -505,7 +705,84 @@ export default function TodayScreen() {
                   </View>
                 </View>
 
-                {habit.goalType === 'counter' ? (
+                {habit.cadence === 'weekly' ? (
+                  <View style={styles.counterControl}>
+                    <Pressable
+                      accessibilityLabel={`Remove today's ${habit.title} check-in`}
+                      disabled={!habit.checkedToday || updatingHabitId === habit.id}
+                      onPress={() => void updateWeeklyCheckIn(habit)}
+                      style={({ pressed }) => [
+                        styles.counterButton,
+                        (!habit.checkedToday || updatingHabitId === habit.id) &&
+                          styles.counterButtonDisabled,
+                        pressed && styles.counterButtonPressed,
+                      ]}>
+                      <MaterialCommunityIcons name="minus" size={17} color="#AEB6CF" />
+                    </Pressable>
+                    <Text style={styles.counterValue}>
+                      {habit.currentCount}/{habit.targetCount}
+                    </Text>
+                    <Pressable
+                      accessibilityLabel={`Check in to ${habit.title} today`}
+                      disabled={
+                        habit.checkedToday || habit.complete || updatingHabitId === habit.id
+                      }
+                      onPress={() => void updateWeeklyCheckIn(habit)}
+                      style={({ pressed }) => [
+                        styles.counterButton,
+                        (habit.checkedToday || habit.complete || updatingHabitId === habit.id) &&
+                          styles.counterButtonDisabled,
+                        pressed && styles.counterButtonPressed,
+                      ]}>
+                      <MaterialCommunityIcons
+                        name={habit.complete ? 'check' : 'plus'}
+                        size={17}
+                        color={habit.complete ? '#8DECB4' : '#7EE7FF'}
+                      />
+                    </Pressable>
+                  </View>
+                ) : habit.goalType === 'timer' ? (
+                  <View style={styles.timerControl}>
+                    <View style={styles.timerReadout}>
+                      <Text style={styles.timerValue}>
+                        {formatTimerDuration(timerElapsedSeconds)}
+                      </Text>
+                      <Text style={styles.timerTarget}>/ {habit.targetDurationMinutes}m</Text>
+                    </View>
+                    <Pressable
+                      accessibilityLabel={
+                        habit.complete
+                          ? `Undo ${habit.title}`
+                          : habit.timerStartedAtEpoch !== null
+                            ? `Pause ${habit.title}`
+                            : `Start ${habit.title}`
+                      }
+                      disabled={updatingHabitId === habit.id}
+                      onPress={() =>
+                        habit.complete
+                          ? void resetTimedHabit(habit)
+                          : void updateTimedHabit(habit, habit.timerStartedAtEpoch === null)
+                      }
+                      style={({ pressed }) => [
+                        styles.timerButton,
+                        habit.complete && styles.timerButtonComplete,
+                        updatingHabitId === habit.id && styles.counterButtonDisabled,
+                        pressed && styles.counterButtonPressed,
+                      ]}>
+                      <MaterialCommunityIcons
+                        name={
+                          habit.complete
+                            ? 'backup-restore'
+                            : habit.timerStartedAtEpoch !== null
+                              ? 'pause'
+                              : 'play'
+                        }
+                        size={16}
+                        color={habit.complete ? '#07131A' : '#8EEBFF'}
+                      />
+                    </Pressable>
+                  </View>
+                ) : habit.goalType === 'counter' ? (
                   <View style={styles.counterControl}>
                     <Pressable
                       accessibilityLabel={`Decrease ${habit.title} progress`}
@@ -880,6 +1157,31 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     fontVariant: ['tabular-nums'],
   },
+  timerControl: {
+    width: 78,
+    minHeight: 58,
+    alignItems: 'stretch',
+    justifyContent: 'center',
+    gap: 5,
+  },
+  timerReadout: { alignItems: 'center' },
+  timerValue: {
+    color: '#F0EEFF',
+    fontSize: 13,
+    fontWeight: '900',
+    fontVariant: ['tabular-nums'],
+  },
+  timerTarget: { color: '#747C97', fontSize: 8, fontWeight: '800', paddingTop: 1 },
+  timerButton: {
+    height: 27,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#315267',
+    backgroundColor: '#102333',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  timerButtonComplete: { backgroundColor: '#67DDF6', borderColor: '#67DDF6' },
   addButton: {
     height: 50,
     marginTop: 14,

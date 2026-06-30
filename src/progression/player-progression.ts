@@ -88,9 +88,10 @@ export async function getPlayerProgress(db: SQLiteDatabase): Promise<PlayerProgr
   const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(
     today.getDate(),
   ).padStart(2, '0')}`;
-  const [xpRow, energyRow, todayEnergyRow, attributeRows] = await Promise.all([
+  const [xpRow, energyRow, spentEnergyRow, todayEnergyRow, attributeRows] = await Promise.all([
     db.getFirstAsync<TotalRow>('SELECT COALESCE(SUM(amount), 0) AS total FROM xp_events'),
     db.getFirstAsync<TotalRow>('SELECT COALESCE(SUM(amount), 0) AS total FROM energy_events'),
+    db.getFirstAsync<TotalRow>('SELECT COALESCE(SUM(energy_cost), 0) AS total FROM dungeon_runs'),
     db.getFirstAsync<TotalRow>(
       `SELECT COALESCE(SUM(ee.amount), 0) AS total
        FROM energy_events ee
@@ -106,7 +107,12 @@ export async function getPlayerProgress(db: SQLiteDatabase): Promise<PlayerProgr
   ]);
 
   const totalXp = Math.max(0, xpRow?.total ?? 0);
-  const dungeonEnergy = Math.min(MAX_DUNGEON_ENERGY, Math.max(0, energyRow?.total ?? 0));
+  const earnedDungeonEnergy = Math.max(0, energyRow?.total ?? 0);
+  const spentDungeonEnergy = Math.max(0, spentEnergyRow?.total ?? 0);
+  const dungeonEnergy = Math.min(
+    MAX_DUNGEON_ENERGY,
+    Math.max(0, earnedDungeonEnergy - spentDungeonEnergy),
+  );
   const todayDungeonEnergy = Math.min(
     MAX_DAILY_DUNGEON_ENERGY,
     Math.max(0, todayEnergyRow?.total ?? 0),

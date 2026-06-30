@@ -1,6 +1,7 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 import { Platform } from 'react-native';
 
+import { grantDailyClearReward } from '@/src/database/inventory-repository';
 import { MAX_DAILY_DUNGEON_ENERGY } from '@/src/progression/dungeon-energy';
 
 export type HabitDifficulty = 'easy' | 'medium' | 'hard';
@@ -43,6 +44,8 @@ export type DailyClearStatus = {
   claimed: boolean;
   earnedAt: string | null;
   claimedAt: string | null;
+  rewardItemKey: string | null;
+  rewardQuantity: number | null;
 };
 
 export type NewHabit = {
@@ -62,6 +65,8 @@ type DailyClearChestRow = {
   status: 'earned' | 'claimed';
   earnedAt: string;
   claimedAt: string | null;
+  rewardItemKey: string | null;
+  rewardQuantity: number | null;
 };
 type DailyClearProgressRow = { required: number; completed: number };
 
@@ -215,7 +220,9 @@ export async function getDailyClearStatus(db: SQLiteDatabase): Promise<DailyClea
       `SELECT
          status,
          earned_at AS earnedAt,
-         claimed_at AS claimedAt
+         claimed_at AS claimedAt,
+         reward_item_key AS rewardItemKey,
+         reward_quantity AS rewardQuantity
        FROM daily_clear_chests
        WHERE clear_date = ?
        LIMIT 1`,
@@ -231,6 +238,8 @@ export async function getDailyClearStatus(db: SQLiteDatabase): Promise<DailyClea
     claimed: eligible && chest?.status === 'claimed',
     earnedAt: chest?.earnedAt ?? null,
     claimedAt: eligible ? chest?.claimedAt ?? null : null,
+    rewardItemKey: eligible ? chest?.rewardItemKey ?? null : null,
+    rewardQuantity: eligible ? chest?.rewardQuantity ?? null : null,
   };
 }
 
@@ -250,11 +259,33 @@ export async function claimDailyClearChest(db: SQLiteDatabase): Promise<DailyCle
        VALUES (?, 'earned', CURRENT_TIMESTAMP)`,
       today,
     );
+
+    const chest = await txn.getFirstAsync<{
+      status: 'earned' | 'claimed';
+      rewardItemKey: string | null;
+      rewardQuantity: number | null;
+    }>(
+      `SELECT
+         status,
+         reward_item_key AS rewardItemKey,
+         reward_quantity AS rewardQuantity
+       FROM daily_clear_chests
+       WHERE clear_date = ?
+       LIMIT 1`,
+      today,
+    );
+    const reward =
+      chest?.status === 'claimed' ? null : await grantDailyClearReward(txn, today);
+
     await txn.runAsync(
       `UPDATE daily_clear_chests
        SET status = 'claimed',
-           claimed_at = COALESCE(claimed_at, CURRENT_TIMESTAMP)
+           claimed_at = COALESCE(claimed_at, CURRENT_TIMESTAMP),
+           reward_item_key = COALESCE(reward_item_key, ?),
+           reward_quantity = COALESCE(reward_quantity, ?)
        WHERE clear_date = ?`,
+      reward?.itemKey ?? chest?.rewardItemKey ?? null,
+      reward?.quantity ?? chest?.rewardQuantity ?? null,
       today,
     );
   };

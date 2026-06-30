@@ -35,6 +35,7 @@ import {
   getRecoveryQuestStatus,
   type RecoveryQuestStatus,
 } from '@/src/progression/recovery-quest';
+import { getItemDefinition } from '@/src/inventory/item-catalog';
 
 const difficultyColors = {
   easy: '#68E1A8',
@@ -72,6 +73,8 @@ const initialDailyClearStatus: DailyClearStatus = {
   claimed: false,
   earnedAt: null,
   claimedAt: null,
+  rewardItemKey: null,
+  rewardQuantity: null,
 };
 
 export default function TodayScreen() {
@@ -104,11 +107,16 @@ export default function TodayScreen() {
     : dailyClearStatus.eligible
       ? 'Daily Clear ready'
       : 'Daily Clear locked';
+  const dailyClearReward = dailyClearStatus.rewardItemKey
+    ? getItemDefinition(dailyClearStatus.rewardItemKey)
+    : null;
   const dailyClearText =
     dailyClearStatus.required === 0
       ? "Add an objective to activate today's chest."
       : dailyClearStatus.claimed
-        ? "Chest claimed for today's full clear."
+        ? dailyClearReward
+          ? `Loot stored: ${dailyClearStatus.rewardQuantity ?? 1}x ${dailyClearReward.name}.`
+          : "Chest claimed for today's full clear."
         : dailyClearStatus.eligible
           ? 'All objectives cleared. The chest is ready.'
           : `${remainingDailyObjectives} ${

@@ -1,6 +1,6 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 
-const DATABASE_VERSION = 3;
+const DATABASE_VERSION = 5;
 
 const seedHabits = [
   ['Morning workout', 'Complete 30 minutes', 'hard', 'strength'],
@@ -157,6 +157,57 @@ export async function migrateDatabase(db: SQLiteDatabase) {
         earned_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         claimed_at TEXT
       );
+    `);
+  }
+
+  if (currentVersion < 4) {
+    await db.execAsync(`
+      CREATE TABLE IF NOT EXISTS inventory_items (
+        item_key TEXT PRIMARY KEY,
+        quantity INTEGER NOT NULL DEFAULT 0 CHECK (quantity >= 0),
+        first_acquired_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        last_acquired_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS loot_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        client_event_id TEXT NOT NULL UNIQUE,
+        source TEXT NOT NULL,
+        source_ref TEXT,
+        item_key TEXT NOT NULL,
+        quantity INTEGER NOT NULL CHECK (quantity > 0),
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_loot_events_created_at
+        ON loot_events(created_at);
+
+      ALTER TABLE daily_clear_chests
+        ADD COLUMN reward_item_key TEXT;
+
+      ALTER TABLE daily_clear_chests
+        ADD COLUMN reward_quantity INTEGER;
+    `);
+  }
+
+  if (currentVersion < 5) {
+    await db.execAsync(`
+      CREATE TABLE IF NOT EXISTS dungeon_runs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        client_run_id TEXT NOT NULL UNIQUE,
+        dungeon_key TEXT NOT NULL,
+        dungeon_name TEXT NOT NULL,
+        difficulty TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('cleared', 'failed')),
+        energy_cost INTEGER NOT NULL CHECK (energy_cost > 0),
+        reward_item_key TEXT,
+        reward_quantity INTEGER,
+        started_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        completed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_dungeon_runs_completed_at
+        ON dungeon_runs(completed_at);
     `);
   }
 

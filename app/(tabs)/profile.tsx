@@ -18,6 +18,7 @@ import {
   type AchievementSummary,
 } from '@/src/database/achievement-repository';
 import {
+  getActivityCalendarDays,
   getRecentActivityDays,
   type ActivitySummaryDay,
   type HabitAttribute,
@@ -86,12 +87,34 @@ function formatActivityDate(dateKey: string) {
   };
 }
 
+function parseDateKey(dateKey: string) {
+  const [year, month, day] = dateKey.split('-').map(Number);
+  return new Date(year, month - 1, day);
+}
+
+function formatCalendarDate(dateKey: string) {
+  return parseDateKey(dateKey).toLocaleDateString('en-US', {
+    weekday: 'long',
+    month: 'long',
+    day: 'numeric',
+  });
+}
+
+function getActivityLevel(completedCount: number) {
+  if (completedCount >= 4) return 3;
+  if (completedCount >= 2) return 2;
+  if (completedCount >= 1) return 1;
+  return 0;
+}
+
 export default function ProfileScreen() {
   const db = useSQLiteContext();
   const [playerProgress, setPlayerProgress] = useState<PlayerProgress>(INITIAL_PLAYER_PROGRESS);
   const [playerProfile, setPlayerProfile] = useState<PlayerProfile>(INITIAL_PLAYER_PROFILE);
   const [activityStreak, setActivityStreak] = useState(0);
   const [recentActivity, setRecentActivity] = useState<ActivitySummaryDay[]>([]);
+  const [activityCalendar, setActivityCalendar] = useState<ActivitySummaryDay[]>([]);
+  const [selectedActivityDate, setSelectedActivityDate] = useState('');
   const [achievementSummary, setAchievementSummary] =
     useState<AchievementSummary>(initialAchievementSummary);
   const [allocatingAttribute, setAllocatingAttribute] = useState<HabitAttribute | null>(null);
@@ -100,17 +123,21 @@ export default function ProfileScreen() {
   const loadProfile = useCallback(async () => {
     try {
       setLoading(true);
-      const [progressSummary, profile, streak, activityDays, achievements] = await Promise.all([
+      const [progressSummary, profile, streak, activityDays, calendarDays, achievements] =
+        await Promise.all([
         getPlayerProgress(db),
         getPlayerProfile(db),
         getActivityStreak(db),
         getRecentActivityDays(db),
+        getActivityCalendarDays(db),
         getAchievementSummary(db),
-      ]);
+        ]);
       setPlayerProgress(progressSummary);
       setPlayerProfile(profile);
       setActivityStreak(streak);
       setRecentActivity(activityDays);
+      setActivityCalendar(calendarDays);
+      setSelectedActivityDate((current) => current || calendarDays.at(-1)?.dateKey || '');
       setAchievementSummary(achievements);
     } finally {
       setLoading(false);
@@ -153,6 +180,26 @@ export default function ProfileScreen() {
         return second.progress - first.progress;
       }),
     [achievementSummary.achievements],
+  );
+  const calendarWeeks = useMemo(
+    () =>
+      Array.from({ length: Math.ceil(activityCalendar.length / 7) }, (_, index) =>
+        activityCalendar.slice(index * 7, index * 7 + 7),
+      ),
+    [activityCalendar],
+  );
+  const calendarWeekdays = useMemo(
+    () =>
+      activityCalendar.slice(0, 7).map((day) =>
+        parseDateKey(day.dateKey)
+          .toLocaleDateString('en-US', { weekday: 'narrow' })
+          .toUpperCase(),
+      ),
+    [activityCalendar],
+  );
+  const selectedActivity = useMemo(
+    () => activityCalendar.find((day) => day.dateKey === selectedActivityDate) ?? null,
+    [activityCalendar, selectedActivityDate],
   );
 
   return (
@@ -426,6 +473,82 @@ export default function ProfileScreen() {
         <View style={styles.sectionHeader}>
           <View>
             <Text style={styles.sectionEyebrow}>JOURNEY</Text>
+            <Text style={styles.sectionTitle}>Activity calendar</Text>
+          </View>
+          <View style={styles.calendarRangeBadge}>
+            <Text style={styles.calendarRangeText}>28 DAYS</Text>
+          </View>
+        </View>
+
+        <View style={styles.calendarGrid}>
+          <View style={styles.calendarWeekdayRow}>
+            {calendarWeekdays.map((weekday, index) => (
+              <Text key={`${weekday}-${index}`} style={styles.calendarWeekday}>
+                {weekday}
+              </Text>
+            ))}
+          </View>
+          {calendarWeeks.map((week, weekIndex) => (
+            <View key={week[0]?.dateKey ?? weekIndex} style={styles.calendarWeek}>
+              {week.map((day) => {
+                const selected = selectedActivityDate === day.dateKey;
+                const activityLevel = getActivityLevel(day.completedCount);
+                return (
+                  <Pressable
+                    accessibilityLabel={`${formatCalendarDate(day.dateKey)}, ${day.completedCount} completed quests`}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected }}
+                    key={day.dateKey}
+                    onPress={() => setSelectedActivityDate(day.dateKey)}
+                    style={({ pressed }) => [
+                      styles.calendarDay,
+                      activityLevel === 1 && styles.calendarDayLevelOne,
+                      activityLevel === 2 && styles.calendarDayLevelTwo,
+                      activityLevel === 3 && styles.calendarDayLevelThree,
+                      selected && styles.calendarDaySelected,
+                      pressed && styles.calendarDayPressed,
+                    ]}>
+                    <Text
+                      style={[
+                        styles.calendarDayText,
+                        activityLevel > 0 && styles.calendarDayTextActive,
+                      ]}>
+                      {parseDateKey(day.dateKey).getDate()}
+                    </Text>
+                    {activityLevel > 0 ? <View style={styles.calendarActivityDot} /> : null}
+                  </Pressable>
+                );
+              })}
+            </View>
+          ))}
+        </View>
+
+        {selectedActivity ? (
+          <View style={styles.calendarDetail}>
+            <View style={styles.calendarDetailTop}>
+              <Text style={styles.calendarDetailDate}>
+                {formatCalendarDate(selectedActivity.dateKey)}
+              </Text>
+              <Text style={styles.calendarDetailCount}>
+                {selectedActivity.completedCount}{' '}
+                {selectedActivity.completedCount === 1 ? 'quest' : 'quests'}
+              </Text>
+            </View>
+            {selectedActivity.completedCount > 0 ? (
+              <View style={styles.calendarRewardRow}>
+                <Text style={styles.calendarReward}>+{formatNumber(selectedActivity.xpEarned)} EXP</Text>
+                <Text style={styles.calendarReward}>+{formatNumber(selectedActivity.statXpEarned)} Stat XP</Text>
+                <Text style={styles.calendarReward}>+{formatNumber(selectedActivity.energyEarned)} Energy</Text>
+              </View>
+            ) : (
+              <Text style={styles.calendarRestText}>No activity recorded for this day.</Text>
+            )}
+          </View>
+        ) : null}
+
+        <View style={styles.sectionHeader}>
+          <View>
+            <Text style={styles.sectionEyebrow}>LATEST CLEARS</Text>
             <Text style={styles.sectionTitle}>Recent activity</Text>
           </View>
         </View>
@@ -763,6 +886,77 @@ const styles = StyleSheet.create({
     borderColor: '#303650',
   },
   allocateButtonPressed: { opacity: 0.76, transform: [{ scale: 0.96 }] },
+  calendarRangeBadge: {
+    height: 26,
+    borderRadius: 9,
+    borderWidth: 1,
+    borderColor: '#303652',
+    backgroundColor: '#12172A',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 9,
+  },
+  calendarRangeText: { color: '#8EDFF2', fontSize: 8, fontWeight: '900' },
+  calendarGrid: {
+    width: '100%',
+    maxWidth: 520,
+    alignSelf: 'center',
+    gap: 7,
+    paddingBottom: 12,
+  },
+  calendarWeekdayRow: { flexDirection: 'row', gap: 7 },
+  calendarWeekday: {
+    flex: 1,
+    color: '#626A84',
+    fontSize: 8,
+    fontWeight: '900',
+    textAlign: 'center',
+  },
+  calendarWeek: { flexDirection: 'row', gap: 7 },
+  calendarDay: {
+    flex: 1,
+    aspectRatio: 1,
+    minWidth: 0,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#262C46',
+    backgroundColor: '#0D1121',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  calendarDayLevelOne: { backgroundColor: '#14313A', borderColor: '#285764' },
+  calendarDayLevelTwo: { backgroundColor: '#174756', borderColor: '#3A8192' },
+  calendarDayLevelThree: { backgroundColor: '#4A3E72', borderColor: '#826FBD' },
+  calendarDaySelected: { borderColor: '#E2D8FF', borderWidth: 2 },
+  calendarDayPressed: { opacity: 0.72 },
+  calendarDayText: { color: '#69718F', fontSize: 10, fontWeight: '800', fontVariant: ['tabular-nums'] },
+  calendarDayTextActive: { color: '#F1F6FF' },
+  calendarActivityDot: {
+    position: 'absolute',
+    bottom: 4,
+    width: 3,
+    height: 3,
+    borderRadius: 2,
+    backgroundColor: '#8DEBFF',
+  },
+  calendarDetail: {
+    width: '100%',
+    maxWidth: 520,
+    alignSelf: 'center',
+    minHeight: 78,
+    borderRadius: 15,
+    borderWidth: 1,
+    borderColor: '#2D3553',
+    backgroundColor: '#0C1020',
+    padding: 13,
+    marginBottom: 24,
+  },
+  calendarDetailTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
+  calendarDetailDate: { color: '#E8E9F4', fontSize: 12, fontWeight: '900', flexShrink: 1 },
+  calendarDetailCount: { color: '#8EDFF2', fontSize: 10, fontWeight: '900' },
+  calendarRewardRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 9, paddingTop: 10 },
+  calendarReward: { color: '#6FC8DC', fontSize: 9, fontWeight: '700' },
+  calendarRestText: { color: '#737B98', fontSize: 10, fontWeight: '700', paddingTop: 9 },
   activityList: { gap: 10 },
   emptyActivityCard: {
     minHeight: 92,

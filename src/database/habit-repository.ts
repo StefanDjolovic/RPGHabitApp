@@ -287,6 +287,65 @@ export async function getRecentActivityDays(
   );
 }
 
+export async function getActivityCalendarDays(
+  db: SQLiteDatabase,
+  dayCount = 28,
+): Promise<ActivitySummaryDay[]> {
+  const safeDayCount = Math.max(7, Math.min(84, Math.floor(dayCount)));
+  const today = new Date();
+  const startDate = new Date(today.getFullYear(), today.getMonth(), today.getDate() - safeDayCount + 1);
+  const startDateKey = getLocalDateKey(startDate);
+  const todayKey = getLocalDateKey(today);
+  const activityRows = await db.getAllAsync<ActivitySummaryDayRow>(
+    `SELECT
+       hc.completion_date AS dateKey,
+       COUNT(DISTINCT hc.id) AS completedCount,
+       COALESCE(SUM(xp.total), 0) AS xpEarned,
+       COALESCE(SUM(attribute.total), 0) AS statXpEarned,
+       COALESCE(SUM(energy.total), 0) AS energyEarned
+     FROM habit_completions hc
+     LEFT JOIN (
+       SELECT completion_id, SUM(amount) AS total
+       FROM xp_events
+       GROUP BY completion_id
+     ) xp ON xp.completion_id = hc.id
+     LEFT JOIN (
+       SELECT completion_id, SUM(amount) AS total
+       FROM attribute_events
+       GROUP BY completion_id
+     ) attribute ON attribute.completion_id = hc.id
+     LEFT JOIN (
+       SELECT completion_id, SUM(amount) AS total
+       FROM energy_events
+       GROUP BY completion_id
+     ) energy ON energy.completion_id = hc.id
+     WHERE hc.status = 'complete'
+       AND hc.completion_date BETWEEN ? AND ?
+     GROUP BY hc.completion_date`,
+    startDateKey,
+    todayKey,
+  );
+  const activityByDate = new Map(activityRows.map((day) => [day.dateKey, day]));
+
+  return Array.from({ length: safeDayCount }, (_, index) => {
+    const date = new Date(
+      startDate.getFullYear(),
+      startDate.getMonth(),
+      startDate.getDate() + index,
+    );
+    const dateKey = getLocalDateKey(date);
+    return (
+      activityByDate.get(dateKey) ?? {
+        dateKey,
+        completedCount: 0,
+        xpEarned: 0,
+        statXpEarned: 0,
+        energyEarned: 0,
+      }
+    );
+  });
+}
+
 async function getDailyClearProgress(
   db: SQLiteDatabase,
   dateKey: string,

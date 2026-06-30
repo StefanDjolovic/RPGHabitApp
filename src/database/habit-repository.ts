@@ -23,6 +23,8 @@ export type QuestLogHabit = Habit & {
   totalCompletions: number;
 };
 
+export type QuestLogStatus = 'active' | 'archived';
+
 export type ActivitySummaryDay = {
   dateKey: string;
   completedCount: number;
@@ -76,8 +78,12 @@ export async function getTodayHabits(db: SQLiteDatabase): Promise<Habit[]> {
   return rows.map((row) => ({ ...row, complete: row.complete === 1 }));
 }
 
-export async function getQuestLogHabits(db: SQLiteDatabase): Promise<QuestLogHabit[]> {
+export async function getQuestLogHabits(
+  db: SQLiteDatabase,
+  status: QuestLogStatus = 'active',
+): Promise<QuestLogHabit[]> {
   const today = getLocalDateKey();
+  const isActive = status === 'active' ? 1 : 0;
   const rows = await db.getAllAsync<QuestLogHabitRow>(
     `SELECT
        h.id,
@@ -108,9 +114,10 @@ export async function getQuestLogHabits(db: SQLiteDatabase): Promise<QuestLogHab
            AND hc_total.status = 'complete'
        ) AS totalCompletions
      FROM habits h
-     WHERE h.is_active = 1
+     WHERE h.is_active = ?
      ORDER BY h.created_at ASC, h.id ASC`,
     today,
+    isActive,
   );
 
   return rows.map((row) => ({ ...row, complete: row.complete === 1 }));
@@ -170,6 +177,24 @@ export async function createHabit(db: SQLiteDatabase, habit: NewHabit) {
     description,
     habit.difficulty,
     habit.attribute,
+  );
+}
+
+export async function archiveHabit(db: SQLiteDatabase, habitId: number) {
+  await db.runAsync(
+    `UPDATE habits
+     SET is_active = 0
+     WHERE id = ? AND is_active = 1`,
+    habitId,
+  );
+}
+
+export async function restoreHabit(db: SQLiteDatabase, habitId: number) {
+  await db.runAsync(
+    `UPDATE habits
+     SET is_active = 1
+     WHERE id = ? AND is_active = 0`,
+    habitId,
   );
 }
 

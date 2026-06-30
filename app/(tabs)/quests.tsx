@@ -5,6 +5,7 @@ import { useSQLiteContext } from 'expo-sqlite';
 import { useCallback, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Pressable,
   SafeAreaView,
   ScrollView,
@@ -14,12 +15,15 @@ import {
 } from 'react-native';
 
 import {
+  archiveHabit,
   getQuestLogHabits,
   type HabitAttribute,
   type HabitDifficulty,
   type QuestLogHabit,
   rewardByDifficulty,
+  restoreHabit,
 } from '@/src/database/habit-repository';
+import { getHabitStreaksById } from '@/src/progression/habit-streak';
 
 const difficultyMeta: Record<HabitDifficulty, { color: string; label: string }> = {
   easy: { color: '#68E1A8', label: 'Easy' },
@@ -38,6 +42,8 @@ const attributeIcons: Record<
   creativity: 'palette',
 };
 
+type QuestFilter = 'active' | 'archived';
+
 function formatAttribute(attribute: HabitAttribute) {
   return attribute.charAt(0).toUpperCase() + attribute.slice(1);
 }
@@ -50,16 +56,76 @@ function formatLastCompleted(dateKey: string | null) {
 export default function QuestsScreen() {
   const db = useSQLiteContext();
   const [quests, setQuests] = useState<QuestLogHabit[]>([]);
+  const [habitStreaksById, setHabitStreaksById] = useState<Record<number, number>>({});
+  const [questFilter, setQuestFilter] = useState<QuestFilter>('active');
+  const [updatingQuestId, setUpdatingQuestId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
 
   const loadQuests = useCallback(async () => {
     try {
       setLoading(true);
-      setQuests(await getQuestLogHabits(db));
+      const [questRows, streaksById] = await Promise.all([
+        getQuestLogHabits(db, questFilter),
+        getHabitStreaksById(db),
+      ]);
+      setQuests(questRows);
+      setHabitStreaksById(Object.fromEntries(streaksById));
     } finally {
       setLoading(false);
     }
-  }, [db]);
+  }, [db, questFilter]);
+
+  const archiveQuest = useCallback(
+    async (quest: QuestLogHabit) => {
+      const previousQuests = quests;
+      try {
+        setUpdatingQuestId(quest.id);
+        setQuests((current) => current.filter((item) => item.id !== quest.id));
+        await archiveHabit(db, quest.id);
+      } catch {
+        setQuests(previousQuests);
+      } finally {
+        setUpdatingQuestId(null);
+      }
+    },
+    [db, quests],
+  );
+
+  const restoreQuest = useCallback(
+    async (quest: QuestLogHabit) => {
+      const previousQuests = quests;
+      try {
+        setUpdatingQuestId(quest.id);
+        setQuests((current) => current.filter((item) => item.id !== quest.id));
+        await restoreHabit(db, quest.id);
+      } catch {
+        setQuests(previousQuests);
+      } finally {
+        setUpdatingQuestId(null);
+      }
+    },
+    [db, quests],
+  );
+
+  const confirmArchiveQuest = useCallback(
+    (quest: QuestLogHabit) => {
+      Alert.alert(
+        'Archive quest?',
+        'This removes it from active daily quests but keeps completion history and rewards.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Archive',
+            onPress: () => {
+              void archiveQuest(quest);
+            },
+            style: 'destructive',
+          },
+        ],
+      );
+    },
+    [archiveQuest],
+  );
 
   useFocusEffect(
     useCallback(() => {
@@ -73,14 +139,16 @@ export default function QuestsScreen() {
         const reward = rewardByDifficulty[quest.difficulty];
         return {
           completedToday: totals.completedToday + (quest.complete ? 1 : 0),
+          totalClears: totals.totalClears + quest.totalCompletions,
           totalEnergy: totals.totalEnergy + reward.energy,
           totalXp: totals.totalXp + reward.xp,
         };
       },
-      { completedToday: 0, totalEnergy: 0, totalXp: 0 },
+      { completedToday: 0, totalClears: 0, totalEnergy: 0, totalXp: 0 },
     );
   }, [quests]);
   const completionRatio = quests.length > 0 ? summary.completedToday / quests.length : 0;
+  const showingArchived = questFilter === 'archived';
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -116,13 +184,19 @@ export default function QuestsScreen() {
           <View style={styles.cardAccent} />
           <View style={styles.summaryTop}>
             <View>
-              <Text style={styles.summaryLabel}>TODAY CLEAR RATE</Text>
+              <Text style={styles.summaryLabel}>
+                {showingArchived ? 'ARCHIVED QUESTS' : 'TODAY CLEAR RATE'}
+              </Text>
               <Text style={styles.summaryValue}>
-                {summary.completedToday} / {quests.length}
+                {showingArchived ? quests.length : `${summary.completedToday} / ${quests.length}`}
               </Text>
             </View>
             <View style={styles.summaryIcon}>
-              <MaterialCommunityIcons name="sword-cross" size={28} color="#7EE8FF" />
+              <MaterialCommunityIcons
+                name={showingArchived ? 'archive-outline' : 'sword-cross'}
+                size={28}
+                color="#7EE8FF"
+              />
             </View>
           </View>
 
@@ -131,27 +205,66 @@ export default function QuestsScreen() {
               colors={['#6C4DFF', '#56D9FF']}
               end={{ x: 1, y: 0 }}
               start={{ x: 0, y: 0 }}
-              style={[styles.progressFill, { width: `${completionRatio * 100}%` }]}
+              style={[
+                styles.progressFill,
+                { width: `${(showingArchived ? 1 : completionRatio) * 100}%` },
+              ]}
             />
           </View>
 
           <View style={styles.rewardSummary}>
             <View style={styles.rewardSummaryItem}>
-              <Text style={styles.rewardSummaryValue}>{summary.totalXp}</Text>
-              <Text style={styles.rewardSummaryLabel}>XP available</Text>
+              <Text style={styles.rewardSummaryValue}>
+                {showingArchived ? summary.totalClears : summary.totalXp}
+              </Text>
+              <Text style={styles.rewardSummaryLabel}>
+                {showingArchived ? 'Historical clears' : 'XP available'}
+              </Text>
             </View>
             <View style={styles.rewardDivider} />
             <View style={styles.rewardSummaryItem}>
-              <Text style={styles.rewardSummaryValue}>{summary.totalEnergy}</Text>
-              <Text style={styles.rewardSummaryLabel}>Energy available</Text>
+              <Text style={styles.rewardSummaryValue}>
+                {showingArchived ? 'Safe' : summary.totalEnergy}
+              </Text>
+              <Text style={styles.rewardSummaryLabel}>
+                {showingArchived ? 'History preserved' : 'Energy available'}
+              </Text>
             </View>
           </View>
         </LinearGradient>
 
+        <View style={styles.filterTabs}>
+          {(['active', 'archived'] as QuestFilter[]).map((filter) => {
+            const selected = questFilter === filter;
+
+            return (
+              <Pressable
+                accessibilityRole="tab"
+                accessibilityState={{ selected }}
+                key={filter}
+                onPress={() => setQuestFilter(filter)}
+                style={[styles.filterTab, selected && styles.filterTabSelected]}>
+                <MaterialCommunityIcons
+                  name={filter === 'active' ? 'sword-cross' : 'archive-outline'}
+                  size={15}
+                  color={selected ? '#7EE8FF' : '#7F879F'}
+                />
+                <Text style={[styles.filterTabText, selected && styles.filterTabTextSelected]}>
+                  {filter === 'active' ? 'Active' : 'Archived'}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+
         <View style={styles.sectionHeader}>
           <View>
-            <Text style={styles.sectionEyebrow}>ACTIVE DAILY QUESTS</Text>
-            <Text style={styles.sectionTitle}>Quest board</Text>
+            <Text style={styles.sectionEyebrow}>
+              {showingArchived ? 'ARCHIVED QUESTS' : 'ACTIVE DAILY QUESTS'}
+            </Text>
+            <Text style={styles.sectionTitle}>
+              {showingArchived ? 'Stored records' : 'Quest board'}
+            </Text>
           </View>
           <View style={styles.countBadge}>
             <Text style={styles.countBadgeText}>{quests.length}</Text>
@@ -169,14 +282,21 @@ export default function QuestsScreen() {
           {!loading && quests.length === 0 ? (
             <View style={styles.emptyState}>
               <MaterialCommunityIcons name="book-open-page-variant" size={30} color="#707894" />
-              <Text style={styles.emptyTitle}>No active quests</Text>
-              <Text style={styles.emptyText}>Create your first daily quest to start earning XP.</Text>
+              <Text style={styles.emptyTitle}>
+                {showingArchived ? 'No archived quests' : 'No active quests'}
+              </Text>
+              <Text style={styles.emptyText}>
+                {showingArchived
+                  ? 'Archived quests will appear here with their history intact.'
+                  : 'Create your first daily quest to start earning XP.'}
+              </Text>
             </View>
           ) : null}
 
           {quests.map((quest) => {
             const difficulty = difficultyMeta[quest.difficulty];
             const reward = rewardByDifficulty[quest.difficulty];
+            const habitStreak = habitStreaksById[quest.id] ?? 0;
 
             return (
               <View
@@ -193,9 +313,30 @@ export default function QuestsScreen() {
                 <View style={styles.questBody}>
                   <View style={styles.questTitleRow}>
                     <Text style={styles.questTitle}>{quest.title}</Text>
-                    <Text style={[styles.difficulty, { color: difficulty.color }]}>
-                      {difficulty.label.toUpperCase()}
-                    </Text>
+                    <View style={styles.questActions}>
+                      <Text style={[styles.difficulty, { color: difficulty.color }]}>
+                        {difficulty.label.toUpperCase()}
+                      </Text>
+                      <Pressable
+                        accessibilityLabel={
+                          showingArchived ? `Restore ${quest.title}` : `Archive ${quest.title}`
+                        }
+                        disabled={updatingQuestId === quest.id}
+                        onPress={() =>
+                          showingArchived ? void restoreQuest(quest) : confirmArchiveQuest(quest)
+                        }
+                        style={({ pressed }) => [
+                          styles.archiveButton,
+                          pressed && styles.archiveButtonPressed,
+                          updatingQuestId === quest.id && styles.archiveButtonDisabled,
+                        ]}>
+                        <MaterialCommunityIcons
+                          name={showingArchived ? 'backup-restore' : 'archive-outline'}
+                          size={16}
+                          color={showingArchived ? '#7EE8FF' : '#7F879F'}
+                        />
+                      </Pressable>
+                    </View>
                   </View>
                   <Text style={styles.questDescription}>
                     {quest.description || 'Complete this daily quest'}
@@ -212,6 +353,12 @@ export default function QuestsScreen() {
                   </View>
 
                   <View style={styles.questMetaRow}>
+                    <View style={styles.streakPill}>
+                      <MaterialCommunityIcons name="fire" size={13} color="#FF8FC7" />
+                      <Text style={styles.streakText}>
+                        {habitStreak} {habitStreak === 1 ? 'day' : 'days'}
+                      </Text>
+                    </View>
                     <View style={[styles.statusPill, quest.complete && styles.statusPillComplete]}>
                       <View style={[styles.statusDot, quest.complete && styles.statusDotComplete]} />
                       <Text style={[styles.statusText, quest.complete && styles.statusTextComplete]}>
@@ -332,6 +479,28 @@ const styles = StyleSheet.create({
   rewardSummaryValue: { color: '#EDF0FF', fontSize: 17, fontWeight: '900' },
   rewardSummaryLabel: { color: '#777E9C', fontSize: 10, fontWeight: '700', marginTop: 2 },
   rewardDivider: { width: 1, height: 31, backgroundColor: '#30334E', marginHorizontal: 14 },
+  filterTabs: {
+    height: 44,
+    borderRadius: 15,
+    borderWidth: 1,
+    borderColor: '#252A48',
+    backgroundColor: 'rgba(12, 16, 31, 0.88)',
+    flexDirection: 'row',
+    padding: 4,
+    gap: 4,
+    marginBottom: 18,
+  },
+  filterTab: {
+    flex: 1,
+    borderRadius: 11,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 7,
+  },
+  filterTabSelected: { backgroundColor: '#102331', borderWidth: 1, borderColor: '#2F7184' },
+  filterTabText: { color: '#7F879F', fontSize: 11, fontWeight: '800' },
+  filterTabTextSelected: { color: '#9BEAFF' },
   sectionHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -399,6 +568,19 @@ const styles = StyleSheet.create({
   questBody: { flex: 1, paddingLeft: 12 },
   questTitleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   questTitle: { color: '#E8E9F4', fontSize: 14, fontWeight: '800', flexShrink: 1 },
+  questActions: { flexDirection: 'row', alignItems: 'center', gap: 7, marginLeft: 8 },
+  archiveButton: {
+    width: 27,
+    height: 27,
+    borderRadius: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#12172A',
+    borderWidth: 1,
+    borderColor: '#303652',
+  },
+  archiveButtonPressed: { opacity: 0.72 },
+  archiveButtonDisabled: { opacity: 0.38 },
   difficulty: { fontSize: 8, fontWeight: '900', letterSpacing: 0.9, marginLeft: 8 },
   questDescription: { color: '#737B98', fontSize: 10, marginTop: 4 },
   rewardRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', marginTop: 8, gap: 6 },
@@ -411,6 +593,18 @@ const styles = StyleSheet.create({
     gap: 8,
     marginTop: 10,
   },
+  streakPill: {
+    height: 24,
+    borderRadius: 12,
+    paddingHorizontal: 9,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: '#211525',
+    borderWidth: 1,
+    borderColor: '#51314F',
+  },
+  streakText: { color: '#FF9BCB', fontSize: 9, fontWeight: '900' },
   statusPill: {
     height: 24,
     borderRadius: 12,

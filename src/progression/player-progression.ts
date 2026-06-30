@@ -1,9 +1,13 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 
 import type { HabitAttribute } from '@/src/database/habit-repository';
+import {
+  MAX_DAILY_DUNGEON_ENERGY,
+  MAX_DUNGEON_ENERGY,
+} from '@/src/progression/dungeon-energy';
 
 export const MAX_LEVEL = 100;
-export const MAX_DUNGEON_ENERGY = 30;
+export { MAX_DAILY_DUNGEON_ENERGY, MAX_DUNGEON_ENERGY };
 
 export type PlayerProgress = {
   level: number;
@@ -13,6 +17,7 @@ export type PlayerProgress = {
   xpIntoLevel: number;
   xpForNextLevel: number;
   dungeonEnergy: number;
+  todayDungeonEnergy: number;
   attributeXp: Record<HabitAttribute, number>;
 };
 
@@ -35,6 +40,7 @@ export const INITIAL_PLAYER_PROGRESS: PlayerProgress = {
   xpIntoLevel: 0,
   xpForNextLevel: 100,
   dungeonEnergy: 0,
+  todayDungeonEnergy: 0,
   attributeXp: { ...emptyAttributeXp },
 };
 
@@ -78,9 +84,20 @@ export function getRankForLevel(level: number) {
 }
 
 export async function getPlayerProgress(db: SQLiteDatabase): Promise<PlayerProgress> {
-  const [xpRow, energyRow, attributeRows] = await Promise.all([
+  const today = new Date();
+  const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(
+    today.getDate(),
+  ).padStart(2, '0')}`;
+  const [xpRow, energyRow, todayEnergyRow, attributeRows] = await Promise.all([
     db.getFirstAsync<TotalRow>('SELECT COALESCE(SUM(amount), 0) AS total FROM xp_events'),
     db.getFirstAsync<TotalRow>('SELECT COALESCE(SUM(amount), 0) AS total FROM energy_events'),
+    db.getFirstAsync<TotalRow>(
+      `SELECT COALESCE(SUM(ee.amount), 0) AS total
+       FROM energy_events ee
+       JOIN habit_completions hc ON hc.id = ee.completion_id
+       WHERE hc.completion_date = ? AND hc.status = 'complete'`,
+      todayKey,
+    ),
     db.getAllAsync<AttributeTotalRow>(
       `SELECT attribute, COALESCE(SUM(amount), 0) AS total
        FROM attribute_events
@@ -90,6 +107,10 @@ export async function getPlayerProgress(db: SQLiteDatabase): Promise<PlayerProgr
 
   const totalXp = Math.max(0, xpRow?.total ?? 0);
   const dungeonEnergy = Math.min(MAX_DUNGEON_ENERGY, Math.max(0, energyRow?.total ?? 0));
+  const todayDungeonEnergy = Math.min(
+    MAX_DAILY_DUNGEON_ENERGY,
+    Math.max(0, todayEnergyRow?.total ?? 0),
+  );
   const levelProgress = getLevelProgress(totalXp);
   const rank = getRankForLevel(levelProgress.level);
   const attributeXp = { ...emptyAttributeXp };
@@ -103,6 +124,7 @@ export async function getPlayerProgress(db: SQLiteDatabase): Promise<PlayerProgr
     ...rank,
     totalXp,
     dungeonEnergy,
+    todayDungeonEnergy,
     attributeXp,
   };
 }

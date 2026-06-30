@@ -14,6 +14,9 @@ import {
 } from 'react-native';
 
 import {
+  claimDailyClearChest,
+  DailyClearStatus,
+  getDailyClearStatus,
   getTodayHabits,
   Habit,
   HabitAttribute,
@@ -24,6 +27,7 @@ import { getActivityStreak } from '@/src/progression/activity-streak';
 import {
   getPlayerProgress,
   INITIAL_PLAYER_PROGRESS,
+  MAX_DAILY_DUNGEON_ENERGY,
   MAX_DUNGEON_ENERGY,
   type PlayerProgress,
 } from '@/src/progression/player-progression';
@@ -60,12 +64,25 @@ const initialRecoveryStatus: RecoveryQuestStatus = {
   missedDays: 0,
 };
 
+const initialDailyClearStatus: DailyClearStatus = {
+  dateKey: '',
+  completed: 0,
+  required: 0,
+  eligible: false,
+  claimed: false,
+  earnedAt: null,
+  claimedAt: null,
+};
+
 export default function TodayScreen() {
   const db = useSQLiteContext();
   const [habits, setHabits] = useState<Habit[]>([]);
   const [playerProgress, setPlayerProgress] = useState<PlayerProgress>(INITIAL_PLAYER_PROGRESS);
   const [activityStreak, setActivityStreak] = useState(0);
   const [recoveryStatus, setRecoveryStatus] = useState<RecoveryQuestStatus>(initialRecoveryStatus);
+  const [dailyClearStatus, setDailyClearStatus] =
+    useState<DailyClearStatus>(initialDailyClearStatus);
+  const [claimingDailyClear, setClaimingDailyClear] = useState(false);
   const [loading, setLoading] = useState(true);
   const completed = useMemo(() => habits.filter((habit) => habit.complete).length, [habits]);
   const progress = habits.length > 0 ? completed / habits.length : 0;
@@ -73,19 +90,45 @@ export default function TodayScreen() {
     playerProgress.xpForNextLevel > 0
       ? playerProgress.xpIntoLevel / playerProgress.xpForNextLevel
       : 1;
+  const remainingDailyObjectives = Math.max(
+    0,
+    dailyClearStatus.required - dailyClearStatus.completed,
+  );
+  const dailyClearIcon = dailyClearStatus.claimed
+    ? 'check-decagram'
+    : dailyClearStatus.eligible
+      ? 'treasure-chest'
+      : 'lock-outline';
+  const dailyClearTitle = dailyClearStatus.claimed
+    ? 'Daily Clear claimed'
+    : dailyClearStatus.eligible
+      ? 'Daily Clear ready'
+      : 'Daily Clear locked';
+  const dailyClearText =
+    dailyClearStatus.required === 0
+      ? "Add an objective to activate today's chest."
+      : dailyClearStatus.claimed
+        ? "Chest claimed for today's full clear."
+        : dailyClearStatus.eligible
+          ? 'All objectives cleared. The chest is ready.'
+          : `${remainingDailyObjectives} ${
+              remainingDailyObjectives === 1 ? 'objective' : 'objectives'
+            } left before the chest unlocks.`;
 
   const loadTodayData = useCallback(async () => {
     try {
-      const [todayHabits, progressSummary, streak, recovery] = await Promise.all([
+      const [todayHabits, progressSummary, streak, recovery, dailyClear] = await Promise.all([
         getTodayHabits(db),
         getPlayerProgress(db),
         getActivityStreak(db),
         getRecoveryQuestStatus(db),
+        getDailyClearStatus(db),
       ]);
       setHabits(todayHabits);
       setPlayerProgress(progressSummary);
       setActivityStreak(streak);
       setRecoveryStatus(recovery);
+      setDailyClearStatus(dailyClear);
     } finally {
       setLoading(false);
     }
@@ -108,18 +151,35 @@ export default function TodayScreen() {
 
     try {
       await setHabitCompletion(db, id, nextComplete);
-      const [progressSummary, streak, recovery] = await Promise.all([
+      const [progressSummary, streak, recovery, dailyClear] = await Promise.all([
         getPlayerProgress(db),
         getActivityStreak(db),
         getRecoveryQuestStatus(db),
+        getDailyClearStatus(db),
       ]);
       setPlayerProgress(progressSummary);
       setActivityStreak(streak);
       setRecoveryStatus(recovery);
+      setDailyClearStatus(dailyClear);
     } catch {
       setHabits((current) =>
         current.map((item) => (item.id === id ? { ...item, complete: habit.complete } : item)),
       );
+    }
+  };
+
+  const claimDailyClear = async () => {
+    if (!dailyClearStatus.eligible || dailyClearStatus.claimed || claimingDailyClear) return;
+
+    setClaimingDailyClear(true);
+    try {
+      const status = await claimDailyClearChest(db);
+      setDailyClearStatus(status);
+    } catch {
+      const status = await getDailyClearStatus(db);
+      setDailyClearStatus(status);
+    } finally {
+      setClaimingDailyClear(false);
     }
   };
 
@@ -202,7 +262,9 @@ export default function TodayScreen() {
                 <Text style={styles.quickStatValue}>
                   {playerProgress.dungeonEnergy} / {MAX_DUNGEON_ENERGY}
                 </Text>
-                <Text style={styles.quickStatLabel}>Dungeon energy</Text>
+                <Text style={styles.quickStatLabel}>
+                  Today {playerProgress.todayDungeonEnergy} / {MAX_DAILY_DUNGEON_ENERGY}
+                </Text>
               </View>
             </View>
           </View>
@@ -231,9 +293,46 @@ export default function TodayScreen() {
               style={[styles.dailyFill, { width: `${progress * 100}%` }]}
             />
           </View>
-          <Text style={styles.dailyHint}>
-            Complete every objective to earn the Daily Clear chest.
-          </Text>
+          <View style={styles.dailyClearRow}>
+            <View
+              style={[
+                styles.dailyClearIcon,
+                dailyClearStatus.eligible && styles.dailyClearIconReady,
+                dailyClearStatus.claimed && styles.dailyClearIconClaimed,
+              ]}>
+              <MaterialCommunityIcons
+                name={dailyClearIcon}
+                size={21}
+                color={dailyClearStatus.claimed ? '#07131A' : '#8EEBFF'}
+              />
+            </View>
+            <View style={styles.dailyClearBody}>
+              <Text style={styles.dailyClearTitle}>{dailyClearTitle}</Text>
+              <Text style={styles.dailyClearText}>{dailyClearText}</Text>
+            </View>
+            {dailyClearStatus.claimed ? (
+              <View style={[styles.dailyClaimButton, styles.dailyClaimButtonClaimed]}>
+                <Text style={styles.dailyClaimButtonTextClaimed}>Claimed</Text>
+              </View>
+            ) : (
+              <Pressable
+                disabled={!dailyClearStatus.eligible || claimingDailyClear}
+                onPress={() => void claimDailyClear()}
+                style={({ pressed }) => [
+                  styles.dailyClaimButton,
+                  !dailyClearStatus.eligible && styles.dailyClaimButtonLocked,
+                  pressed && dailyClearStatus.eligible && styles.dailyClaimButtonPressed,
+                ]}>
+                <Text
+                  style={[
+                    styles.dailyClaimButtonText,
+                    !dailyClearStatus.eligible && styles.dailyClaimButtonTextLocked,
+                  ]}>
+                  {claimingDailyClear ? 'Claiming' : 'Claim'}
+                </Text>
+              </Pressable>
+            )}
+          </View>
         </View>
 
         {recoveryStatus.available || recoveryStatus.completedToday ? (
@@ -486,7 +585,50 @@ const styles = StyleSheet.create({
   dailyProgressPercent: { color: '#77E4FF', fontSize: 12, fontWeight: '900' },
   dailyTrack: { height: 5, borderRadius: 3, backgroundColor: '#080B18', overflow: 'hidden' },
   dailyFill: { height: '100%', borderRadius: 3 },
-  dailyHint: { color: '#69718F', fontSize: 10, marginTop: 9 },
+  dailyClearRow: {
+    minHeight: 54,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 12,
+  },
+  dailyClearIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(8, 11, 24, 0.92)',
+    borderWidth: 1,
+    borderColor: '#2C3658',
+  },
+  dailyClearIconReady: { borderColor: '#4AD6FF', backgroundColor: 'rgba(14, 34, 52, 0.94)' },
+  dailyClearIconClaimed: { borderColor: '#7FE7A9', backgroundColor: '#7FE7A9' },
+  dailyClearBody: { flex: 1, minWidth: 0 },
+  dailyClearTitle: { color: '#E6E9F8', fontSize: 12, fontWeight: '900' },
+  dailyClearText: { color: '#737B98', fontSize: 10, fontWeight: '700', marginTop: 3 },
+  dailyClaimButton: {
+    width: 78,
+    height: 34,
+    borderRadius: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#52D7F5',
+    borderWidth: 1,
+    borderColor: '#73E8FF',
+  },
+  dailyClaimButtonLocked: {
+    backgroundColor: 'rgba(21, 25, 44, 0.88)',
+    borderColor: '#313955',
+  },
+  dailyClaimButtonClaimed: {
+    backgroundColor: 'rgba(127, 231, 169, 0.14)',
+    borderColor: '#4D9E71',
+  },
+  dailyClaimButtonPressed: { opacity: 0.78, transform: [{ scale: 0.98 }] },
+  dailyClaimButtonText: { color: '#061018', fontSize: 11, fontWeight: '900' },
+  dailyClaimButtonTextLocked: { color: '#68708D' },
+  dailyClaimButtonTextClaimed: { color: '#8DECB4', fontSize: 10, fontWeight: '900' },
   recoveryCard: {
     minHeight: 104,
     borderRadius: 17,

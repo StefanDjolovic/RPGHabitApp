@@ -1,6 +1,8 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 import { Platform } from 'react-native';
 
+import { MAX_DAILY_DUNGEON_ENERGY } from '@/src/progression/dungeon-energy';
+
 export type HabitDifficulty = 'easy' | 'medium' | 'hard';
 export type HabitAttribute =
   | 'strength'
@@ -33,6 +35,16 @@ export type ActivitySummaryDay = {
   energyEarned: number;
 };
 
+export type DailyClearStatus = {
+  dateKey: string;
+  completed: number;
+  required: number;
+  eligible: boolean;
+  claimed: boolean;
+  earnedAt: string | null;
+  claimedAt: string | null;
+};
+
 export type NewHabit = {
   title: string;
   description: string;
@@ -40,9 +52,18 @@ export type NewHabit = {
   attribute: HabitAttribute;
 };
 
+export type EditableHabit = NewHabit & { id: number };
+
 type HabitRow = Omit<Habit, 'complete'> & { complete: number };
 type QuestLogHabitRow = Omit<QuestLogHabit, 'complete'> & { complete: number };
 type ActivitySummaryDayRow = ActivitySummaryDay;
+type AttributeEventTotalRow = { attribute: HabitAttribute; total: number };
+type DailyClearChestRow = {
+  status: 'earned' | 'claimed';
+  earnedAt: string;
+  claimedAt: string | null;
+};
+type DailyClearProgressRow = { required: number; completed: number };
 
 export const rewardByDifficulty = {
   easy: { xp: 10, statXp: 1, energy: 1 },
@@ -162,6 +183,91 @@ export async function getRecentActivityDays(
   );
 }
 
+async function getDailyClearProgress(
+  db: SQLiteDatabase,
+  dateKey: string,
+): Promise<DailyClearProgressRow> {
+  const row = await db.getFirstAsync<DailyClearProgressRow>(
+    `SELECT
+       COUNT(h.id) AS required,
+       COALESCE(
+         SUM(CASE WHEN hc.status = 'complete' THEN 1 ELSE 0 END),
+         0
+       ) AS completed
+     FROM habits h
+     LEFT JOIN habit_completions hc
+       ON hc.habit_id = h.id AND hc.completion_date = ?
+     WHERE h.is_active = 1 AND h.habit_type = 'daily'`,
+    dateKey,
+  );
+
+  return {
+    required: row?.required ?? 0,
+    completed: row?.completed ?? 0,
+  };
+}
+
+export async function getDailyClearStatus(db: SQLiteDatabase): Promise<DailyClearStatus> {
+  const today = getLocalDateKey();
+  const [progress, chest] = await Promise.all([
+    getDailyClearProgress(db, today),
+    db.getFirstAsync<DailyClearChestRow>(
+      `SELECT
+         status,
+         earned_at AS earnedAt,
+         claimed_at AS claimedAt
+       FROM daily_clear_chests
+       WHERE clear_date = ?
+       LIMIT 1`,
+      today,
+    ),
+  ]);
+  const eligible = progress.required > 0 && progress.completed >= progress.required;
+
+  return {
+    dateKey: today,
+    ...progress,
+    eligible,
+    claimed: eligible && chest?.status === 'claimed',
+    earnedAt: chest?.earnedAt ?? null,
+    claimedAt: eligible ? chest?.claimedAt ?? null : null,
+  };
+}
+
+export async function claimDailyClearChest(db: SQLiteDatabase): Promise<DailyClearStatus> {
+  const today = getLocalDateKey();
+
+  const applyClaim = async (txn: SQLiteDatabase) => {
+    const progress = await getDailyClearProgress(txn, today);
+    const eligible = progress.required > 0 && progress.completed >= progress.required;
+
+    if (!eligible) {
+      throw new Error('Daily Clear is not ready.');
+    }
+
+    await txn.runAsync(
+      `INSERT OR IGNORE INTO daily_clear_chests (clear_date, status, earned_at)
+       VALUES (?, 'earned', CURRENT_TIMESTAMP)`,
+      today,
+    );
+    await txn.runAsync(
+      `UPDATE daily_clear_chests
+       SET status = 'claimed',
+           claimed_at = COALESCE(claimed_at, CURRENT_TIMESTAMP)
+       WHERE clear_date = ?`,
+      today,
+    );
+  };
+
+  if (Platform.OS === 'web') {
+    await db.withTransactionAsync(() => applyClaim(db));
+  } else {
+    await db.withExclusiveTransactionAsync(applyClaim);
+  }
+
+  return getDailyClearStatus(db);
+}
+
 export async function createHabit(db: SQLiteDatabase, habit: NewHabit) {
   const title = habit.title.trim();
   const description = habit.description.trim();
@@ -177,6 +283,41 @@ export async function createHabit(db: SQLiteDatabase, habit: NewHabit) {
     description,
     habit.difficulty,
     habit.attribute,
+  );
+}
+
+export async function getHabitForEdit(
+  db: SQLiteDatabase,
+  habitId: number,
+): Promise<EditableHabit | null> {
+  const row = await db.getFirstAsync<EditableHabit>(
+    `SELECT id, title, description, difficulty, attribute
+     FROM habits
+     WHERE id = ?
+     LIMIT 1`,
+    habitId,
+  );
+
+  return row ?? null;
+}
+
+export async function updateHabit(db: SQLiteDatabase, habitId: number, habit: NewHabit) {
+  const title = habit.title.trim();
+  const description = habit.description.trim();
+
+  if (!title) {
+    throw new Error('Habit title is required.');
+  }
+
+  await db.runAsync(
+    `UPDATE habits
+     SET title = ?, description = ?, difficulty = ?, attribute = ?
+     WHERE id = ?`,
+    title,
+    description,
+    habit.difficulty,
+    habit.attribute,
+    habitId,
   );
 }
 
@@ -261,40 +402,127 @@ export async function setHabitCompletion(
     if (!eventId) throw new Error('Could not create reward event.');
 
     const reward = rewardByDifficulty[row.difficulty];
-    const multiplier = complete ? 1 : -1;
     const reason = complete ? 'completion' : 'undo';
 
-    await txn.runAsync(
-      `INSERT INTO xp_events
-         (client_event_id, completion_id, transition_number, amount, reason)
-       VALUES (?, ?, ?, ?, ?)`,
-      `${eventId}-xp`,
-      completionId,
-      transitionNumber,
-      reward.xp * multiplier,
-      reason,
-    );
-    await txn.runAsync(
-      `INSERT INTO attribute_events
-         (client_event_id, completion_id, transition_number, attribute, amount, reason)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      `${eventId}-attribute`,
-      completionId,
-      transitionNumber,
-      row.attribute,
-      reward.statXp * multiplier,
-      reason,
-    );
-    await txn.runAsync(
-      `INSERT INTO energy_events
-         (client_event_id, completion_id, transition_number, amount, reason)
-       VALUES (?, ?, ?, ?, ?)`,
-      `${eventId}-energy`,
-      completionId,
-      transitionNumber,
-      reward.energy * multiplier,
-      reason,
-    );
+    if (complete) {
+      const dailyEnergyRow = await txn.getFirstAsync<{ total: number }>(
+        `SELECT COALESCE(SUM(ee.amount), 0) AS total
+         FROM energy_events ee
+         JOIN habit_completions hc ON hc.id = ee.completion_id
+         WHERE hc.completion_date = ? AND hc.status = 'complete'`,
+        today,
+      );
+      const remainingDailyEnergy = Math.max(
+        0,
+        MAX_DAILY_DUNGEON_ENERGY - Math.max(0, dailyEnergyRow?.total ?? 0),
+      );
+      const energyAmount = Math.min(reward.energy, remainingDailyEnergy);
+
+      await txn.runAsync(
+        `INSERT INTO xp_events
+           (client_event_id, completion_id, transition_number, amount, reason)
+         VALUES (?, ?, ?, ?, ?)`,
+        `${eventId}-xp`,
+        completionId,
+        transitionNumber,
+        reward.xp,
+        reason,
+      );
+      await txn.runAsync(
+        `INSERT INTO attribute_events
+           (client_event_id, completion_id, transition_number, attribute, amount, reason)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        `${eventId}-attribute`,
+        completionId,
+        transitionNumber,
+        row.attribute,
+        reward.statXp,
+        reason,
+      );
+
+      if (energyAmount > 0) {
+        await txn.runAsync(
+          `INSERT INTO energy_events
+             (client_event_id, completion_id, transition_number, amount, reason)
+           VALUES (?, ?, ?, ?, ?)`,
+          `${eventId}-energy`,
+          completionId,
+          transitionNumber,
+          energyAmount,
+          reason,
+        );
+      }
+
+      return;
+    }
+
+    const [xpTotalRow, attributeTotalRow, energyTotalRow] = await Promise.all([
+      txn.getFirstAsync<{ total: number }>(
+        `SELECT COALESCE(SUM(amount), 0) AS total
+         FROM xp_events
+         WHERE completion_id = ?`,
+        completionId,
+      ),
+      txn.getFirstAsync<AttributeEventTotalRow>(
+        `SELECT attribute, COALESCE(SUM(amount), 0) AS total
+         FROM attribute_events
+         WHERE completion_id = ?
+         GROUP BY attribute
+         HAVING total > 0
+         ORDER BY total DESC
+         LIMIT 1`,
+        completionId,
+      ),
+      txn.getFirstAsync<{ total: number }>(
+        `SELECT COALESCE(SUM(amount), 0) AS total
+         FROM energy_events
+         WHERE completion_id = ?`,
+        completionId,
+      ),
+    ]);
+    const xpAmount = Math.max(0, xpTotalRow?.total ?? 0);
+    const attributeAmount = Math.max(0, attributeTotalRow?.total ?? 0);
+    const energyAmount = Math.max(0, energyTotalRow?.total ?? 0);
+
+    if (xpAmount > 0) {
+      await txn.runAsync(
+        `INSERT INTO xp_events
+           (client_event_id, completion_id, transition_number, amount, reason)
+         VALUES (?, ?, ?, ?, ?)`,
+        `${eventId}-xp`,
+        completionId,
+        transitionNumber,
+        -xpAmount,
+        reason,
+      );
+    }
+
+    if (attributeTotalRow && attributeAmount > 0) {
+      await txn.runAsync(
+        `INSERT INTO attribute_events
+           (client_event_id, completion_id, transition_number, attribute, amount, reason)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        `${eventId}-attribute`,
+        completionId,
+        transitionNumber,
+        attributeTotalRow.attribute,
+        -attributeAmount,
+        reason,
+      );
+    }
+
+    if (energyAmount > 0) {
+      await txn.runAsync(
+        `INSERT INTO energy_events
+           (client_event_id, completion_id, transition_number, amount, reason)
+         VALUES (?, ?, ?, ?, ?)`,
+        `${eventId}-energy`,
+        completionId,
+        transitionNumber,
+        -energyAmount,
+        reason,
+      );
+    }
   };
 
   if (Platform.OS === 'web') {

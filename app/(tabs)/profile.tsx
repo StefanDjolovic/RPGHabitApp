@@ -21,6 +21,7 @@ import { getActivityStreak } from '@/src/progression/activity-streak';
 import {
   getPlayerProgress,
   INITIAL_PLAYER_PROGRESS,
+  MAX_DAILY_DUNGEON_ENERGY,
   MAX_DUNGEON_ENERGY,
   type PlayerProgress,
 } from '@/src/progression/player-progression';
@@ -182,7 +183,9 @@ export default function ProfileScreen() {
             <Text style={styles.statValue}>
               {playerProgress.dungeonEnergy} / {MAX_DUNGEON_ENERGY}
             </Text>
-            <Text style={styles.statLabel}>Dungeon energy</Text>
+            <Text style={styles.statLabel}>
+              Today {playerProgress.todayDungeonEnergy} / {MAX_DAILY_DUNGEON_ENERGY} earned
+            </Text>
             <View style={styles.smallTrack}>
               <View style={[styles.energyFill, { width: `${energyRatio * 100}%` }]} />
             </View>

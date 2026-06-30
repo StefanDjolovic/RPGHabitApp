@@ -1,8 +1,8 @@
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -18,9 +18,11 @@ import {
 
 import {
   createHabit,
+  getHabitForEdit,
   HabitAttribute,
   HabitDifficulty,
   rewardByDifficulty,
+  updateHabit,
 } from '@/src/database/habit-repository';
 
 const difficultyOptions: { value: HabitDifficulty; label: string; color: string }[] = [
@@ -43,13 +45,55 @@ const attributeOptions: {
 
 export default function CreateHabitScreen() {
   const db = useSQLiteContext();
+  const params = useLocalSearchParams();
+  const rawHabitId = Array.isArray(params.id) ? params.id[0] : params.id;
+  const habitId = useMemo(() => {
+    const parsedId = Number(rawHabitId);
+    return Number.isInteger(parsedId) && parsedId > 0 ? parsedId : null;
+  }, [rawHabitId]);
+  const editing = habitId !== null;
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [difficulty, setDifficulty] = useState<HabitDifficulty>('medium');
   const [attribute, setAttribute] = useState<HabitAttribute>('discipline');
+  const [loadingHabit, setLoadingHabit] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const reward = useMemo(() => rewardByDifficulty[difficulty], [difficulty]);
+
+  useEffect(() => {
+    if (!habitId) return;
+
+    let active = true;
+    const loadHabit = async () => {
+      try {
+        setLoadingHabit(true);
+        setError('');
+        const habit = await getHabitForEdit(db, habitId);
+        if (!active) return;
+
+        if (!habit) {
+          setError('This quest could not be found.');
+          return;
+        }
+
+        setTitle(habit.title);
+        setDescription(habit.description);
+        setDifficulty(habit.difficulty);
+        setAttribute(habit.attribute);
+      } catch {
+        if (active) setError('The quest could not be loaded. Please try again.');
+      } finally {
+        if (active) setLoadingHabit(false);
+      }
+    };
+
+    void loadHabit();
+
+    return () => {
+      active = false;
+    };
+  }, [db, habitId]);
 
   const saveHabit = async () => {
     if (!title.trim()) {
@@ -60,7 +104,11 @@ export default function CreateHabitScreen() {
     try {
       setSaving(true);
       setError('');
-      await createHabit(db, { title, description, difficulty, attribute });
+      if (editing && habitId) {
+        await updateHabit(db, habitId, { title, description, difficulty, attribute });
+      } else {
+        await createHabit(db, { title, description, difficulty, attribute });
+      }
       router.back();
     } catch {
       setError('The habit could not be saved. Please try again.');
@@ -82,15 +130,15 @@ export default function CreateHabitScreen() {
               <MaterialCommunityIcons name="close" color="#BFC5DB" size={23} />
             </Pressable>
             <View style={styles.headerText}>
-              <Text style={styles.eyebrow}>NEW DAILY QUEST</Text>
-              <Text style={styles.title}>Create habit</Text>
+              <Text style={styles.eyebrow}>{editing ? 'EDIT DAILY QUEST' : 'NEW DAILY QUEST'}</Text>
+              <Text style={styles.title}>{editing ? 'Edit habit' : 'Create habit'}</Text>
             </View>
             <View style={styles.headerSpacer} />
           </View>
 
           <Text style={styles.label}>HABIT NAME</Text>
           <TextInput
-            autoFocus
+            autoFocus={!editing}
             maxLength={60}
             onChangeText={setTitle}
             placeholder="e.g. Morning workout"
@@ -161,7 +209,9 @@ export default function CreateHabitScreen() {
           <LinearGradient colors={['#171633', '#0B1826']} style={styles.rewardCard}>
             <View style={styles.rewardHeader}>
               <MaterialCommunityIcons name="creation" color="#B898FF" size={20} />
-              <Text style={styles.rewardTitle}>Quest reward</Text>
+              <Text style={styles.rewardTitle}>
+                {editing ? 'Future quest reward' : 'Quest reward'}
+              </Text>
             </View>
             <View style={styles.rewardValues}>
               <View style={styles.rewardItem}>
@@ -184,16 +234,22 @@ export default function CreateHabitScreen() {
           {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
           <Pressable
-            disabled={saving}
+            disabled={saving || loadingHabit}
             onPress={saveHabit}
             style={({ pressed }) => [styles.saveButton, pressed && styles.saveButtonPressed]}>
             <LinearGradient colors={['#744DFF', '#27C9EF']} style={styles.saveGradient}>
-              {saving ? (
+              {saving || loadingHabit ? (
                 <ActivityIndicator color="#FFFFFF" />
               ) : (
                 <>
-                  <MaterialCommunityIcons name="plus-circle" color="#FFFFFF" size={21} />
-                  <Text style={styles.saveText}>Create daily quest</Text>
+                  <MaterialCommunityIcons
+                    name={editing ? 'content-save' : 'plus-circle'}
+                    color="#FFFFFF"
+                    size={21}
+                  />
+                  <Text style={styles.saveText}>
+                    {editing ? 'Save daily quest' : 'Create daily quest'}
+                  </Text>
                 </>
               )}
             </LinearGradient>

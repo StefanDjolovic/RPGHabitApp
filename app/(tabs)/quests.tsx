@@ -1,6 +1,6 @@
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { router, useFocusEffect } from 'expo-router';
+import { router, type Href, useFocusEffect } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
 import { useCallback, useMemo, useState } from 'react';
 import {
@@ -317,6 +317,17 @@ export default function QuestsScreen() {
                       <Text style={[styles.difficulty, { color: difficulty.color }]}>
                         {difficulty.label.toUpperCase()}
                       </Text>
+                      {!showingArchived ? (
+                        <Pressable
+                          accessibilityLabel={`Edit ${quest.title}`}
+                          onPress={() => router.push(`/create-habit?id=${quest.id}` as Href)}
+                          style={({ pressed }) => [
+                            styles.cardActionButton,
+                            pressed && styles.cardActionButtonPressed,
+                          ]}>
+                          <MaterialCommunityIcons name="pencil" size={16} color="#7EE8FF" />
+                        </Pressable>
+                      ) : null}
                       <Pressable
                         accessibilityLabel={
                           showingArchived ? `Restore ${quest.title}` : `Archive ${quest.title}`
@@ -326,9 +337,9 @@ export default function QuestsScreen() {
                           showingArchived ? void restoreQuest(quest) : confirmArchiveQuest(quest)
                         }
                         style={({ pressed }) => [
-                          styles.archiveButton,
-                          pressed && styles.archiveButtonPressed,
-                          updatingQuestId === quest.id && styles.archiveButtonDisabled,
+                          styles.cardActionButton,
+                          pressed && styles.cardActionButtonPressed,
+                          updatingQuestId === quest.id && styles.cardActionButtonDisabled,
                         ]}>
                         <MaterialCommunityIcons
                           name={showingArchived ? 'backup-restore' : 'archive-outline'}
@@ -569,7 +580,7 @@ const styles = StyleSheet.create({
   questTitleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   questTitle: { color: '#E8E9F4', fontSize: 14, fontWeight: '800', flexShrink: 1 },
   questActions: { flexDirection: 'row', alignItems: 'center', gap: 7, marginLeft: 8 },
-  archiveButton: {
+  cardActionButton: {
     width: 27,
     height: 27,
     borderRadius: 9,
@@ -579,8 +590,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#303652',
   },
-  archiveButtonPressed: { opacity: 0.72 },
-  archiveButtonDisabled: { opacity: 0.38 },
+  cardActionButtonPressed: { opacity: 0.72 },
+  cardActionButtonDisabled: { opacity: 0.38 },
   difficulty: { fontSize: 8, fontWeight: '900', letterSpacing: 0.9, marginLeft: 8 },
   questDescription: { color: '#737B98', fontSize: 10, marginTop: 4 },
   rewardRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', marginTop: 8, gap: 6 },

@@ -1,6 +1,6 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 
-const DATABASE_VERSION = 2;
+const DATABASE_VERSION = 3;
 
 const seedHabits = [
   ['Morning workout', 'Complete 30 minutes', 'hard', 'strength'],
@@ -145,6 +145,18 @@ export async function migrateDatabase(db: SQLiteDatabase) {
         'completion'
       FROM habit_completions hc
       JOIN habits h ON h.id = hc.habit_id;
+    `);
+  }
+
+  if (currentVersion < 3) {
+    await db.execAsync(`
+      CREATE TABLE IF NOT EXISTS daily_clear_chests (
+        clear_date TEXT PRIMARY KEY,
+        status TEXT NOT NULL DEFAULT 'earned'
+          CHECK (status IN ('earned', 'claimed')),
+        earned_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        claimed_at TEXT
+      );
     `);
   }
 

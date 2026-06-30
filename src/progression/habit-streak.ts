@@ -1,4 +1,4 @@
-gimport type { SQLiteDatabase } from 'expo-sqlite';
+import type { SQLiteDatabase } from 'expo-sqlite';
 
 import { getLocalDateKey } from '@/src/database/habit-repository';
 

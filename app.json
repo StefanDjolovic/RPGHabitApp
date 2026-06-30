@@ -39,7 +39,14 @@
           }
         }
       ],
-      "expo-sqlite"
+      "expo-sqlite",
+      [
+        "expo-notifications",
+        {
+          "color": "#6DDEFF",
+          "defaultChannel": "habit-reminders"
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,

@@ -6,6 +6,7 @@ import { MAX_DAILY_DUNGEON_ENERGY } from '@/src/progression/dungeon-energy';
 
 export type HabitDifficulty = 'easy' | 'medium' | 'hard';
 export type HabitGoalType = 'single' | 'counter';
+export type ReminderTone = 'gentle' | 'system' | 'strict';
 export type HabitAttribute =
   | 'strength'
   | 'intelligence'
@@ -22,6 +23,9 @@ export type Habit = {
   goalType: HabitGoalType;
   targetCount: number;
   currentCount: number;
+  reminderEnabled: boolean;
+  reminderTime: string;
+  reminderTone: ReminderTone;
   scheduleDays: number[];
   isRequired: boolean;
   complete: boolean;
@@ -62,29 +66,41 @@ export type NewHabit = {
   attribute: HabitAttribute;
   goalType: HabitGoalType;
   targetCount: number;
+  reminderEnabled: boolean;
+  reminderTime: string;
+  reminderTone: ReminderTone;
   scheduleDays: number[];
   isRequired: boolean;
 };
 
 export type EditableHabit = NewHabit & { id: number };
 
-type HabitRow = Omit<Habit, 'complete' | 'scheduleDays' | 'isRequired'> & {
+type HabitRow = Omit<
+  Habit,
+  'complete' | 'scheduleDays' | 'isRequired' | 'reminderEnabled'
+> & {
   scheduleDays: string;
   isRequired: number;
+  reminderEnabled: number;
   complete: number;
 };
 type QuestLogHabitRow = Omit<
   QuestLogHabit,
-  'complete' | 'scheduleDays' | 'isRequired' | 'isPaused'
+  'complete' | 'scheduleDays' | 'isRequired' | 'isPaused' | 'reminderEnabled'
 > & {
   scheduleDays: string;
   isRequired: number;
   isPaused: number;
+  reminderEnabled: number;
   complete: number;
 };
-type EditableHabitRow = Omit<EditableHabit, 'scheduleDays' | 'isRequired'> & {
+type EditableHabitRow = Omit<
+  EditableHabit,
+  'scheduleDays' | 'isRequired' | 'reminderEnabled'
+> & {
   scheduleDays: string;
   isRequired: number;
+  reminderEnabled: number;
 };
 type ActivitySummaryDayRow = ActivitySummaryDay;
 type AttributeEventTotalRow = { attribute: HabitAttribute; total: number };
@@ -129,11 +145,21 @@ function normalizeTargetCount(goalType: HabitGoalType, targetCount: number) {
   return Math.max(2, Math.floor(targetCount));
 }
 
+function normalizeReminderTime(value: string) {
+  const match = /^(\d{2}):(\d{2})$/.exec(value);
+  if (!match) return '09:00';
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (hour > 23 || minute > 59) return '09:00';
+  return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+}
+
 function toHabit(row: HabitRow): Habit {
   return {
     ...row,
     scheduleDays: parseScheduleDays(row.scheduleDays),
     isRequired: Boolean(row.isRequired),
+    reminderEnabled: Boolean(row.reminderEnabled),
     complete: row.complete === 1,
   };
 }
@@ -144,6 +170,7 @@ function toQuestLogHabit(row: QuestLogHabitRow): QuestLogHabit {
     scheduleDays: parseScheduleDays(row.scheduleDays),
     isRequired: Boolean(row.isRequired),
     isPaused: Boolean(row.isPaused),
+    reminderEnabled: Boolean(row.reminderEnabled),
     complete: row.complete === 1,
   };
 }
@@ -172,6 +199,9 @@ export async function getTodayHabits(db: SQLiteDatabase): Promise<Habit[]> {
        h.attribute,
        h.goal_type AS goalType,
        h.target_count AS targetCount,
+       h.reminder_enabled AS reminderEnabled,
+       h.reminder_time AS reminderTime,
+       h.reminder_tone AS reminderTone,
        CASE
          WHEN h.goal_type = 'counter' AND hc.status = 'complete'
            THEN h.target_count
@@ -212,6 +242,9 @@ export async function getQuestLogHabits(
        h.attribute,
        h.goal_type AS goalType,
        h.target_count AS targetCount,
+       h.reminder_enabled AS reminderEnabled,
+       h.reminder_time AS reminderTime,
+       h.reminder_tone AS reminderTone,
        CASE
          WHEN h.goal_type = 'counter' AND hc_today.status = 'complete'
            THEN h.target_count
@@ -467,12 +500,13 @@ export async function createHabit(db: SQLiteDatabase, habit: NewHabit) {
   const description = habit.description.trim();
   const scheduleDays = serializeScheduleDays(habit.scheduleDays);
   const targetCount = normalizeTargetCount(habit.goalType, habit.targetCount);
+  const reminderTime = normalizeReminderTime(habit.reminderTime);
 
   if (!title) {
     throw new Error('Habit title is required.');
   }
 
-  await db.runAsync(
+  const result = await db.runAsync(
     `INSERT INTO habits (
        title,
        description,
@@ -480,19 +514,27 @@ export async function createHabit(db: SQLiteDatabase, habit: NewHabit) {
        attribute,
        goal_type,
        target_count,
+       reminder_enabled,
+       reminder_time,
+       reminder_tone,
        schedule_days,
        is_required
      )
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     title,
     description,
     habit.difficulty,
     habit.attribute,
     habit.goalType,
     targetCount,
+    habit.reminderEnabled ? 1 : 0,
+    reminderTime,
+    habit.reminderTone,
     scheduleDays,
     habit.isRequired ? 1 : 0,
   );
+
+  return result.lastInsertRowId;
 }
 
 export async function getHabitForEdit(
@@ -508,6 +550,9 @@ export async function getHabitForEdit(
        attribute,
        goal_type AS goalType,
        target_count AS targetCount,
+       reminder_enabled AS reminderEnabled,
+       reminder_time AS reminderTime,
+       reminder_tone AS reminderTone,
        schedule_days AS scheduleDays,
        is_required AS isRequired
      FROM habits
@@ -522,6 +567,7 @@ export async function getHabitForEdit(
     ...row,
     scheduleDays: parseScheduleDays(row.scheduleDays),
     isRequired: row.isRequired === 1,
+    reminderEnabled: row.reminderEnabled === 1,
   };
 }
 
@@ -530,6 +576,7 @@ export async function updateHabit(db: SQLiteDatabase, habitId: number, habit: Ne
   const description = habit.description.trim();
   const scheduleDays = serializeScheduleDays(habit.scheduleDays);
   const targetCount = normalizeTargetCount(habit.goalType, habit.targetCount);
+  const reminderTime = normalizeReminderTime(habit.reminderTime);
 
   if (!title) {
     throw new Error('Habit title is required.');
@@ -544,6 +591,9 @@ export async function updateHabit(db: SQLiteDatabase, habitId: number, habit: Ne
        attribute = ?,
        goal_type = ?,
        target_count = ?,
+       reminder_enabled = ?,
+       reminder_time = ?,
+       reminder_tone = ?,
        schedule_days = ?,
        is_required = ?
      WHERE id = ?`,
@@ -553,6 +603,9 @@ export async function updateHabit(db: SQLiteDatabase, habitId: number, habit: Ne
     habit.attribute,
     habit.goalType,
     targetCount,
+    habit.reminderEnabled ? 1 : 0,
+    reminderTime,
+    habit.reminderTone,
     scheduleDays,
     habit.isRequired ? 1 : 0,
     habitId,

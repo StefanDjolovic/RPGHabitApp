@@ -3,6 +3,7 @@ import { Stack } from 'expo-router';
 import { SQLiteProvider } from 'expo-sqlite';
 import { StatusBar } from 'expo-status-bar';
 import 'react-native-reanimated';
+import '@/src/notifications/habit-reminders';
 
 import { migrateDatabase } from '@/src/database/database';
 

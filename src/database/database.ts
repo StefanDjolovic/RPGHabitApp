@@ -1,6 +1,6 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 
-const DATABASE_VERSION = 10;
+const DATABASE_VERSION = 11;
 
 export async function migrateDatabase(db: SQLiteDatabase) {
   await db.execAsync('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
@@ -264,6 +264,32 @@ export async function migrateDatabase(db: SQLiteDatabase) {
       INSERT OR IGNORE INTO player_profile (
         id, nickname, avatar_mode, life_areas, onboarding_completed
       ) VALUES (1, 'Shadow Candidate', 'system', '', ${onboardingCompleted});
+    `);
+  }
+
+  if (currentVersion < 11) {
+    await db.execAsync(`
+      ALTER TABLE habits
+        ADD COLUMN reminder_enabled INTEGER NOT NULL DEFAULT 0
+        CHECK (reminder_enabled IN (0, 1));
+
+      ALTER TABLE habits
+        ADD COLUMN reminder_time TEXT NOT NULL DEFAULT '09:00';
+
+      ALTER TABLE habits
+        ADD COLUMN reminder_tone TEXT NOT NULL DEFAULT 'gentle'
+        CHECK (reminder_tone IN ('gentle', 'system', 'strict'));
+
+      CREATE TABLE IF NOT EXISTS habit_reminder_notifications (
+        notification_id TEXT PRIMARY KEY,
+        habit_id INTEGER NOT NULL,
+        weekday INTEGER NOT NULL CHECK (weekday BETWEEN 1 AND 7),
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (habit_id) REFERENCES habits(id) ON DELETE CASCADE
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_habit_reminder_notifications_habit
+        ON habit_reminder_notifications(habit_id);
     `);
   }
 

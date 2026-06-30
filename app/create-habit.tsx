@@ -5,12 +5,14 @@ import { useSQLiteContext } from 'expo-sqlite';
 import { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   KeyboardAvoidingView,
   Platform,
   Pressable,
   SafeAreaView,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
   View,
@@ -22,9 +24,15 @@ import {
   HabitAttribute,
   HabitDifficulty,
   HabitGoalType,
+  ReminderTone,
   rewardByDifficulty,
   updateHabit,
 } from '@/src/database/habit-repository';
+import {
+  disableHabitReminder,
+  requestHabitReminderPermission,
+  syncHabitReminderFromDatabase,
+} from '@/src/notifications/habit-reminders';
 
 const difficultyOptions: { value: HabitDifficulty; label: string; color: string }[] = [
   { value: 'easy', label: 'Easy', color: '#68E1A8' },
@@ -55,6 +63,11 @@ const weekdayOptions = [
 ];
 
 const everyDaySchedule = weekdayOptions.map((day) => day.value);
+const reminderToneOptions: { value: ReminderTone; label: string }[] = [
+  { value: 'gentle', label: 'Gentle' },
+  { value: 'system', label: 'System' },
+  { value: 'strict', label: 'Strict' },
+];
 
 export default function CreateHabitScreen() {
   const db = useSQLiteContext();
@@ -73,6 +86,10 @@ export default function CreateHabitScreen() {
   const [targetCount, setTargetCount] = useState(3);
   const [scheduleDays, setScheduleDays] = useState<number[]>(everyDaySchedule);
   const [isRequired, setIsRequired] = useState(true);
+  const [reminderEnabled, setReminderEnabled] = useState(false);
+  const [reminderHour, setReminderHour] = useState(9);
+  const [reminderMinute, setReminderMinute] = useState(0);
+  const [reminderTone, setReminderTone] = useState<ReminderTone>('gentle');
   const [loadingHabit, setLoadingHabit] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -102,6 +119,11 @@ export default function CreateHabitScreen() {
         setTargetCount(habit.targetCount);
         setScheduleDays(habit.scheduleDays);
         setIsRequired(habit.isRequired);
+        setReminderEnabled(habit.reminderEnabled);
+        const [hour, minute] = habit.reminderTime.split(':').map(Number);
+        setReminderHour(Number.isInteger(hour) ? hour : 9);
+        setReminderMinute(Number.isInteger(minute) ? minute : 0);
+        setReminderTone(habit.reminderTone);
       } catch {
         if (active) setError('The quest could not be loaded. Please try again.');
       } finally {
@@ -125,6 +147,16 @@ export default function CreateHabitScreen() {
     try {
       setSaving(true);
       setError('');
+      if (reminderEnabled) {
+        const permissionGranted = await requestHabitReminderPermission();
+        if (!permissionGranted) {
+          setError('Notification permission is required for this reminder.');
+          setSaving(false);
+          return;
+        }
+      }
+
+      const reminderTime = `${String(reminderHour).padStart(2, '0')}:${String(reminderMinute).padStart(2, '0')}`;
       const habitPayload = {
         title,
         description,
@@ -134,11 +166,26 @@ export default function CreateHabitScreen() {
         targetCount,
         scheduleDays,
         isRequired,
+        reminderEnabled,
+        reminderTime,
+        reminderTone,
       };
+      let savedHabitId: number;
       if (editing && habitId) {
         await updateHabit(db, habitId, habitPayload);
+        savedHabitId = habitId;
       } else {
-        await createHabit(db, habitPayload);
+        savedHabitId = await createHabit(db, habitPayload);
+      }
+
+      try {
+        await syncHabitReminderFromDatabase(db, savedHabitId);
+      } catch {
+        await disableHabitReminder(db, savedHabitId);
+        Alert.alert(
+          'Quest saved',
+          'The reminder could not be scheduled. The quest was saved with reminders turned off.',
+        );
       }
       router.back();
     } catch {
@@ -155,6 +202,13 @@ export default function CreateHabitScreen() {
 
       return [...current, day].sort((first, second) => first - second);
     });
+  };
+
+  const adjustReminderTime = (minutes: number) => {
+    const currentTotal = reminderHour * 60 + reminderMinute;
+    const nextTotal = (currentTotal + minutes + 24 * 60) % (24 * 60);
+    setReminderHour(Math.floor(nextTotal / 60));
+    setReminderMinute(nextTotal % 60);
   };
 
   return (
@@ -320,6 +374,88 @@ export default function CreateHabitScreen() {
               );
             })}
           </View>
+
+          <Text style={styles.label}>HABIT REMINDER</Text>
+          <View style={[styles.reminderHeader, !reminderEnabled && styles.reminderHeaderOff]}>
+            <View style={styles.reminderHeaderIcon}>
+              <MaterialCommunityIcons name="bell-outline" size={21} color="#7EE7FF" />
+            </View>
+            <View style={styles.reminderHeaderText}>
+              <Text style={styles.reminderTitle}>Local reminder</Text>
+              <Text style={styles.reminderStatus}>
+                {reminderEnabled
+                  ? `${String(reminderHour).padStart(2, '0')}:${String(reminderMinute).padStart(2, '0')}`
+                  : 'Off'}
+              </Text>
+            </View>
+            <Switch
+              accessibilityLabel="Habit reminder"
+              disabled={process.env.EXPO_OS === 'web'}
+              ios_backgroundColor="#303652"
+              onValueChange={setReminderEnabled}
+              thumbColor={reminderEnabled ? '#EAFBFF' : '#8A91AA'}
+              trackColor={{ false: '#303652', true: '#2E8FA5' }}
+              value={reminderEnabled}
+            />
+          </View>
+
+          {reminderEnabled ? (
+            <View style={styles.reminderSettings}>
+              <Text style={styles.reminderSettingLabel}>TIME</Text>
+              <View style={styles.timePickerRow}>
+                <Pressable
+                  accessibilityLabel="One hour earlier"
+                  onPress={() => adjustReminderTime(-60)}
+                  style={({ pressed }) => [styles.timeButton, pressed && styles.timeButtonPressed]}>
+                  <MaterialCommunityIcons name="chevron-double-left" size={18} color="#AEB6CF" />
+                </Pressable>
+                <Pressable
+                  accessibilityLabel="Fifteen minutes earlier"
+                  onPress={() => adjustReminderTime(-15)}
+                  style={({ pressed }) => [styles.timeButton, pressed && styles.timeButtonPressed]}>
+                  <MaterialCommunityIcons name="chevron-left" size={19} color="#AEB6CF" />
+                </Pressable>
+                <Text style={styles.timeValue}>
+                  {String(reminderHour).padStart(2, '0')}:{String(reminderMinute).padStart(2, '0')}
+                </Text>
+                <Pressable
+                  accessibilityLabel="Fifteen minutes later"
+                  onPress={() => adjustReminderTime(15)}
+                  style={({ pressed }) => [styles.timeButton, pressed && styles.timeButtonPressed]}>
+                  <MaterialCommunityIcons name="chevron-right" size={19} color="#7EE7FF" />
+                </Pressable>
+                <Pressable
+                  accessibilityLabel="One hour later"
+                  onPress={() => adjustReminderTime(60)}
+                  style={({ pressed }) => [styles.timeButton, pressed && styles.timeButtonPressed]}>
+                  <MaterialCommunityIcons name="chevron-double-right" size={18} color="#7EE7FF" />
+                </Pressable>
+              </View>
+
+              <Text style={styles.reminderSettingLabel}>TONE</Text>
+              <View style={styles.reminderToneRow}>
+                {reminderToneOptions.map((option) => {
+                  const selected = reminderTone === option.value;
+                  return (
+                    <Pressable
+                      accessibilityRole="radio"
+                      accessibilityState={{ checked: selected }}
+                      key={option.value}
+                      onPress={() => setReminderTone(option.value)}
+                      style={[styles.reminderToneOption, selected && styles.reminderToneOptionSelected]}>
+                      <Text
+                        style={[
+                          styles.reminderToneText,
+                          selected && styles.reminderToneTextSelected,
+                        ]}>
+                        {option.label}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </View>
+          ) : null}
 
           <Text style={styles.label}>DIFFICULTY</Text>
           <View style={styles.optionRow}>
@@ -519,6 +655,80 @@ const styles = StyleSheet.create({
   weekdayButtonSelected: { borderColor: '#3DAFCB', backgroundColor: '#0C202C' },
   weekdayText: { color: '#747C97', fontSize: 10, fontWeight: '900' },
   weekdayTextSelected: { color: '#9BEAFF' },
+  reminderHeader: {
+    minHeight: 62,
+    borderRadius: 15,
+    borderWidth: 1,
+    borderColor: '#292E48',
+    backgroundColor: '#0D1121',
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 13,
+    marginBottom: 10,
+  },
+  reminderHeaderOff: { marginBottom: 23 },
+  reminderHeaderIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#121A2D',
+  },
+  reminderHeaderText: { flex: 1, minWidth: 0, paddingHorizontal: 11 },
+  reminderTitle: { color: '#E8E9F4', fontSize: 12, fontWeight: '900' },
+  reminderStatus: { color: '#737B98', fontSize: 10, fontWeight: '700', paddingTop: 3 },
+  reminderSettings: {
+    borderRadius: 15,
+    borderWidth: 1,
+    borderColor: '#292E48',
+    backgroundColor: '#0A0E1D',
+    padding: 13,
+    marginBottom: 23,
+  },
+  reminderSettingLabel: { color: '#777F99', fontSize: 8, fontWeight: '900', paddingBottom: 8 },
+  timePickerRow: {
+    height: 44,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 6,
+    marginBottom: 16,
+  },
+  timeButton: {
+    width: 35,
+    height: 35,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#303652',
+    backgroundColor: '#141A30',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  timeButtonPressed: { opacity: 0.7 },
+  timeValue: {
+    flex: 1,
+    minWidth: 66,
+    color: '#F0EEFF',
+    fontSize: 18,
+    fontWeight: '900',
+    textAlign: 'center',
+    fontVariant: ['tabular-nums'],
+  },
+  reminderToneRow: { flexDirection: 'row', gap: 7 },
+  reminderToneOption: {
+    flex: 1,
+    height: 38,
+    borderRadius: 11,
+    borderWidth: 1,
+    borderColor: '#292E48',
+    backgroundColor: '#0D1121',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  reminderToneOptionSelected: { borderColor: '#3DAFCB', backgroundColor: '#0C202C' },
+  reminderToneText: { color: '#747C97', fontSize: 9, fontWeight: '900' },
+  reminderToneTextSelected: { color: '#9BEAFF' },
   optionRow: { flexDirection: 'row', gap: 8, marginBottom: 23 },
   difficultyOption: {
     flex: 1,

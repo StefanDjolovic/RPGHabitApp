@@ -14,6 +14,11 @@ export type StarterHabit = {
 };
 
 const everyDay = [0, 1, 2, 3, 4, 5, 6];
+const noReminder = {
+  reminderEnabled: false,
+  reminderTime: '09:00',
+  reminderTone: 'gentle',
+} as const;
 
 export const lifeAreaOptions: {
   value: LifeArea;
@@ -35,6 +40,7 @@ export const starterHabits: StarterHabit[] = [
     title: 'Move your body',
     description: 'Complete 20 minutes of movement',
     habit: {
+      ...noReminder,
       title: 'Move your body',
       description: 'Complete 20 minutes of movement',
       difficulty: 'medium',
@@ -51,6 +57,7 @@ export const starterHabits: StarterHabit[] = [
     title: 'Focused learning',
     description: 'Study or read for 20 minutes',
     habit: {
+      ...noReminder,
       title: 'Focused learning',
       description: 'Study or read for 20 minutes',
       difficulty: 'medium',
@@ -67,6 +74,7 @@ export const starterHabits: StarterHabit[] = [
     title: 'Plan the day',
     description: 'Choose the three actions that matter most',
     habit: {
+      ...noReminder,
       title: 'Plan the day',
       description: 'Choose the three actions that matter most',
       difficulty: 'easy',
@@ -83,6 +91,7 @@ export const starterHabits: StarterHabit[] = [
     title: 'Hydration checks',
     description: 'Log six glasses of water',
     habit: {
+      ...noReminder,
       title: 'Hydration checks',
       description: 'Log six glasses of water',
       difficulty: 'easy',
@@ -99,6 +108,7 @@ export const starterHabits: StarterHabit[] = [
     title: 'Make something',
     description: 'Create without judging the result for 15 minutes',
     habit: {
+      ...noReminder,
       title: 'Make something',
       description: 'Create without judging the result for 15 minutes',
       difficulty: 'medium',
@@ -112,6 +122,7 @@ export const starterHabits: StarterHabit[] = [
 ];
 
 export const tutorialHabit: NewHabit = {
+  ...noReminder,
   title: 'Tutorial: one real action',
   description: 'Complete a useful five-minute action',
   difficulty: 'easy',

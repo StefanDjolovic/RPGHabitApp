@@ -26,6 +26,7 @@ import {
   restoreHabit,
 } from '@/src/database/habit-repository';
 import { getHabitStreaksById } from '@/src/progression/habit-streak';
+import { syncHabitReminderFromDatabase } from '@/src/notifications/habit-reminders';
 
 const difficultyMeta: Record<HabitDifficulty, { color: string; label: string }> = {
   easy: { color: '#68E1A8', label: 'Easy' },
@@ -96,6 +97,7 @@ export default function QuestsScreen() {
         setUpdatingQuestId(quest.id);
         setQuests((current) => current.filter((item) => item.id !== quest.id));
         await archiveHabit(db, quest.id);
+        await syncHabitReminderFromDatabase(db, quest.id).catch(() => false);
       } catch {
         setQuests(previousQuests);
       } finally {
@@ -112,6 +114,7 @@ export default function QuestsScreen() {
         setUpdatingQuestId(quest.id);
         setQuests((current) => current.filter((item) => item.id !== quest.id));
         await restoreHabit(db, quest.id);
+        await syncHabitReminderFromDatabase(db, quest.id).catch(() => false);
       } catch {
         setQuests(previousQuests);
       } finally {
@@ -137,6 +140,7 @@ export default function QuestsScreen() {
         } else {
           await pauseHabit(db, quest.id);
         }
+        await syncHabitReminderFromDatabase(db, quest.id).catch(() => false);
       } catch {
         setQuests(previousQuests);
       } finally {
@@ -482,6 +486,16 @@ export default function QuestsScreen() {
                             : 'Pending today'}
                       </Text>
                     </View>
+                    {quest.reminderEnabled ? (
+                      <View style={styles.reminderPill}>
+                        <MaterialCommunityIcons
+                          name={showingArchived || quest.isPaused ? 'bell-off-outline' : 'bell-outline'}
+                          size={12}
+                          color={showingArchived || quest.isPaused ? '#747C97' : '#8EEBFF'}
+                        />
+                        <Text style={styles.reminderPillText}>{quest.reminderTime}</Text>
+                      </View>
+                    ) : null}
                     <Text style={styles.historyText}>
                       {formatSchedule(quest.scheduleDays)} - {quest.totalCompletions} clears -{' '}
                       {formatLastCompleted(quest.lastCompletedDate)}
@@ -760,6 +774,18 @@ const styles = StyleSheet.create({
   statusText: { color: '#8A91AA', fontSize: 9, fontWeight: '800' },
   statusTextComplete: { color: '#8AE8F9' },
   statusTextPaused: { color: '#FFD27A' },
+  reminderPill: {
+    height: 24,
+    borderRadius: 12,
+    paddingHorizontal: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: '#10202A',
+    borderWidth: 1,
+    borderColor: '#284B5A',
+  },
+  reminderPillText: { color: '#8EDFF2', fontSize: 9, fontWeight: '900', fontVariant: ['tabular-nums'] },
   historyText: { color: '#69718F', fontSize: 9, fontWeight: '700', flexShrink: 1 },
   addButton: {
     height: 50,

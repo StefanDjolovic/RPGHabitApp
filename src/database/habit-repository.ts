@@ -18,6 +18,19 @@ export type Habit = {
   complete: boolean;
 };
 
+export type QuestLogHabit = Habit & {
+  lastCompletedDate: string | null;
+  totalCompletions: number;
+};
+
+export type ActivitySummaryDay = {
+  dateKey: string;
+  completedCount: number;
+  xpEarned: number;
+  statXpEarned: number;
+  energyEarned: number;
+};
+
 export type NewHabit = {
   title: string;
   description: string;
@@ -26,6 +39,8 @@ export type NewHabit = {
 };
 
 type HabitRow = Omit<Habit, 'complete'> & { complete: number };
+type QuestLogHabitRow = Omit<QuestLogHabit, 'complete'> & { complete: number };
+type ActivitySummaryDayRow = ActivitySummaryDay;
 
 export const rewardByDifficulty = {
   easy: { xp: 10, statXp: 1, energy: 1 },
@@ -59,6 +74,85 @@ export async function getTodayHabits(db: SQLiteDatabase): Promise<Habit[]> {
   );
 
   return rows.map((row) => ({ ...row, complete: row.complete === 1 }));
+}
+
+export async function getQuestLogHabits(db: SQLiteDatabase): Promise<QuestLogHabit[]> {
+  const today = getLocalDateKey();
+  const rows = await db.getAllAsync<QuestLogHabitRow>(
+    `SELECT
+       h.id,
+       h.title,
+       h.description,
+       h.difficulty,
+       h.attribute,
+       CASE
+         WHEN EXISTS (
+           SELECT 1
+           FROM habit_completions hc_today
+           WHERE hc_today.habit_id = h.id
+             AND hc_today.completion_date = ?
+             AND hc_today.status = 'complete'
+         ) THEN 1
+         ELSE 0
+       END AS complete,
+       (
+         SELECT MAX(hc_last.completion_date)
+         FROM habit_completions hc_last
+         WHERE hc_last.habit_id = h.id
+           AND hc_last.status = 'complete'
+       ) AS lastCompletedDate,
+       (
+         SELECT COUNT(*)
+         FROM habit_completions hc_total
+         WHERE hc_total.habit_id = h.id
+           AND hc_total.status = 'complete'
+       ) AS totalCompletions
+     FROM habits h
+     WHERE h.is_active = 1
+     ORDER BY h.created_at ASC, h.id ASC`,
+    today,
+  );
+
+  return rows.map((row) => ({ ...row, complete: row.complete === 1 }));
+}
+
+export async function getRecentActivityDays(
+  db: SQLiteDatabase,
+  limit = 7,
+): Promise<ActivitySummaryDay[]> {
+  const today = getLocalDateKey();
+  const safeLimit = Math.max(1, Math.floor(limit));
+  return db.getAllAsync<ActivitySummaryDayRow>(
+    `SELECT
+       hc.completion_date AS dateKey,
+       COUNT(DISTINCT hc.id) AS completedCount,
+       COALESCE(SUM(xp.total), 0) AS xpEarned,
+       COALESCE(SUM(attribute.total), 0) AS statXpEarned,
+       COALESCE(SUM(energy.total), 0) AS energyEarned
+     FROM habit_completions hc
+     LEFT JOIN (
+       SELECT completion_id, SUM(amount) AS total
+       FROM xp_events
+       GROUP BY completion_id
+     ) xp ON xp.completion_id = hc.id
+     LEFT JOIN (
+       SELECT completion_id, SUM(amount) AS total
+       FROM attribute_events
+       GROUP BY completion_id
+     ) attribute ON attribute.completion_id = hc.id
+     LEFT JOIN (
+       SELECT completion_id, SUM(amount) AS total
+       FROM energy_events
+       GROUP BY completion_id
+     ) energy ON energy.completion_id = hc.id
+     WHERE hc.status = 'complete'
+       AND hc.completion_date <= ?
+     GROUP BY hc.completion_date
+     ORDER BY hc.completion_date DESC
+     LIMIT ?`,
+    today,
+    safeLimit,
+  );
 }
 
 export async function createHabit(db: SQLiteDatabase, habit: NewHabit) {

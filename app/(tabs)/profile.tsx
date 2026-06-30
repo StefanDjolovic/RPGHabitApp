@@ -12,7 +12,12 @@ import {
   View,
 } from 'react-native';
 
-import type { HabitAttribute } from '@/src/database/habit-repository';
+import {
+  getRecentActivityDays,
+  type ActivitySummaryDay,
+  type HabitAttribute,
+} from '@/src/database/habit-repository';
+import { getActivityStreak } from '@/src/progression/activity-streak';
 import {
   getPlayerProgress,
   INITIAL_PLAYER_PROGRESS,
@@ -52,15 +57,33 @@ function getProgressRatio(value: number, max: number) {
   return Math.min(1, Math.max(0, value / max));
 }
 
+function formatActivityDate(dateKey: string) {
+  const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const [, month, day] = dateKey.split('-').map(Number);
+  return {
+    day: String(day).padStart(2, '0'),
+    month: monthNames[month - 1] ?? '---',
+  };
+}
+
 export default function ProfileScreen() {
   const db = useSQLiteContext();
   const [playerProgress, setPlayerProgress] = useState<PlayerProgress>(INITIAL_PLAYER_PROGRESS);
+  const [activityStreak, setActivityStreak] = useState(0);
+  const [recentActivity, setRecentActivity] = useState<ActivitySummaryDay[]>([]);
   const [loading, setLoading] = useState(true);
 
   const loadProfile = useCallback(async () => {
     try {
       setLoading(true);
-      setPlayerProgress(await getPlayerProgress(db));
+      const [progressSummary, streak, activityDays] = await Promise.all([
+        getPlayerProgress(db),
+        getActivityStreak(db),
+        getRecentActivityDays(db),
+      ]);
+      setPlayerProgress(progressSummary);
+      setActivityStreak(streak);
+      setRecentActivity(activityDays);
     } finally {
       setLoading(false);
     }
@@ -166,11 +189,13 @@ export default function ProfileScreen() {
           </View>
 
           <View style={styles.statCard}>
-            <MaterialCommunityIcons name="medal-outline" size={22} color="#FFD166" />
-            <Text style={styles.statValue}>{playerProgress.rankLabel}</Text>
-            <Text style={styles.statLabel}>Current rank</Text>
-            <View style={styles.rankCode}>
-              <Text style={styles.rankCodeText}>CLASS {playerProgress.rankShort}</Text>
+            <MaterialCommunityIcons name="fire" size={22} color="#FF8FC7" />
+            <Text style={styles.statValue}>
+              {activityStreak} {activityStreak === 1 ? 'day' : 'days'}
+            </Text>
+            <Text style={styles.statLabel}>Activity streak</Text>
+            <View style={styles.streakCode}>
+              <Text style={styles.streakCodeText}>REAL QUESTS</Text>
             </View>
           </View>
         </View>
@@ -205,6 +230,51 @@ export default function ProfileScreen() {
                         { backgroundColor: meta.color, width: `${ratio * 100}%` },
                       ]}
                     />
+                  </View>
+                </View>
+              </View>
+            );
+          })}
+        </View>
+
+        <View style={styles.sectionHeader}>
+          <View>
+            <Text style={styles.sectionEyebrow}>JOURNEY</Text>
+            <Text style={styles.sectionTitle}>Recent activity</Text>
+          </View>
+        </View>
+
+        <View style={styles.activityList}>
+          {!loading && recentActivity.length === 0 ? (
+            <View style={styles.emptyActivityCard}>
+              <MaterialCommunityIcons name="calendar-blank" size={25} color="#707894" />
+              <Text style={styles.emptyActivityText}>No completed quests recorded yet.</Text>
+            </View>
+          ) : null}
+
+          {recentActivity.map((day) => {
+            const date = formatActivityDate(day.dateKey);
+
+            return (
+              <View key={day.dateKey} style={styles.activityCard}>
+                <View style={styles.activityDateBadge}>
+                  <Text style={styles.activityDateMonth}>{date.month}</Text>
+                  <Text style={styles.activityDateDay}>{date.day}</Text>
+                </View>
+                <View style={styles.activityBody}>
+                  <Text style={styles.activityTitle}>
+                    {day.completedCount} {day.completedCount === 1 ? 'quest' : 'quests'} cleared
+                  </Text>
+                  <View style={styles.activityRewardRow}>
+                    <Text style={styles.activityReward}>+{formatNumber(day.xpEarned)} EXP</Text>
+                    <View style={styles.activityDot} />
+                    <Text style={styles.activityReward}>
+                      +{formatNumber(day.statXpEarned)} Stat XP
+                    </Text>
+                    <View style={styles.activityDot} />
+                    <Text style={styles.activityReward}>
+                      +{formatNumber(day.energyEarned)} Energy
+                    </Text>
                   </View>
                 </View>
               </View>
@@ -344,17 +414,17 @@ const styles = StyleSheet.create({
     marginTop: 14,
   },
   energyFill: { height: '100%', borderRadius: 3, backgroundColor: '#63E4FF' },
-  rankCode: {
+  streakCode: {
     alignSelf: 'flex-start',
     borderRadius: 11,
     paddingHorizontal: 9,
     paddingVertical: 5,
-    backgroundColor: '#181629',
+    backgroundColor: '#221525',
     borderWidth: 1,
-    borderColor: '#3D365D',
+    borderColor: '#5B3458',
     marginTop: 14,
   },
-  rankCodeText: { color: '#FFD166', fontSize: 8, fontWeight: '900', letterSpacing: 0.9 },
+  streakCodeText: { color: '#FF9BCB', fontSize: 8, fontWeight: '900', letterSpacing: 0.9 },
   sectionHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -394,6 +464,52 @@ const styles = StyleSheet.create({
   attributeValue: { color: '#B9C1DA', fontSize: 11, fontWeight: '800', marginLeft: 10 },
   attributeTrack: { height: 6, borderRadius: 3, backgroundColor: '#080B18', overflow: 'hidden' },
   attributeFill: { height: '100%', borderRadius: 3 },
+  activityList: { gap: 10 },
+  emptyActivityCard: {
+    minHeight: 92,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: 'rgba(12, 16, 31, 0.72)',
+    borderWidth: 1,
+    borderColor: '#222842',
+    padding: 16,
+  },
+  emptyActivityText: { color: '#737B98', fontSize: 11, fontWeight: '700', textAlign: 'center' },
+  activityCard: {
+    minHeight: 78,
+    borderRadius: 17,
+    padding: 13,
+    backgroundColor: 'rgba(12, 16, 31, 0.94)',
+    borderWidth: 1,
+    borderColor: '#222842',
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  activityDateBadge: {
+    width: 48,
+    height: 52,
+    borderRadius: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#13162A',
+    borderWidth: 1,
+    borderColor: '#313755',
+  },
+  activityDateMonth: { color: '#FF9BCB', fontSize: 9, fontWeight: '900' },
+  activityDateDay: { color: '#EDF0FF', fontSize: 18, fontWeight: '900', marginTop: 1 },
+  activityBody: { flex: 1, paddingLeft: 12 },
+  activityTitle: { color: '#E8E9F4', fontSize: 13, fontWeight: '800' },
+  activityRewardRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginTop: 7,
+  },
+  activityReward: { color: '#6FC8DC', fontSize: 9, fontWeight: '700' },
+  activityDot: { width: 3, height: 3, borderRadius: 2, backgroundColor: '#454D69' },
   loadingOverlay: {
     marginTop: 12,
     minHeight: 72,

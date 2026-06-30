@@ -27,6 +27,10 @@ import {
   MAX_DUNGEON_ENERGY,
   type PlayerProgress,
 } from '@/src/progression/player-progression';
+import {
+  getRecoveryQuestStatus,
+  type RecoveryQuestStatus,
+} from '@/src/progression/recovery-quest';
 
 const difficultyColors = {
   easy: '#68E1A8',
@@ -49,11 +53,19 @@ function formatAttribute(attribute: HabitAttribute) {
   return attribute.charAt(0).toUpperCase() + attribute.slice(1);
 }
 
+const initialRecoveryStatus: RecoveryQuestStatus = {
+  available: false,
+  completedToday: false,
+  lastActiveDate: null,
+  missedDays: 0,
+};
+
 export default function TodayScreen() {
   const db = useSQLiteContext();
   const [habits, setHabits] = useState<Habit[]>([]);
   const [playerProgress, setPlayerProgress] = useState<PlayerProgress>(INITIAL_PLAYER_PROGRESS);
   const [activityStreak, setActivityStreak] = useState(0);
+  const [recoveryStatus, setRecoveryStatus] = useState<RecoveryQuestStatus>(initialRecoveryStatus);
   const [loading, setLoading] = useState(true);
   const completed = useMemo(() => habits.filter((habit) => habit.complete).length, [habits]);
   const progress = habits.length > 0 ? completed / habits.length : 0;
@@ -64,14 +76,16 @@ export default function TodayScreen() {
 
   const loadTodayData = useCallback(async () => {
     try {
-      const [todayHabits, progressSummary, streak] = await Promise.all([
+      const [todayHabits, progressSummary, streak, recovery] = await Promise.all([
         getTodayHabits(db),
         getPlayerProgress(db),
         getActivityStreak(db),
+        getRecoveryQuestStatus(db),
       ]);
       setHabits(todayHabits);
       setPlayerProgress(progressSummary);
       setActivityStreak(streak);
+      setRecoveryStatus(recovery);
     } finally {
       setLoading(false);
     }
@@ -94,12 +108,14 @@ export default function TodayScreen() {
 
     try {
       await setHabitCompletion(db, id, nextComplete);
-      const [progressSummary, streak] = await Promise.all([
+      const [progressSummary, streak, recovery] = await Promise.all([
         getPlayerProgress(db),
         getActivityStreak(db),
+        getRecoveryQuestStatus(db),
       ]);
       setPlayerProgress(progressSummary);
       setActivityStreak(streak);
+      setRecoveryStatus(recovery);
     } catch {
       setHabits((current) =>
         current.map((item) => (item.id === id ? { ...item, complete: habit.complete } : item)),
@@ -144,7 +160,7 @@ export default function TodayScreen() {
 
             <View style={styles.playerIdentity}>
               <Text style={styles.playerName}>Shadow Candidate</Text>
-              <Text style={styles.playerSubtitle}>{playerProgress.rankLabel} · Path in progress</Text>
+              <Text style={styles.playerSubtitle}>{playerProgress.rankLabel} - Path in progress</Text>
             </View>
 
             <View style={styles.rankBadge}>
@@ -219,6 +235,41 @@ export default function TodayScreen() {
             Complete every objective to earn the Daily Clear chest.
           </Text>
         </View>
+
+        {recoveryStatus.available || recoveryStatus.completedToday ? (
+          <LinearGradient
+            colors={
+              recoveryStatus.completedToday
+                ? ['rgba(13, 42, 45, 0.94)', 'rgba(8, 17, 31, 0.94)']
+                : ['rgba(49, 29, 57, 0.96)', 'rgba(12, 17, 34, 0.96)']
+            }
+            end={{ x: 1, y: 1 }}
+            start={{ x: 0, y: 0 }}
+            style={styles.recoveryCard}>
+            <View style={styles.recoveryIcon}>
+              <MaterialCommunityIcons
+                name={recoveryStatus.completedToday ? 'weather-windy' : 'heart-flash'}
+                size={24}
+                color={recoveryStatus.completedToday ? '#7EE7FF' : '#FF8FC7'}
+              />
+            </View>
+            <View style={styles.recoveryBody}>
+              <Text style={styles.recoveryTitle}>
+                {recoveryStatus.completedToday ? 'Recovery complete' : 'Recovery Quest available'}
+              </Text>
+              <Text style={styles.recoveryText}>
+                {recoveryStatus.completedToday
+                  ? `New streak started after ${recoveryStatus.missedDays} missed ${
+                      recoveryStatus.missedDays === 1 ? 'day' : 'days'
+                    }.`
+                  : `Complete one real quest today to restart after ${recoveryStatus.missedDays} missed ${
+                      recoveryStatus.missedDays === 1 ? 'day' : 'days'
+                    }.`}
+              </Text>
+              <Text style={styles.recoveryMeta}>Earned XP stays safe. Start fresh with any quest below.</Text>
+            </View>
+          </LinearGradient>
+        ) : null}
 
         <View style={styles.habitList}>
           {loading ? (
@@ -436,6 +487,31 @@ const styles = StyleSheet.create({
   dailyTrack: { height: 5, borderRadius: 3, backgroundColor: '#080B18', overflow: 'hidden' },
   dailyFill: { height: '100%', borderRadius: 3 },
   dailyHint: { color: '#69718F', fontSize: 10, marginTop: 9 },
+  recoveryCard: {
+    minHeight: 104,
+    borderRadius: 17,
+    borderWidth: 1,
+    borderColor: '#3E3558',
+    padding: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+    overflow: 'hidden',
+  },
+  recoveryIcon: {
+    width: 46,
+    height: 46,
+    borderRadius: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(7, 9, 22, 0.7)',
+    borderWidth: 1,
+    borderColor: '#573A60',
+  },
+  recoveryBody: { flex: 1, paddingLeft: 12 },
+  recoveryTitle: { color: '#F1EEFF', fontSize: 14, fontWeight: '900' },
+  recoveryText: { color: '#BFC5DB', fontSize: 11, fontWeight: '700', marginTop: 5 },
+  recoveryMeta: { color: '#777E9C', fontSize: 10, fontWeight: '700', marginTop: 7 },
   habitList: { gap: 10 },
   loadingState: {
     minHeight: 90,

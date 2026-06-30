@@ -21,6 +21,7 @@ import {
   getHabitForEdit,
   HabitAttribute,
   HabitDifficulty,
+  HabitGoalType,
   rewardByDifficulty,
   updateHabit,
 } from '@/src/database/habit-repository';
@@ -43,6 +44,18 @@ const attributeOptions: {
   { value: 'creativity', label: 'Creativity', icon: 'palette' },
 ];
 
+const weekdayOptions = [
+  { value: 1, label: 'Mon' },
+  { value: 2, label: 'Tue' },
+  { value: 3, label: 'Wed' },
+  { value: 4, label: 'Thu' },
+  { value: 5, label: 'Fri' },
+  { value: 6, label: 'Sat' },
+  { value: 0, label: 'Sun' },
+];
+
+const everyDaySchedule = weekdayOptions.map((day) => day.value);
+
 export default function CreateHabitScreen() {
   const db = useSQLiteContext();
   const params = useLocalSearchParams();
@@ -56,6 +69,10 @@ export default function CreateHabitScreen() {
   const [description, setDescription] = useState('');
   const [difficulty, setDifficulty] = useState<HabitDifficulty>('medium');
   const [attribute, setAttribute] = useState<HabitAttribute>('discipline');
+  const [goalType, setGoalType] = useState<HabitGoalType>('single');
+  const [targetCount, setTargetCount] = useState(3);
+  const [scheduleDays, setScheduleDays] = useState<number[]>(everyDaySchedule);
+  const [isRequired, setIsRequired] = useState(true);
   const [loadingHabit, setLoadingHabit] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -81,6 +98,10 @@ export default function CreateHabitScreen() {
         setDescription(habit.description);
         setDifficulty(habit.difficulty);
         setAttribute(habit.attribute);
+        setGoalType(habit.goalType);
+        setTargetCount(habit.targetCount);
+        setScheduleDays(habit.scheduleDays);
+        setIsRequired(habit.isRequired);
       } catch {
         if (active) setError('The quest could not be loaded. Please try again.');
       } finally {
@@ -104,16 +125,36 @@ export default function CreateHabitScreen() {
     try {
       setSaving(true);
       setError('');
+      const habitPayload = {
+        title,
+        description,
+        difficulty,
+        attribute,
+        goalType,
+        targetCount,
+        scheduleDays,
+        isRequired,
+      };
       if (editing && habitId) {
-        await updateHabit(db, habitId, { title, description, difficulty, attribute });
+        await updateHabit(db, habitId, habitPayload);
       } else {
-        await createHabit(db, { title, description, difficulty, attribute });
+        await createHabit(db, habitPayload);
       }
       router.back();
     } catch {
       setError('The habit could not be saved. Please try again.');
       setSaving(false);
     }
+  };
+
+  const toggleScheduleDay = (day: number) => {
+    setScheduleDays((current) => {
+      if (current.includes(day)) {
+        return current.length > 1 ? current.filter((item) => item !== day) : current;
+      }
+
+      return [...current, day].sort((first, second) => first - second);
+    });
   };
 
   return (
@@ -158,6 +199,127 @@ export default function CreateHabitScreen() {
             textAlignVertical="top"
             value={description}
           />
+
+          <Text style={styles.label}>QUEST MODE</Text>
+          <View style={styles.modeRow}>
+            <Pressable
+              accessibilityRole="radio"
+              accessibilityState={{ checked: isRequired }}
+              onPress={() => setIsRequired(true)}
+              style={[styles.modeOption, isRequired && styles.modeOptionSelected]}>
+              <MaterialCommunityIcons
+                color={isRequired ? '#7EE7FF' : '#707894'}
+                name="checkbox-marked-circle-outline"
+                size={18}
+              />
+              <Text style={[styles.modeText, isRequired && styles.modeTextSelected]}>
+                Required
+              </Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="radio"
+              accessibilityState={{ checked: !isRequired }}
+              onPress={() => setIsRequired(false)}
+              style={[styles.modeOption, !isRequired && styles.modeOptionSelected]}>
+              <MaterialCommunityIcons
+                color={!isRequired ? '#7EE7FF' : '#707894'}
+                name="star-outline"
+                size={18}
+              />
+              <Text style={[styles.modeText, !isRequired && styles.modeTextSelected]}>
+                Optional
+              </Text>
+            </Pressable>
+          </View>
+
+          <Text style={styles.label}>GOAL TYPE</Text>
+          <View style={styles.modeRow}>
+            <Pressable
+              accessibilityRole="radio"
+              accessibilityState={{ checked: goalType === 'single' }}
+              onPress={() => setGoalType('single')}
+              style={[styles.modeOption, goalType === 'single' && styles.modeOptionSelected]}>
+              <MaterialCommunityIcons
+                color={goalType === 'single' ? '#7EE7FF' : '#707894'}
+                name="check-circle-outline"
+                size={18}
+              />
+              <Text
+                style={[styles.modeText, goalType === 'single' && styles.modeTextSelected]}>
+                Check-in
+              </Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="radio"
+              accessibilityState={{ checked: goalType === 'counter' }}
+              onPress={() => setGoalType('counter')}
+              style={[styles.modeOption, goalType === 'counter' && styles.modeOptionSelected]}>
+              <MaterialCommunityIcons
+                color={goalType === 'counter' ? '#7EE7FF' : '#707894'}
+                name="counter"
+                size={19}
+              />
+              <Text
+                style={[styles.modeText, goalType === 'counter' && styles.modeTextSelected]}>
+                Counter
+              </Text>
+            </Pressable>
+          </View>
+
+          {goalType === 'counter' ? (
+            <>
+              <Text style={styles.label}>DAILY TARGET</Text>
+              <View style={styles.targetRow}>
+                <MaterialCommunityIcons name="target" size={20} color="#8E72FF" />
+                <Text style={styles.targetLabel}>Completions</Text>
+                <View style={styles.targetStepper}>
+                  <Pressable
+                    accessibilityLabel="Decrease daily target"
+                    disabled={targetCount <= 2}
+                    onPress={() => setTargetCount((current) => Math.max(2, current - 1))}
+                    style={({ pressed }) => [
+                      styles.targetButton,
+                      targetCount <= 2 && styles.targetButtonDisabled,
+                      pressed && styles.targetButtonPressed,
+                    ]}>
+                    <MaterialCommunityIcons name="minus" size={18} color="#AEB6CF" />
+                  </Pressable>
+                  <Text style={styles.targetValue}>{targetCount}</Text>
+                  <Pressable
+                    accessibilityLabel="Increase daily target"
+                    disabled={targetCount >= 99}
+                    onPress={() => setTargetCount((current) => Math.min(99, current + 1))}
+                    style={({ pressed }) => [
+                      styles.targetButton,
+                      targetCount >= 99 && styles.targetButtonDisabled,
+                      pressed && styles.targetButtonPressed,
+                    ]}>
+                    <MaterialCommunityIcons name="plus" size={18} color="#7EE7FF" />
+                  </Pressable>
+                </View>
+              </View>
+            </>
+          ) : null}
+
+          <Text style={styles.label}>SCHEDULE</Text>
+          <View style={styles.weekdayRow}>
+            {weekdayOptions.map((day) => {
+              const selected = scheduleDays.includes(day.value);
+
+              return (
+                <Pressable
+                  accessibilityRole="checkbox"
+                  accessibilityState={{ checked: selected }}
+                  key={day.value}
+                  onPress={() => toggleScheduleDay(day.value)}
+                  style={[styles.weekdayButton, selected && styles.weekdayButtonSelected]}>
+                  <Text style={[styles.weekdayText, selected && styles.weekdayTextSelected]}>
+                    {day.label}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
 
           <Text style={styles.label}>DIFFICULTY</Text>
           <View style={styles.optionRow}>
@@ -292,6 +454,71 @@ const styles = StyleSheet.create({
     marginBottom: 22,
   },
   descriptionInput: { height: 88, paddingTop: 14 },
+  modeRow: { flexDirection: 'row', gap: 8, marginBottom: 22 },
+  modeOption: {
+    flex: 1,
+    height: 46,
+    borderRadius: 13,
+    borderWidth: 1,
+    borderColor: '#292E48',
+    backgroundColor: '#0D1121',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  modeOptionSelected: { borderColor: '#3DAFCB', backgroundColor: '#0C202C' },
+  modeText: { color: '#747C97', fontSize: 11, fontWeight: '800' },
+  modeTextSelected: { color: '#9BEAFF' },
+  targetRow: {
+    height: 56,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#292E48',
+    backgroundColor: '#0D1121',
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    gap: 9,
+    marginBottom: 22,
+  },
+  targetLabel: { color: '#B6BDD3', fontSize: 12, fontWeight: '800', flex: 1 },
+  targetStepper: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  targetButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#343B59',
+    backgroundColor: '#141A30',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  targetButtonDisabled: { opacity: 0.35 },
+  targetButtonPressed: { opacity: 0.72 },
+  targetValue: {
+    color: '#F0EEFF',
+    fontSize: 17,
+    fontWeight: '900',
+    minWidth: 28,
+    textAlign: 'center',
+    fontVariant: ['tabular-nums'],
+  },
+  weekdayRow: { flexDirection: 'row', gap: 6, marginBottom: 23 },
+  weekdayButton: {
+    flex: 1,
+    height: 38,
+    minWidth: 0,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#292E48',
+    backgroundColor: '#0D1121',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  weekdayButtonSelected: { borderColor: '#3DAFCB', backgroundColor: '#0C202C' },
+  weekdayText: { color: '#747C97', fontSize: 10, fontWeight: '900' },
+  weekdayTextSelected: { color: '#9BEAFF' },
   optionRow: { flexDirection: 'row', gap: 8, marginBottom: 23 },
   difficultyOption: {
     flex: 1,

@@ -1,4 +1,5 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
+import { Platform } from 'react-native';
 
 import type { HabitAttribute } from '@/src/database/habit-repository';
 import {
@@ -7,6 +8,7 @@ import {
 } from '@/src/progression/dungeon-energy';
 
 export const MAX_LEVEL = 100;
+export const STAT_POINTS_PER_LEVEL = 2;
 export { MAX_DAILY_DUNGEON_ENERGY, MAX_DUNGEON_ENERGY };
 
 export type PlayerProgress = {
@@ -19,6 +21,10 @@ export type PlayerProgress = {
   dungeonEnergy: number;
   todayDungeonEnergy: number;
   attributeXp: Record<HabitAttribute, number>;
+  manualStatPoints: Record<HabitAttribute, number>;
+  totalStatPointsEarned: number;
+  spentStatPoints: number;
+  availableStatPoints: number;
 };
 
 type TotalRow = { total: number };
@@ -42,6 +48,10 @@ export const INITIAL_PLAYER_PROGRESS: PlayerProgress = {
   dungeonEnergy: 0,
   todayDungeonEnergy: 0,
   attributeXp: { ...emptyAttributeXp },
+  manualStatPoints: { ...emptyAttributeXp },
+  totalStatPointsEarned: STAT_POINTS_PER_LEVEL,
+  spentStatPoints: 0,
+  availableStatPoints: STAT_POINTS_PER_LEVEL,
 };
 
 export function xpRequiredForNextLevel(level: number) {
@@ -88,7 +98,15 @@ export async function getPlayerProgress(db: SQLiteDatabase): Promise<PlayerProgr
   const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(
     today.getDate(),
   ).padStart(2, '0')}`;
-  const [xpRow, energyRow, spentEnergyRow, todayEnergyRow, attributeRows] = await Promise.all([
+  const [
+    xpRow,
+    energyRow,
+    spentEnergyRow,
+    todayEnergyRow,
+    attributeRows,
+    manualStatRows,
+    spentStatRow,
+  ] = await Promise.all([
     db.getFirstAsync<TotalRow>('SELECT COALESCE(SUM(amount), 0) AS total FROM xp_events'),
     db.getFirstAsync<TotalRow>('SELECT COALESCE(SUM(amount), 0) AS total FROM energy_events'),
     db.getFirstAsync<TotalRow>('SELECT COALESCE(SUM(energy_cost), 0) AS total FROM dungeon_runs'),
@@ -103,6 +121,14 @@ export async function getPlayerProgress(db: SQLiteDatabase): Promise<PlayerProgr
       `SELECT attribute, COALESCE(SUM(amount), 0) AS total
        FROM attribute_events
        GROUP BY attribute`,
+    ),
+    db.getAllAsync<AttributeTotalRow>(
+      `SELECT attribute, COALESCE(SUM(amount), 0) AS total
+       FROM stat_point_allocations
+       GROUP BY attribute`,
+    ),
+    db.getFirstAsync<TotalRow>(
+      'SELECT COALESCE(SUM(amount), 0) AS total FROM stat_point_allocations',
     ),
   ]);
 
@@ -120,9 +146,17 @@ export async function getPlayerProgress(db: SQLiteDatabase): Promise<PlayerProgr
   const levelProgress = getLevelProgress(totalXp);
   const rank = getRankForLevel(levelProgress.level);
   const attributeXp = { ...emptyAttributeXp };
+  const manualStatPoints = { ...emptyAttributeXp };
+  const totalStatPointsEarned = levelProgress.level * STAT_POINTS_PER_LEVEL;
+  const spentStatPoints = Math.max(0, spentStatRow?.total ?? 0);
+  const availableStatPoints = Math.max(0, totalStatPointsEarned - spentStatPoints);
 
   for (const row of attributeRows) {
     attributeXp[row.attribute] = Math.max(0, row.total);
+  }
+
+  for (const row of manualStatRows) {
+    manualStatPoints[row.attribute] = Math.max(0, row.total);
   }
 
   return {
@@ -132,5 +166,36 @@ export async function getPlayerProgress(db: SQLiteDatabase): Promise<PlayerProgr
     dungeonEnergy,
     todayDungeonEnergy,
     attributeXp,
+    manualStatPoints,
+    totalStatPointsEarned,
+    spentStatPoints,
+    availableStatPoints,
   };
+}
+
+export async function allocateStatPoint(
+  db: SQLiteDatabase,
+  attribute: HabitAttribute,
+): Promise<PlayerProgress> {
+  const applyAllocation = async (txn: SQLiteDatabase) => {
+    const progress = await getPlayerProgress(txn);
+
+    if (progress.availableStatPoints <= 0) {
+      throw new Error('No Stat Points available.');
+    }
+
+    await txn.runAsync(
+      `INSERT INTO stat_point_allocations (attribute, amount)
+       VALUES (?, 1)`,
+      attribute,
+    );
+  };
+
+  if (Platform.OS === 'web') {
+    await db.withTransactionAsync(() => applyAllocation(db));
+  } else {
+    await db.withExclusiveTransactionAsync(applyAllocation);
+  }
+
+  return getPlayerProgress(db);
 }

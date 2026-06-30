@@ -5,6 +5,7 @@ import { useSQLiteContext } from 'expo-sqlite';
 import { useCallback, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
+  Pressable,
   SafeAreaView,
   ScrollView,
   StyleSheet,
@@ -13,16 +14,28 @@ import {
 } from 'react-native';
 
 import {
+  getAchievementSummary,
+  type AchievementSummary,
+} from '@/src/database/achievement-repository';
+import {
   getRecentActivityDays,
   type ActivitySummaryDay,
   type HabitAttribute,
 } from '@/src/database/habit-repository';
+import {
+  getPlayerProfile,
+  getProfileInitials,
+  INITIAL_PLAYER_PROFILE,
+  type PlayerProfile,
+} from '@/src/database/profile-repository';
 import { getActivityStreak } from '@/src/progression/activity-streak';
 import {
+  allocateStatPoint,
   getPlayerProgress,
   INITIAL_PLAYER_PROGRESS,
   MAX_DAILY_DUNGEON_ENERGY,
   MAX_DUNGEON_ENERGY,
+  STAT_POINTS_PER_LEVEL,
   type PlayerProgress,
 } from '@/src/progression/player-progression';
 
@@ -58,6 +71,12 @@ function getProgressRatio(value: number, max: number) {
   return Math.min(1, Math.max(0, value / max));
 }
 
+const initialAchievementSummary: AchievementSummary = {
+  unlockedCount: 0,
+  totalCount: 0,
+  achievements: [],
+};
+
 function formatActivityDate(dateKey: string) {
   const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   const [, month, day] = dateKey.split('-').map(Number);
@@ -70,21 +89,29 @@ function formatActivityDate(dateKey: string) {
 export default function ProfileScreen() {
   const db = useSQLiteContext();
   const [playerProgress, setPlayerProgress] = useState<PlayerProgress>(INITIAL_PLAYER_PROGRESS);
+  const [playerProfile, setPlayerProfile] = useState<PlayerProfile>(INITIAL_PLAYER_PROFILE);
   const [activityStreak, setActivityStreak] = useState(0);
   const [recentActivity, setRecentActivity] = useState<ActivitySummaryDay[]>([]);
+  const [achievementSummary, setAchievementSummary] =
+    useState<AchievementSummary>(initialAchievementSummary);
+  const [allocatingAttribute, setAllocatingAttribute] = useState<HabitAttribute | null>(null);
   const [loading, setLoading] = useState(true);
 
   const loadProfile = useCallback(async () => {
     try {
       setLoading(true);
-      const [progressSummary, streak, activityDays] = await Promise.all([
+      const [progressSummary, profile, streak, activityDays, achievements] = await Promise.all([
         getPlayerProgress(db),
+        getPlayerProfile(db),
         getActivityStreak(db),
         getRecentActivityDays(db),
+        getAchievementSummary(db),
       ]);
       setPlayerProgress(progressSummary);
+      setPlayerProfile(profile);
       setActivityStreak(streak);
       setRecentActivity(activityDays);
+      setAchievementSummary(achievements);
     } finally {
       setLoading(false);
     }
@@ -96,12 +123,36 @@ export default function ProfileScreen() {
     }, [loadProfile]),
   );
 
+  const spendStatPoint = async (attribute: HabitAttribute) => {
+    if (playerProgress.availableStatPoints <= 0 || allocatingAttribute) return;
+
+    setAllocatingAttribute(attribute);
+    try {
+      const progressSummary = await allocateStatPoint(db, attribute);
+      setPlayerProgress(progressSummary);
+    } finally {
+      setAllocatingAttribute(null);
+    }
+  };
+
   const xpRatio = getProgressRatio(playerProgress.xpIntoLevel, playerProgress.xpForNextLevel);
   const energyRatio = getProgressRatio(playerProgress.dungeonEnergy, MAX_DUNGEON_ENERGY);
   const xpRemaining = Math.max(playerProgress.xpForNextLevel - playerProgress.xpIntoLevel, 0);
+  const achievementRatio = getProgressRatio(
+    achievementSummary.unlockedCount,
+    achievementSummary.totalCount,
+  );
   const attributeMax = useMemo(
     () => Math.max(1, ...attributeOrder.map((attribute) => playerProgress.attributeXp[attribute])),
     [playerProgress.attributeXp],
+  );
+  const visibleAchievements = useMemo(
+    () =>
+      [...achievementSummary.achievements].sort((first, second) => {
+        if (first.unlocked !== second.unlocked) return first.unlocked ? -1 : 1;
+        return second.progress - first.progress;
+      }),
+    [achievementSummary.achievements],
   );
 
   return (
@@ -135,10 +186,16 @@ export default function ProfileScreen() {
           <View style={styles.cardAccent} />
           <View style={styles.identityRow}>
             <View style={styles.avatarFrame}>
-              <MaterialCommunityIcons name="account" size={42} color="#FF9BCB" />
+              {playerProfile.avatarMode === 'initials' ? (
+                <Text style={styles.avatarInitials}>
+                  {getProfileInitials(playerProfile.nickname)}
+                </Text>
+              ) : (
+                <MaterialCommunityIcons name="account" size={42} color="#FF9BCB" />
+              )}
             </View>
             <View style={styles.identityText}>
-              <Text style={styles.playerName}>Shadow Candidate</Text>
+              <Text style={styles.playerName}>{playerProfile.nickname}</Text>
               <Text style={styles.rankTitle}>{playerProgress.rankLabel}</Text>
             </View>
           </View>
@@ -203,6 +260,109 @@ export default function ProfileScreen() {
           </View>
         </View>
 
+        <View style={styles.statPointPanel}>
+          <View style={styles.statPointTopRow}>
+            <View>
+              <Text style={styles.statPointLabel}>FREE STAT POINTS</Text>
+              <Text style={styles.statPointValue}>{playerProgress.availableStatPoints}</Text>
+            </View>
+            <View style={styles.statPointFormula}>
+              <Text style={styles.statPointFormulaText}>
+                +{STAT_POINTS_PER_LEVEL} per level
+              </Text>
+            </View>
+          </View>
+          <Text style={styles.statPointHint}>
+            {playerProgress.spentStatPoints} spent from {playerProgress.totalStatPointsEarned} earned.
+          </Text>
+        </View>
+
+        <View style={styles.sectionHeader}>
+          <View>
+            <Text style={styles.sectionEyebrow}>ACHIEVEMENTS</Text>
+            <Text style={styles.sectionTitle}>Unlocked records</Text>
+          </View>
+          <View style={styles.achievementCounter}>
+            <Text style={styles.achievementCounterText}>
+              {achievementSummary.unlockedCount}/{achievementSummary.totalCount}
+            </Text>
+          </View>
+        </View>
+
+        <View style={styles.achievementPanel}>
+          <View style={styles.achievementPanelTop}>
+            <View>
+              <Text style={styles.achievementPanelLabel}>RECORD COMPLETION</Text>
+              <Text style={styles.achievementPanelValue}>
+                {Math.round(achievementRatio * 100)}%
+              </Text>
+            </View>
+            <MaterialCommunityIcons name="trophy-award" size={31} color="#FFD27A" />
+          </View>
+          <View style={styles.achievementTrack}>
+            <LinearGradient
+              colors={['#FFD27A', '#7EE7FF']}
+              end={{ x: 1, y: 0 }}
+              start={{ x: 0, y: 0 }}
+              style={[styles.achievementFill, { width: `${achievementRatio * 100}%` }]}
+            />
+          </View>
+        </View>
+
+        <View style={styles.achievementList}>
+          {visibleAchievements.map((achievement) => (
+            <View
+              key={achievement.key}
+              style={[
+                styles.achievementCard,
+                achievement.unlocked && styles.achievementCardUnlocked,
+              ]}>
+              <View
+                style={[
+                  styles.achievementIcon,
+                  { borderColor: `${achievement.accent}66` },
+                  achievement.unlocked && { backgroundColor: `${achievement.accent}22` },
+                ]}>
+                <MaterialCommunityIcons
+                  name={achievement.icon}
+                  size={21}
+                  color={achievement.unlocked ? achievement.accent : '#777E9C'}
+                />
+              </View>
+              <View style={styles.achievementBody}>
+                <View style={styles.achievementTopRow}>
+                  <Text
+                    style={[
+                      styles.achievementTitle,
+                      achievement.unlocked && styles.achievementTitleUnlocked,
+                    ]}>
+                    {achievement.title}
+                  </Text>
+                  <Text
+                    style={[
+                      styles.achievementStatus,
+                      achievement.unlocked && { color: achievement.accent },
+                    ]}>
+                    {achievement.unlocked ? 'UNLOCKED' : `${achievement.current}/${achievement.target}`}
+                  </Text>
+                </View>
+                <Text style={styles.achievementDescription}>{achievement.description}</Text>
+                <View style={styles.achievementMiniTrack}>
+                  <View
+                    style={[
+                      styles.achievementMiniFill,
+                      {
+                        backgroundColor: achievement.accent,
+                        width: `${achievement.progress * 100}%`,
+                      },
+                    ]}
+                  />
+                </View>
+              </View>
+            </View>
+          ))}
+        </View>
+
         <View style={styles.sectionHeader}>
           <View>
             <Text style={styles.sectionEyebrow}>ATTRIBUTE XP</Text>
@@ -214,7 +374,9 @@ export default function ProfileScreen() {
           {attributeOrder.map((attribute) => {
             const meta = attributeMeta[attribute];
             const value = playerProgress.attributeXp[attribute];
+            const manualPoints = playerProgress.manualStatPoints[attribute];
             const ratio = getProgressRatio(value, attributeMax);
+            const canAllocate = playerProgress.availableStatPoints > 0 && !allocatingAttribute;
 
             return (
               <View key={attribute} style={styles.attributeCard}>
@@ -224,7 +386,9 @@ export default function ProfileScreen() {
                 <View style={styles.attributeBody}>
                   <View style={styles.attributeTopRow}>
                     <Text style={styles.attributeName}>{meta.label}</Text>
-                    <Text style={styles.attributeValue}>{formatNumber(value)} XP</Text>
+                    <Text style={styles.attributeValue}>
+                      {formatNumber(value)} XP | +{manualPoints} pts
+                    </Text>
                   </View>
                   <View style={styles.attributeTrack}>
                     <View
@@ -235,6 +399,25 @@ export default function ProfileScreen() {
                     />
                   </View>
                 </View>
+                <Pressable
+                  accessibilityLabel={`Allocate ${meta.label} stat point`}
+                  disabled={!canAllocate}
+                  onPress={() => void spendStatPoint(attribute)}
+                  style={({ pressed }) => [
+                    styles.allocateButton,
+                    !canAllocate && styles.allocateButtonLocked,
+                    pressed && canAllocate && styles.allocateButtonPressed,
+                  ]}>
+                  {allocatingAttribute === attribute ? (
+                    <ActivityIndicator color="#061018" size="small" />
+                  ) : (
+                    <MaterialCommunityIcons
+                      name="plus"
+                      size={18}
+                      color={canAllocate ? '#061018' : '#6D748D'}
+                    />
+                  )}
+                </Pressable>
               </View>
             );
           })}
@@ -369,6 +552,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#774163',
   },
+  avatarInitials: { color: '#FF9BCB', fontSize: 20, fontWeight: '900' },
   identityText: { flex: 1, paddingLeft: 13 },
   playerName: { color: '#F1EEFF', fontSize: 17, fontWeight: '900', marginBottom: 5 },
   rankTitle: { color: '#B9A4C8', fontSize: 12, fontWeight: '700' },
@@ -428,6 +612,102 @@ const styles = StyleSheet.create({
     marginTop: 14,
   },
   streakCodeText: { color: '#FF9BCB', fontSize: 8, fontWeight: '900', letterSpacing: 0.9 },
+  statPointPanel: {
+    borderRadius: 17,
+    padding: 14,
+    backgroundColor: 'rgba(16, 20, 38, 0.92)',
+    borderWidth: 1,
+    borderColor: '#283450',
+    marginBottom: 24,
+  },
+  statPointTopRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  statPointLabel: { color: '#7EE7FF', fontSize: 9, fontWeight: '900', letterSpacing: 1.3 },
+  statPointValue: { color: '#F7F2FF', fontSize: 28, fontWeight: '900', marginTop: 2 },
+  statPointFormula: {
+    height: 30,
+    borderRadius: 12,
+    paddingHorizontal: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#0D2230',
+    borderWidth: 1,
+    borderColor: '#24506A',
+  },
+  statPointFormulaText: { color: '#83DDF1', fontSize: 10, fontWeight: '900' },
+  statPointHint: { color: '#7B849D', fontSize: 10, fontWeight: '700', marginTop: 10 },
+  achievementCounter: {
+    minWidth: 50,
+    height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 10,
+    backgroundColor: '#14172B',
+    borderWidth: 1,
+    borderColor: '#333953',
+  },
+  achievementCounterText: { color: '#FFD27A', fontSize: 11, fontWeight: '900' },
+  achievementPanel: {
+    borderRadius: 17,
+    padding: 14,
+    backgroundColor: 'rgba(18, 17, 34, 0.92)',
+    borderWidth: 1,
+    borderColor: '#2F2D4A',
+    marginBottom: 10,
+  },
+  achievementPanelTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 11,
+  },
+  achievementPanelLabel: { color: '#8D91AD', fontSize: 9, fontWeight: '900', letterSpacing: 1.2 },
+  achievementPanelValue: { color: '#F7F2FF', fontSize: 22, fontWeight: '900', marginTop: 2 },
+  achievementTrack: { height: 6, borderRadius: 3, backgroundColor: '#080B18', overflow: 'hidden' },
+  achievementFill: { height: '100%', borderRadius: 3 },
+  achievementList: { gap: 10, marginBottom: 24 },
+  achievementCard: {
+    minHeight: 86,
+    borderRadius: 17,
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 13,
+    backgroundColor: 'rgba(12, 16, 31, 0.86)',
+    borderWidth: 1,
+    borderColor: '#222842',
+  },
+  achievementCardUnlocked: {
+    backgroundColor: 'rgba(16, 24, 35, 0.94)',
+    borderColor: '#2E4355',
+  },
+  achievementIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#11172A',
+    borderWidth: 1,
+  },
+  achievementBody: { flex: 1, minWidth: 0, paddingLeft: 12 },
+  achievementTopRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  achievementTitle: { color: '#AEB5CA', fontSize: 13, fontWeight: '900', flex: 1 },
+  achievementTitleUnlocked: { color: '#F0EEFF' },
+  achievementStatus: { color: '#6D748D', fontSize: 8, fontWeight: '900', letterSpacing: 0.8 },
+  achievementDescription: { color: '#777F98', fontSize: 10, fontWeight: '700', marginTop: 4 },
+  achievementMiniTrack: {
+    height: 5,
+    borderRadius: 3,
+    backgroundColor: '#080B18',
+    overflow: 'hidden',
+    marginTop: 9,
+  },
+  achievementMiniFill: { height: '100%', borderRadius: 3 },
   sectionHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -467,6 +747,22 @@ const styles = StyleSheet.create({
   attributeValue: { color: '#B9C1DA', fontSize: 11, fontWeight: '800', marginLeft: 10 },
   attributeTrack: { height: 6, borderRadius: 3, backgroundColor: '#080B18', overflow: 'hidden' },
   attributeFill: { height: '100%', borderRadius: 3 },
+  allocateButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#7EE7FF',
+    borderWidth: 1,
+    borderColor: '#A7F2FF',
+    marginLeft: 10,
+  },
+  allocateButtonLocked: {
+    backgroundColor: '#14182B',
+    borderColor: '#303650',
+  },
+  allocateButtonPressed: { opacity: 0.76, transform: [{ scale: 0.96 }] },
   activityList: { gap: 10 },
   emptyActivityCard: {
     minHeight: 92,

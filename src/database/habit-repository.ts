@@ -5,6 +5,7 @@ import { grantDailyClearReward } from '@/src/database/inventory-repository';
 import { MAX_DAILY_DUNGEON_ENERGY } from '@/src/progression/dungeon-energy';
 
 export type HabitDifficulty = 'easy' | 'medium' | 'hard';
+export type HabitGoalType = 'single' | 'counter';
 export type HabitAttribute =
   | 'strength'
   | 'intelligence'
@@ -18,10 +19,16 @@ export type Habit = {
   description: string;
   difficulty: HabitDifficulty;
   attribute: HabitAttribute;
+  goalType: HabitGoalType;
+  targetCount: number;
+  currentCount: number;
+  scheduleDays: number[];
+  isRequired: boolean;
   complete: boolean;
 };
 
 export type QuestLogHabit = Habit & {
+  isPaused: boolean;
   lastCompletedDate: string | null;
   totalCompletions: number;
 };
@@ -53,12 +60,32 @@ export type NewHabit = {
   description: string;
   difficulty: HabitDifficulty;
   attribute: HabitAttribute;
+  goalType: HabitGoalType;
+  targetCount: number;
+  scheduleDays: number[];
+  isRequired: boolean;
 };
 
 export type EditableHabit = NewHabit & { id: number };
 
-type HabitRow = Omit<Habit, 'complete'> & { complete: number };
-type QuestLogHabitRow = Omit<QuestLogHabit, 'complete'> & { complete: number };
+type HabitRow = Omit<Habit, 'complete' | 'scheduleDays' | 'isRequired'> & {
+  scheduleDays: string;
+  isRequired: number;
+  complete: number;
+};
+type QuestLogHabitRow = Omit<
+  QuestLogHabit,
+  'complete' | 'scheduleDays' | 'isRequired' | 'isPaused'
+> & {
+  scheduleDays: string;
+  isRequired: number;
+  isPaused: number;
+  complete: number;
+};
+type EditableHabitRow = Omit<EditableHabit, 'scheduleDays' | 'isRequired'> & {
+  scheduleDays: string;
+  isRequired: number;
+};
 type ActivitySummaryDayRow = ActivitySummaryDay;
 type AttributeEventTotalRow = { attribute: HabitAttribute; total: number };
 type DailyClearChestRow = {
@@ -76,6 +103,56 @@ export const rewardByDifficulty = {
   hard: { xp: 80, statXp: 8, energy: 3 },
 } as const;
 
+const allScheduleDays = [0, 1, 2, 3, 4, 5, 6];
+
+export function normalizeScheduleDays(days: number[]) {
+  const scheduleDays = [...new Set(days)]
+    .map((day) => Math.floor(day))
+    .filter((day) => day >= 0 && day <= 6)
+    .sort((first, second) => first - second);
+
+  return scheduleDays.length > 0 ? scheduleDays : allScheduleDays;
+}
+
+function serializeScheduleDays(days: number[]) {
+  return normalizeScheduleDays(days).join(',');
+}
+
+function parseScheduleDays(value: string | null) {
+  if (!value) return allScheduleDays;
+  return normalizeScheduleDays(value.split(',').map(Number));
+}
+
+function normalizeTargetCount(goalType: HabitGoalType, targetCount: number) {
+  if (goalType === 'single') return 1;
+  if (!Number.isFinite(targetCount)) return 2;
+  return Math.max(2, Math.floor(targetCount));
+}
+
+function toHabit(row: HabitRow): Habit {
+  return {
+    ...row,
+    scheduleDays: parseScheduleDays(row.scheduleDays),
+    isRequired: Boolean(row.isRequired),
+    complete: row.complete === 1,
+  };
+}
+
+function toQuestLogHabit(row: QuestLogHabitRow): QuestLogHabit {
+  return {
+    ...row,
+    scheduleDays: parseScheduleDays(row.scheduleDays),
+    isRequired: Boolean(row.isRequired),
+    isPaused: Boolean(row.isPaused),
+    complete: row.complete === 1,
+  };
+}
+
+function getDayFromDateKey(dateKey: string) {
+  const [year, month, day] = dateKey.split('-').map(Number);
+  return new Date(year, month - 1, day).getDay();
+}
+
 export function getLocalDateKey(date = new Date()) {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, '0');
@@ -85,6 +162,7 @@ export function getLocalDateKey(date = new Date()) {
 
 export async function getTodayHabits(db: SQLiteDatabase): Promise<Habit[]> {
   const today = getLocalDateKey();
+  const todayDay = new Date().getDay();
   const rows = await db.getAllAsync<HabitRow>(
     `SELECT
        h.id,
@@ -92,16 +170,31 @@ export async function getTodayHabits(db: SQLiteDatabase): Promise<Habit[]> {
        h.description,
        h.difficulty,
        h.attribute,
+       h.goal_type AS goalType,
+       h.target_count AS targetCount,
+       CASE
+         WHEN h.goal_type = 'counter' AND hc.status = 'complete'
+           THEN h.target_count
+         ELSE COALESCE(hcp.count, 0)
+       END AS currentCount,
+       h.schedule_days AS scheduleDays,
+       h.is_required AS isRequired,
        CASE WHEN hc.status = 'complete' THEN 1 ELSE 0 END AS complete
      FROM habits h
      LEFT JOIN habit_completions hc
        ON hc.habit_id = h.id AND hc.completion_date = ?
+     LEFT JOIN habit_counter_progress hcp
+       ON hcp.habit_id = h.id AND hcp.progress_date = ?
      WHERE h.is_active = 1 AND h.habit_type = 'daily'
+       AND h.is_paused = 0
+       AND (',' || h.schedule_days || ',') LIKE ?
      ORDER BY h.created_at ASC, h.id ASC`,
     today,
+    today,
+    `%,${todayDay},%`,
   );
 
-  return rows.map((row) => ({ ...row, complete: row.complete === 1 }));
+  return rows.map(toHabit);
 }
 
 export async function getQuestLogHabits(
@@ -117,16 +210,17 @@ export async function getQuestLogHabits(
        h.description,
        h.difficulty,
        h.attribute,
+       h.goal_type AS goalType,
+       h.target_count AS targetCount,
        CASE
-         WHEN EXISTS (
-           SELECT 1
-           FROM habit_completions hc_today
-           WHERE hc_today.habit_id = h.id
-             AND hc_today.completion_date = ?
-             AND hc_today.status = 'complete'
-         ) THEN 1
-         ELSE 0
-       END AS complete,
+         WHEN h.goal_type = 'counter' AND hc_today.status = 'complete'
+           THEN h.target_count
+         ELSE COALESCE(hcp.count, 0)
+       END AS currentCount,
+       h.schedule_days AS scheduleDays,
+       h.is_required AS isRequired,
+       h.is_paused AS isPaused,
+       CASE WHEN hc_today.status = 'complete' THEN 1 ELSE 0 END AS complete,
        (
          SELECT MAX(hc_last.completion_date)
          FROM habit_completions hc_last
@@ -140,13 +234,18 @@ export async function getQuestLogHabits(
            AND hc_total.status = 'complete'
        ) AS totalCompletions
      FROM habits h
+     LEFT JOIN habit_counter_progress hcp
+       ON hcp.habit_id = h.id AND hcp.progress_date = ?
+     LEFT JOIN habit_completions hc_today
+       ON hc_today.habit_id = h.id AND hc_today.completion_date = ?
      WHERE h.is_active = ?
      ORDER BY h.created_at ASC, h.id ASC`,
+    today,
     today,
     isActive,
   );
 
-  return rows.map((row) => ({ ...row, complete: row.complete === 1 }));
+  return rows.map(toQuestLogHabit);
 }
 
 export async function getRecentActivityDays(
@@ -202,8 +301,13 @@ async function getDailyClearProgress(
      FROM habits h
      LEFT JOIN habit_completions hc
        ON hc.habit_id = h.id AND hc.completion_date = ?
-     WHERE h.is_active = 1 AND h.habit_type = 'daily'`,
+     WHERE h.is_active = 1
+       AND h.is_paused = 0
+       AND h.habit_type = 'daily'
+       AND h.is_required = 1
+       AND (',' || h.schedule_days || ',') LIKE ?`,
     dateKey,
+    `%,${getDayFromDateKey(dateKey)},%`,
   );
 
   return {
@@ -302,18 +406,33 @@ export async function claimDailyClearChest(db: SQLiteDatabase): Promise<DailyCle
 export async function createHabit(db: SQLiteDatabase, habit: NewHabit) {
   const title = habit.title.trim();
   const description = habit.description.trim();
+  const scheduleDays = serializeScheduleDays(habit.scheduleDays);
+  const targetCount = normalizeTargetCount(habit.goalType, habit.targetCount);
 
   if (!title) {
     throw new Error('Habit title is required.');
   }
 
   await db.runAsync(
-    `INSERT INTO habits (title, description, difficulty, attribute)
-     VALUES (?, ?, ?, ?)`,
+    `INSERT INTO habits (
+       title,
+       description,
+       difficulty,
+       attribute,
+       goal_type,
+       target_count,
+       schedule_days,
+       is_required
+     )
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     title,
     description,
     habit.difficulty,
     habit.attribute,
+    habit.goalType,
+    targetCount,
+    scheduleDays,
+    habit.isRequired ? 1 : 0,
   );
 }
 
@@ -321,20 +440,37 @@ export async function getHabitForEdit(
   db: SQLiteDatabase,
   habitId: number,
 ): Promise<EditableHabit | null> {
-  const row = await db.getFirstAsync<EditableHabit>(
-    `SELECT id, title, description, difficulty, attribute
+  const row = await db.getFirstAsync<EditableHabitRow>(
+    `SELECT
+       id,
+       title,
+       description,
+       difficulty,
+       attribute,
+       goal_type AS goalType,
+       target_count AS targetCount,
+       schedule_days AS scheduleDays,
+       is_required AS isRequired
      FROM habits
      WHERE id = ?
      LIMIT 1`,
     habitId,
   );
 
-  return row ?? null;
+  if (!row) return null;
+
+  return {
+    ...row,
+    scheduleDays: parseScheduleDays(row.scheduleDays),
+    isRequired: row.isRequired === 1,
+  };
 }
 
 export async function updateHabit(db: SQLiteDatabase, habitId: number, habit: NewHabit) {
   const title = habit.title.trim();
   const description = habit.description.trim();
+  const scheduleDays = serializeScheduleDays(habit.scheduleDays);
+  const targetCount = normalizeTargetCount(habit.goalType, habit.targetCount);
 
   if (!title) {
     throw new Error('Habit title is required.');
@@ -342,12 +478,24 @@ export async function updateHabit(db: SQLiteDatabase, habitId: number, habit: Ne
 
   await db.runAsync(
     `UPDATE habits
-     SET title = ?, description = ?, difficulty = ?, attribute = ?
+     SET
+       title = ?,
+       description = ?,
+       difficulty = ?,
+       attribute = ?,
+       goal_type = ?,
+       target_count = ?,
+       schedule_days = ?,
+       is_required = ?
      WHERE id = ?`,
     title,
     description,
     habit.difficulty,
     habit.attribute,
+    habit.goalType,
+    targetCount,
+    scheduleDays,
+    habit.isRequired ? 1 : 0,
     habitId,
   );
 }
@@ -361,43 +509,67 @@ export async function archiveHabit(db: SQLiteDatabase, habitId: number) {
   );
 }
 
+export async function pauseHabit(db: SQLiteDatabase, habitId: number) {
+  await db.runAsync(
+    `UPDATE habits
+     SET is_paused = 1
+     WHERE id = ? AND is_active = 1 AND is_paused = 0`,
+    habitId,
+  );
+}
+
+export async function resumeHabit(db: SQLiteDatabase, habitId: number) {
+  await db.runAsync(
+    `UPDATE habits
+     SET is_paused = 0
+     WHERE id = ? AND is_active = 1 AND is_paused = 1`,
+    habitId,
+  );
+}
+
 export async function restoreHabit(db: SQLiteDatabase, habitId: number) {
   await db.runAsync(
     `UPDATE habits
-     SET is_active = 1
+     SET is_active = 1, is_paused = 0
      WHERE id = ? AND is_active = 0`,
     habitId,
   );
 }
 
-export async function setHabitCompletion(
-  db: SQLiteDatabase,
+async function applyHabitCompletionTransition(
+  txn: SQLiteDatabase,
   habitId: number,
   complete: boolean,
+  today: string,
+  todayDay: number,
+  expectedGoalType: HabitGoalType,
 ) {
-  const today = getLocalDateKey();
-
-  const applyTransition = async (txn: SQLiteDatabase) => {
-    const row = await txn.getFirstAsync<{
+  const row = await txn.getFirstAsync<{
       completionId: number | null;
       status: 'complete' | 'undone' | null;
       difficulty: HabitDifficulty;
       attribute: HabitAttribute;
+      goalType: HabitGoalType;
     }>(
       `SELECT
          hc.id AS completionId,
          hc.status,
          h.difficulty,
-         h.attribute
+         h.attribute,
+         h.goal_type AS goalType
        FROM habits h
        LEFT JOIN habit_completions hc
          ON hc.habit_id = h.id AND hc.completion_date = ?
-       WHERE h.id = ? AND h.is_active = 1`,
+       WHERE h.id = ?
+         AND h.is_active = 1
+         AND h.is_paused = 0
+         AND (',' || h.schedule_days || ',') LIKE ?`,
       today,
       habitId,
+      `%,${todayDay},%`,
     );
 
-    if (!row) throw new Error('Habit not found.');
+    if (!row || row.goalType !== expectedGoalType) throw new Error('Habit not found.');
     if ((complete && row.status === 'complete') || (!complete && row.status !== 'complete')) return;
 
     let completionId = row.completionId;
@@ -554,7 +726,17 @@ export async function setHabitCompletion(
         reason,
       );
     }
-  };
+}
+
+export async function setHabitCompletion(
+  db: SQLiteDatabase,
+  habitId: number,
+  complete: boolean,
+) {
+  const today = getLocalDateKey();
+  const todayDay = new Date().getDay();
+  const applyTransition = (txn: SQLiteDatabase) =>
+    applyHabitCompletionTransition(txn, habitId, complete, today, todayDay, 'single');
 
   if (Platform.OS === 'web') {
     await db.withTransactionAsync(() => applyTransition(db));
@@ -562,4 +744,83 @@ export async function setHabitCompletion(
   }
 
   await db.withExclusiveTransactionAsync(applyTransition);
+}
+
+export async function changeHabitCounter(
+  db: SQLiteDatabase,
+  habitId: number,
+  delta: number,
+) {
+  const today = getLocalDateKey();
+  const todayDay = new Date().getDay();
+  const increment = delta > 0 ? 1 : delta < 0 ? -1 : 0;
+  let nextCount = 0;
+
+  const applyChange = async (txn: SQLiteDatabase) => {
+    const row = await txn.getFirstAsync<{
+      targetCount: number;
+      currentCount: number;
+      status: 'complete' | 'undone' | null;
+    }>(
+      `SELECT
+         h.target_count AS targetCount,
+         COALESCE(hcp.count, 0) AS currentCount,
+         hc.status
+       FROM habits h
+       LEFT JOIN habit_counter_progress hcp
+         ON hcp.habit_id = h.id AND hcp.progress_date = ?
+       LEFT JOIN habit_completions hc
+         ON hc.habit_id = h.id AND hc.completion_date = ?
+       WHERE h.id = ?
+         AND h.goal_type = 'counter'
+         AND h.is_active = 1
+         AND h.is_paused = 0
+         AND (',' || h.schedule_days || ',') LIKE ?`,
+      today,
+      today,
+      habitId,
+      `%,${todayDay},%`,
+    );
+
+    if (!row) throw new Error('Counter habit not found.');
+
+    const wasComplete = row.status === 'complete';
+    const effectiveCurrentCount = wasComplete
+      ? row.targetCount
+      : Math.min(row.currentCount, row.targetCount);
+    nextCount = Math.min(row.targetCount, Math.max(0, effectiveCurrentCount + increment));
+    const isComplete = nextCount >= row.targetCount;
+
+    if (nextCount !== row.currentCount) {
+      await txn.runAsync(
+        `INSERT INTO habit_counter_progress (habit_id, progress_date, count, updated_at)
+         VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+         ON CONFLICT(habit_id, progress_date) DO UPDATE SET
+           count = excluded.count,
+           updated_at = CURRENT_TIMESTAMP`,
+        habitId,
+        today,
+        nextCount,
+      );
+    }
+
+    if (wasComplete !== isComplete) {
+      await applyHabitCompletionTransition(
+        txn,
+        habitId,
+        isComplete,
+        today,
+        todayDay,
+        'counter',
+      );
+    }
+  };
+
+  if (Platform.OS === 'web') {
+    await db.withTransactionAsync(() => applyChange(db));
+  } else {
+    await db.withExclusiveTransactionAsync(applyChange);
+  }
+
+  return nextCount;
 }

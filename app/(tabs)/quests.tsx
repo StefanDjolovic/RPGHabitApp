@@ -20,7 +20,9 @@ import {
   type HabitAttribute,
   type HabitDifficulty,
   type QuestLogHabit,
+  pauseHabit,
   rewardByDifficulty,
+  resumeHabit,
   restoreHabit,
 } from '@/src/database/habit-repository';
 import { getHabitStreaksById } from '@/src/progression/habit-streak';
@@ -51,6 +53,18 @@ function formatAttribute(attribute: HabitAttribute) {
 function formatLastCompleted(dateKey: string | null) {
   if (!dateKey) return 'No clears yet';
   return `Last clear ${dateKey}`;
+}
+
+function formatSchedule(scheduleDays: number[]) {
+  const sortedDays = [...scheduleDays].sort((first, second) => first - second);
+  const normalized = sortedDays.join(',');
+
+  if (normalized === '0,1,2,3,4,5,6') return 'Every day';
+  if (normalized === '1,2,3,4,5') return 'Weekdays';
+  if (normalized === '0,6') return 'Weekend';
+
+  const dayLabels = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  return sortedDays.map((day) => dayLabels[day]).join(', ');
 }
 
 export default function QuestsScreen() {
@@ -107,6 +121,31 @@ export default function QuestsScreen() {
     [db, quests],
   );
 
+  const toggleQuestPaused = useCallback(
+    async (quest: QuestLogHabit) => {
+      const previousQuests = quests;
+      try {
+        setUpdatingQuestId(quest.id);
+        setQuests((current) =>
+          current.map((item) =>
+            item.id === quest.id ? { ...item, isPaused: !item.isPaused } : item,
+          ),
+        );
+
+        if (quest.isPaused) {
+          await resumeHabit(db, quest.id);
+        } else {
+          await pauseHabit(db, quest.id);
+        }
+      } catch {
+        setQuests(previousQuests);
+      } finally {
+        setUpdatingQuestId(null);
+      }
+    },
+    [db, quests],
+  );
+
   const confirmArchiveQuest = useCallback(
     (quest: QuestLogHabit) => {
       Alert.alert(
@@ -134,20 +173,30 @@ export default function QuestsScreen() {
   );
 
   const summary = useMemo(() => {
-    return quests.reduce(
+    const todayDay = new Date().getDay();
+    const summaryQuests =
+      questFilter === 'archived'
+        ? quests
+        : quests.filter(
+            (quest) =>
+              !quest.isPaused && quest.isRequired && quest.scheduleDays.includes(todayDay),
+          );
+
+    return summaryQuests.reduce(
       (totals, quest) => {
         const reward = rewardByDifficulty[quest.difficulty];
         return {
+          questCount: totals.questCount + 1,
           completedToday: totals.completedToday + (quest.complete ? 1 : 0),
           totalClears: totals.totalClears + quest.totalCompletions,
           totalEnergy: totals.totalEnergy + reward.energy,
           totalXp: totals.totalXp + reward.xp,
         };
       },
-      { completedToday: 0, totalClears: 0, totalEnergy: 0, totalXp: 0 },
+      { questCount: 0, completedToday: 0, totalClears: 0, totalEnergy: 0, totalXp: 0 },
     );
-  }, [quests]);
-  const completionRatio = quests.length > 0 ? summary.completedToday / quests.length : 0;
+  }, [questFilter, quests]);
+  const completionRatio = summary.questCount > 0 ? summary.completedToday / summary.questCount : 0;
   const showingArchived = questFilter === 'archived';
 
   return (
@@ -188,7 +237,7 @@ export default function QuestsScreen() {
                 {showingArchived ? 'ARCHIVED QUESTS' : 'TODAY CLEAR RATE'}
               </Text>
               <Text style={styles.summaryValue}>
-                {showingArchived ? quests.length : `${summary.completedToday} / ${quests.length}`}
+                {showingArchived ? quests.length : `${summary.completedToday} / ${summary.questCount}`}
               </Text>
             </View>
             <View style={styles.summaryIcon}>
@@ -260,7 +309,7 @@ export default function QuestsScreen() {
         <View style={styles.sectionHeader}>
           <View>
             <Text style={styles.sectionEyebrow}>
-              {showingArchived ? 'ARCHIVED QUESTS' : 'ACTIVE DAILY QUESTS'}
+              {showingArchived ? 'ARCHIVED QUESTS' : 'ACTIVE AND PAUSED QUESTS'}
             </Text>
             <Text style={styles.sectionTitle}>
               {showingArchived ? 'Stored records' : 'Quest board'}
@@ -301,7 +350,11 @@ export default function QuestsScreen() {
             return (
               <View
                 key={quest.id}
-                style={[styles.questCard, quest.complete && styles.questCardComplete]}>
+                style={[
+                  styles.questCard,
+                  quest.complete && styles.questCardComplete,
+                  quest.isPaused && styles.questCardPaused,
+                ]}>
                 <View style={[styles.questIcon, { borderColor: `${difficulty.color}66` }]}>
                   <MaterialCommunityIcons
                     name={attributeIcons[quest.attribute]}
@@ -314,9 +367,29 @@ export default function QuestsScreen() {
                   <View style={styles.questTitleRow}>
                     <Text style={styles.questTitle}>{quest.title}</Text>
                     <View style={styles.questActions}>
+                      <Text style={[styles.modeBadge, !quest.isRequired && styles.modeBadgeOptional]}>
+                        {quest.isRequired ? 'REQ' : 'OPT'}
+                      </Text>
                       <Text style={[styles.difficulty, { color: difficulty.color }]}>
                         {difficulty.label.toUpperCase()}
                       </Text>
+                      {!showingArchived ? (
+                        <Pressable
+                          accessibilityLabel={`${quest.isPaused ? 'Resume' : 'Pause'} ${quest.title}`}
+                          disabled={updatingQuestId === quest.id}
+                          onPress={() => void toggleQuestPaused(quest)}
+                          style={({ pressed }) => [
+                            styles.cardActionButton,
+                            pressed && styles.cardActionButtonPressed,
+                            updatingQuestId === quest.id && styles.cardActionButtonDisabled,
+                          ]}>
+                          <MaterialCommunityIcons
+                            name={quest.isPaused ? 'play' : 'pause'}
+                            size={16}
+                            color={quest.isPaused ? '#68E1A8' : '#FFD27A'}
+                          />
+                        </Pressable>
+                      ) : null}
                       {!showingArchived ? (
                         <Pressable
                           accessibilityLabel={`Edit ${quest.title}`}
@@ -350,10 +423,19 @@ export default function QuestsScreen() {
                     </View>
                   </View>
                   <Text style={styles.questDescription}>
-                    {quest.description || 'Complete this daily quest'}
+                    {quest.description ||
+                      (quest.goalType === 'counter'
+                        ? `Reach ${quest.targetCount} completions today`
+                        : 'Complete this daily quest')}
                   </Text>
 
                   <View style={styles.rewardRow}>
+                    <Text style={styles.goalTypeText}>
+                      {quest.goalType === 'counter'
+                        ? `COUNTER x${quest.targetCount}`
+                        : 'CHECK-IN'}
+                    </Text>
+                    <View style={styles.rewardDot} />
                     <Text style={styles.rewardText}>+{reward.xp} EXP</Text>
                     <View style={styles.rewardDot} />
                     <Text style={styles.rewardText}>
@@ -370,14 +452,39 @@ export default function QuestsScreen() {
                         {habitStreak} {habitStreak === 1 ? 'day' : 'days'}
                       </Text>
                     </View>
-                    <View style={[styles.statusPill, quest.complete && styles.statusPillComplete]}>
-                      <View style={[styles.statusDot, quest.complete && styles.statusDotComplete]} />
-                      <Text style={[styles.statusText, quest.complete && styles.statusTextComplete]}>
-                        {quest.complete ? 'Cleared today' : 'Pending today'}
+                    <View
+                      style={[
+                        styles.statusPill,
+                        quest.complete && styles.statusPillComplete,
+                        quest.isPaused && styles.statusPillPaused,
+                      ]}>
+                      <View
+                        style={[
+                          styles.statusDot,
+                          quest.complete && styles.statusDotComplete,
+                          quest.isPaused && styles.statusDotPaused,
+                        ]}
+                      />
+                      <Text
+                        style={[
+                          styles.statusText,
+                          quest.complete && styles.statusTextComplete,
+                          quest.isPaused && styles.statusTextPaused,
+                        ]}>
+                        {quest.isPaused
+                          ? 'Paused'
+                          : quest.goalType === 'counter'
+                            ? quest.complete
+                              ? 'Goal reached'
+                              : `${quest.currentCount} / ${quest.targetCount} today`
+                          : quest.complete
+                            ? 'Cleared today'
+                            : 'Pending today'}
                       </Text>
                     </View>
                     <Text style={styles.historyText}>
-                      {quest.totalCompletions} clears - {formatLastCompleted(quest.lastCompletedDate)}
+                      {formatSchedule(quest.scheduleDays)} - {quest.totalCompletions} clears -{' '}
+                      {formatLastCompleted(quest.lastCompletedDate)}
                     </Text>
                   </View>
                 </View>
@@ -567,6 +674,7 @@ const styles = StyleSheet.create({
     borderColor: '#222842',
   },
   questCardComplete: { backgroundColor: 'rgba(12, 25, 35, 0.94)', borderColor: '#254B58' },
+  questCardPaused: { opacity: 0.66, borderColor: '#4A4052' },
   questIcon: {
     width: 45,
     height: 45,
@@ -580,6 +688,22 @@ const styles = StyleSheet.create({
   questTitleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   questTitle: { color: '#E8E9F4', fontSize: 14, fontWeight: '800', flexShrink: 1 },
   questActions: { flexDirection: 'row', alignItems: 'center', gap: 7, marginLeft: 8 },
+  modeBadge: {
+    color: '#7EE7FF',
+    fontSize: 8,
+    fontWeight: '900',
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    borderRadius: 8,
+    backgroundColor: '#0D2230',
+    borderWidth: 1,
+    borderColor: '#24506A',
+  },
+  modeBadgeOptional: {
+    color: '#FFD27A',
+    backgroundColor: '#251E15',
+    borderColor: '#5A4524',
+  },
   cardActionButton: {
     width: 27,
     height: 27,
@@ -595,6 +719,7 @@ const styles = StyleSheet.create({
   difficulty: { fontSize: 8, fontWeight: '900', letterSpacing: 0.9, marginLeft: 8 },
   questDescription: { color: '#737B98', fontSize: 10, marginTop: 4 },
   rewardRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', marginTop: 8, gap: 6 },
+  goalTypeText: { color: '#B898FF', fontSize: 8, fontWeight: '900' },
   rewardText: { color: '#6FC8DC', fontSize: 9, fontWeight: '700' },
   rewardDot: { width: 3, height: 3, borderRadius: 2, backgroundColor: '#454D69' },
   questMetaRow: {
@@ -628,10 +753,13 @@ const styles = StyleSheet.create({
     borderColor: '#303652',
   },
   statusPillComplete: { backgroundColor: '#10272D', borderColor: '#2C6A73' },
+  statusPillPaused: { backgroundColor: '#251E15', borderColor: '#5A4524' },
   statusDot: { width: 5, height: 5, borderRadius: 3, backgroundColor: '#747C97' },
   statusDotComplete: { backgroundColor: '#67DDF6' },
+  statusDotPaused: { backgroundColor: '#FFD27A' },
   statusText: { color: '#8A91AA', fontSize: 9, fontWeight: '800' },
   statusTextComplete: { color: '#8AE8F9' },
+  statusTextPaused: { color: '#FFD27A' },
   historyText: { color: '#69718F', fontSize: 9, fontWeight: '700', flexShrink: 1 },
   addButton: {
     height: 50,

@@ -1,13 +1,6 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 
-const DATABASE_VERSION = 5;
-
-const seedHabits = [
-  ['Morning workout', 'Complete 30 minutes', 'hard', 'strength'],
-  ['Deep work', 'Focus for 45 minutes', 'medium', 'discipline'],
-  ['Read a book', 'Read for 20 minutes', 'medium', 'intelligence'],
-  ['Evening walk', 'Reach 3,000 steps', 'easy', 'vitality'],
-] as const;
+const DATABASE_VERSION = 10;
 
 export async function migrateDatabase(db: SQLiteDatabase) {
   await db.execAsync('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
@@ -45,22 +38,6 @@ export async function migrateDatabase(db: SQLiteDatabase) {
         ON habit_completions(completion_date);
     `);
 
-    const habitCount = await db.getFirstAsync<{ count: number }>(
-      'SELECT COUNT(*) AS count FROM habits',
-    );
-
-    if ((habitCount?.count ?? 0) === 0) {
-      for (const [title, description, difficulty, attribute] of seedHabits) {
-        await db.runAsync(
-          `INSERT INTO habits (title, description, difficulty, attribute)
-           VALUES (?, ?, ?, ?)`,
-          title,
-          description,
-          difficulty,
-          attribute,
-        );
-      }
-    }
   }
 
   if (currentVersion < 2) {
@@ -208,6 +185,85 @@ export async function migrateDatabase(db: SQLiteDatabase) {
 
       CREATE INDEX IF NOT EXISTS idx_dungeon_runs_completed_at
         ON dungeon_runs(completed_at);
+    `);
+  }
+
+  if (currentVersion < 6) {
+    await db.execAsync(`
+      CREATE TABLE IF NOT EXISTS stat_point_allocations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        attribute TEXT NOT NULL
+          CHECK (attribute IN ('strength', 'intelligence', 'discipline', 'vitality', 'creativity')),
+        amount INTEGER NOT NULL CHECK (amount > 0),
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_stat_point_allocations_attribute
+        ON stat_point_allocations(attribute);
+    `);
+  }
+
+  if (currentVersion < 7) {
+    await db.execAsync(`
+      ALTER TABLE habits
+        ADD COLUMN schedule_days TEXT NOT NULL DEFAULT '0,1,2,3,4,5,6';
+
+      ALTER TABLE habits
+        ADD COLUMN is_required INTEGER NOT NULL DEFAULT 1
+        CHECK (is_required IN (0, 1));
+    `);
+  }
+
+  if (currentVersion < 8) {
+    await db.execAsync(`
+      ALTER TABLE habits
+        ADD COLUMN is_paused INTEGER NOT NULL DEFAULT 0
+        CHECK (is_paused IN (0, 1));
+    `);
+  }
+
+  if (currentVersion < 9) {
+    await db.execAsync(`
+      ALTER TABLE habits
+        ADD COLUMN goal_type TEXT NOT NULL DEFAULT 'single'
+        CHECK (goal_type IN ('single', 'counter'));
+
+      ALTER TABLE habits
+        ADD COLUMN target_count INTEGER NOT NULL DEFAULT 1
+        CHECK (target_count >= 1);
+
+      CREATE TABLE IF NOT EXISTS habit_counter_progress (
+        habit_id INTEGER NOT NULL,
+        progress_date TEXT NOT NULL,
+        count INTEGER NOT NULL DEFAULT 0 CHECK (count >= 0),
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (habit_id, progress_date),
+        FOREIGN KEY (habit_id) REFERENCES habits(id) ON DELETE CASCADE
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_habit_counter_progress_date
+        ON habit_counter_progress(progress_date);
+    `);
+  }
+
+  if (currentVersion < 10) {
+    const onboardingCompleted = currentVersion === 0 ? 0 : 1;
+    await db.execAsync(`
+      CREATE TABLE IF NOT EXISTS player_profile (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        nickname TEXT NOT NULL,
+        avatar_mode TEXT NOT NULL DEFAULT 'system'
+          CHECK (avatar_mode IN ('system', 'initials')),
+        life_areas TEXT NOT NULL DEFAULT '',
+        onboarding_completed INTEGER NOT NULL DEFAULT 0
+          CHECK (onboarding_completed IN (0, 1)),
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      INSERT OR IGNORE INTO player_profile (
+        id, nickname, avatar_mode, life_areas, onboarding_completed
+      ) VALUES (1, 'Shadow Candidate', 'system', '', ${onboardingCompleted});
     `);
   }
 

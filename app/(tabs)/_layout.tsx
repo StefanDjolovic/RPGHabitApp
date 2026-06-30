@@ -1,12 +1,41 @@
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
-import { Tabs } from 'expo-router';
+import { Redirect, Tabs, type Href } from 'expo-router';
+import { useSQLiteContext } from 'expo-sqlite';
+import { useEffect, useState } from 'react';
+import { ActivityIndicator, View } from 'react-native';
 
 import { HapticTab } from '@/components/haptic-tab';
+import { getPlayerProfile } from '@/src/database/profile-repository';
 
 const activeColor = '#6DDEFF';
 const inactiveColor = '#666D87';
 
 export default function TabLayout() {
+  const db = useSQLiteContext();
+  const [onboardingCompleted, setOnboardingCompleted] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    void getPlayerProfile(db).then((profile) => {
+      if (active) setOnboardingCompleted(profile.onboardingCompleted);
+    });
+    return () => {
+      active = false;
+    };
+  }, [db]);
+
+  if (onboardingCompleted === null) {
+    return (
+      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#050711' }}>
+        <ActivityIndicator color="#6DDEFF" />
+      </View>
+    );
+  }
+
+  if (!onboardingCompleted) {
+    return <Redirect href={'/onboarding' as Href} />;
+  }
+
   return (
     <Tabs
       screenOptions={{

@@ -2,7 +2,7 @@ import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, type Href, useFocusEffect } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -14,6 +14,7 @@ import {
 } from 'react-native';
 
 import {
+  changeHabitCounter,
   claimDailyClearChest,
   DailyClearStatus,
   getDailyClearStatus,
@@ -31,6 +32,12 @@ import {
   MAX_DUNGEON_ENERGY,
   type PlayerProgress,
 } from '@/src/progression/player-progression';
+import {
+  getPlayerProfile,
+  getProfileInitials,
+  INITIAL_PLAYER_PROFILE,
+  type PlayerProfile,
+} from '@/src/database/profile-repository';
 import {
   getRecoveryQuestStatus,
   type RecoveryQuestStatus,
@@ -81,14 +88,18 @@ export default function TodayScreen() {
   const db = useSQLiteContext();
   const [habits, setHabits] = useState<Habit[]>([]);
   const [playerProgress, setPlayerProgress] = useState<PlayerProgress>(INITIAL_PLAYER_PROGRESS);
+  const [playerProfile, setPlayerProfile] = useState<PlayerProfile>(INITIAL_PLAYER_PROFILE);
   const [activityStreak, setActivityStreak] = useState(0);
   const [recoveryStatus, setRecoveryStatus] = useState<RecoveryQuestStatus>(initialRecoveryStatus);
   const [dailyClearStatus, setDailyClearStatus] =
     useState<DailyClearStatus>(initialDailyClearStatus);
   const [claimingDailyClear, setClaimingDailyClear] = useState(false);
+  const [updatingHabitId, setUpdatingHabitId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
-  const completed = useMemo(() => habits.filter((habit) => habit.complete).length, [habits]);
-  const progress = habits.length > 0 ? completed / habits.length : 0;
+  const requiredProgress =
+    dailyClearStatus.required > 0
+      ? dailyClearStatus.completed / dailyClearStatus.required
+      : 0;
   const xpProgress =
     playerProgress.xpForNextLevel > 0
       ? playerProgress.xpIntoLevel / playerProgress.xpForNextLevel
@@ -112,7 +123,7 @@ export default function TodayScreen() {
     : null;
   const dailyClearText =
     dailyClearStatus.required === 0
-      ? "Add an objective to activate today's chest."
+      ? 'No required objectives scheduled today.'
       : dailyClearStatus.claimed
         ? dailyClearReward
           ? `Loot stored: ${dailyClearStatus.rewardQuantity ?? 1}x ${dailyClearReward.name}.`
@@ -125,15 +136,17 @@ export default function TodayScreen() {
 
   const loadTodayData = useCallback(async () => {
     try {
-      const [todayHabits, progressSummary, streak, recovery, dailyClear] = await Promise.all([
+      const [todayHabits, progressSummary, profile, streak, recovery, dailyClear] = await Promise.all([
         getTodayHabits(db),
         getPlayerProgress(db),
+        getPlayerProfile(db),
         getActivityStreak(db),
         getRecoveryQuestStatus(db),
         getDailyClearStatus(db),
       ]);
       setHabits(todayHabits);
       setPlayerProgress(progressSummary);
+      setPlayerProfile(profile);
       setActivityStreak(streak);
       setRecoveryStatus(recovery);
       setDailyClearStatus(dailyClear);
@@ -150,9 +163,10 @@ export default function TodayScreen() {
 
   const toggleHabit = async (id: number) => {
     const habit = habits.find((item) => item.id === id);
-    if (!habit) return;
+    if (!habit || habit.goalType !== 'single' || updatingHabitId === id) return;
 
     const nextComplete = !habit.complete;
+    setUpdatingHabitId(id);
     setHabits((current) =>
       current.map((item) => (item.id === id ? { ...item, complete: nextComplete } : item)),
     );
@@ -173,6 +187,56 @@ export default function TodayScreen() {
       setHabits((current) =>
         current.map((item) => (item.id === id ? { ...item, complete: habit.complete } : item)),
       );
+    } finally {
+      setUpdatingHabitId(null);
+    }
+  };
+
+  const updateCounter = async (habit: Habit, delta: number) => {
+    if (habit.goalType !== 'counter' || updatingHabitId === habit.id) return;
+
+    const nextCount = Math.min(habit.targetCount, Math.max(0, habit.currentCount + delta));
+    if (nextCount === habit.currentCount) return;
+
+    const nextComplete = nextCount >= habit.targetCount;
+    setUpdatingHabitId(habit.id);
+    setHabits((current) =>
+      current.map((item) =>
+        item.id === habit.id
+          ? { ...item, currentCount: nextCount, complete: nextComplete }
+          : item,
+      ),
+    );
+
+    try {
+      const savedCount = await changeHabitCounter(db, habit.id, delta);
+      setHabits((current) =>
+        current.map((item) =>
+          item.id === habit.id
+            ? {
+                ...item,
+                currentCount: savedCount,
+                complete: savedCount >= item.targetCount,
+              }
+            : item,
+        ),
+      );
+      const [progressSummary, streak, recovery, dailyClear] = await Promise.all([
+        getPlayerProgress(db),
+        getActivityStreak(db),
+        getRecoveryQuestStatus(db),
+        getDailyClearStatus(db),
+      ]);
+      setPlayerProgress(progressSummary);
+      setActivityStreak(streak);
+      setRecoveryStatus(recovery);
+      setDailyClearStatus(dailyClear);
+    } catch {
+      setHabits((current) =>
+        current.map((item) => (item.id === habit.id ? habit : item)),
+      );
+    } finally {
+      setUpdatingHabitId(null);
     }
   };
 
@@ -210,7 +274,11 @@ export default function TodayScreen() {
             accessibilityLabel="Open profile"
             onPress={() => router.push('/profile')}
             style={styles.avatarButton}>
-            <MaterialCommunityIcons name="account" size={26} color="#9BE8FF" />
+            {playerProfile.avatarMode === 'initials' ? (
+              <Text style={styles.avatarInitials}>{getProfileInitials(playerProfile.nickname)}</Text>
+            ) : (
+              <MaterialCommunityIcons name="account" size={26} color="#9BE8FF" />
+            )}
           </Pressable>
         </View>
 
@@ -227,7 +295,7 @@ export default function TodayScreen() {
             </View>
 
             <View style={styles.playerIdentity}>
-              <Text style={styles.playerName}>Shadow Candidate</Text>
+              <Text style={styles.playerName}>{playerProfile.nickname}</Text>
               <Text style={styles.playerSubtitle}>{playerProgress.rankLabel} - Path in progress</Text>
             </View>
 
@@ -281,24 +349,26 @@ export default function TodayScreen() {
         <View style={styles.sectionHeader}>
           <View>
             <Text style={styles.sectionEyebrow}>DAILY QUEST</Text>
-            <Text style={styles.sectionTitle}>Required objectives</Text>
+            <Text style={styles.sectionTitle}>{"Today's objectives"}</Text>
           </View>
           <View style={styles.completionBadge}>
-            <Text style={styles.completionText}>{completed}/{habits.length}</Text>
+            <Text style={styles.completionText}>
+              {dailyClearStatus.completed}/{dailyClearStatus.required}
+            </Text>
           </View>
         </View>
 
         <View style={styles.dailyProgressCard}>
           <View style={styles.dailyProgressTop}>
-            <Text style={styles.dailyProgressTitle}>Daily completion</Text>
-            <Text style={styles.dailyProgressPercent}>{Math.round(progress * 100)}%</Text>
+            <Text style={styles.dailyProgressTitle}>Required completion</Text>
+            <Text style={styles.dailyProgressPercent}>{Math.round(requiredProgress * 100)}%</Text>
           </View>
           <View style={styles.dailyTrack}>
             <LinearGradient
               colors={['#6C4DFF', '#56D9FF']}
               end={{ x: 1, y: 0 }}
               start={{ x: 0, y: 0 }}
-              style={[styles.dailyFill, { width: `${progress * 100}%` }]}
+              style={[styles.dailyFill, { width: `${requiredProgress * 100}%` }]}
             />
           </View>
           <View style={styles.dailyClearRow}>
@@ -389,7 +459,7 @@ export default function TodayScreen() {
           {!loading && habits.length === 0 ? (
             <View style={styles.loadingState}>
               <MaterialCommunityIcons name="sword-cross" size={28} color="#707894" />
-              <Text style={styles.loadingText}>No daily quests yet.</Text>
+              <Text style={styles.loadingText}>No quests scheduled today.</Text>
             </View>
           ) : null}
 
@@ -397,15 +467,11 @@ export default function TodayScreen() {
             const accent = difficultyColors[habit.difficulty];
             const reward = rewardByDifficulty[habit.difficulty];
             return (
-              <Pressable
-                accessibilityRole="checkbox"
-                accessibilityState={{ checked: habit.complete }}
+              <View
                 key={habit.id}
-                onPress={() => void toggleHabit(habit.id)}
-                style={({ pressed }) => [
+                style={[
                   styles.habitCard,
                   habit.complete && styles.habitCardComplete,
-                  pressed && styles.habitCardPressed,
                 ]}>
                 <View style={[styles.habitIcon, { borderColor: `${accent}55` }]}>
                   <MaterialCommunityIcons
@@ -420,9 +486,14 @@ export default function TodayScreen() {
                     <Text style={[styles.habitTitle, habit.complete && styles.habitTitleComplete]}>
                       {habit.title}
                     </Text>
-                    <Text style={[styles.difficulty, { color: accent }]}>
-                      {habit.difficulty.toUpperCase()}
-                    </Text>
+                    <View style={styles.habitBadgeRow}>
+                      <Text style={[styles.modeBadge, !habit.isRequired && styles.modeBadgeOptional]}>
+                        {habit.isRequired ? 'REQ' : 'OPT'}
+                      </Text>
+                      <Text style={[styles.difficulty, { color: accent }]}>
+                        {habit.difficulty.toUpperCase()}
+                      </Text>
+                    </View>
                   </View>
                   <Text style={styles.habitDetail}>{habit.description || 'Complete this daily quest'}</Text>
                   <View style={styles.rewardRow}>
@@ -434,12 +505,59 @@ export default function TodayScreen() {
                   </View>
                 </View>
 
-                <View style={[styles.checkButton, habit.complete && styles.checkButtonComplete]}>
-                  {habit.complete ? (
-                    <MaterialCommunityIcons name="check" size={20} color="#061018" />
-                  ) : null}
-                </View>
-              </Pressable>
+                {habit.goalType === 'counter' ? (
+                  <View style={styles.counterControl}>
+                    <Pressable
+                      accessibilityLabel={`Decrease ${habit.title} progress`}
+                      disabled={habit.currentCount <= 0 || updatingHabitId === habit.id}
+                      onPress={() => void updateCounter(habit, -1)}
+                      style={({ pressed }) => [
+                        styles.counterButton,
+                        (habit.currentCount <= 0 || updatingHabitId === habit.id) &&
+                          styles.counterButtonDisabled,
+                        pressed && styles.counterButtonPressed,
+                      ]}>
+                      <MaterialCommunityIcons name="minus" size={17} color="#AEB6CF" />
+                    </Pressable>
+                    <Text style={styles.counterValue}>
+                      {habit.currentCount}/{habit.targetCount}
+                    </Text>
+                    <Pressable
+                      accessibilityLabel={`Increase ${habit.title} progress`}
+                      disabled={habit.complete || updatingHabitId === habit.id}
+                      onPress={() => void updateCounter(habit, 1)}
+                      style={({ pressed }) => [
+                        styles.counterButton,
+                        (habit.complete || updatingHabitId === habit.id) &&
+                          styles.counterButtonDisabled,
+                        pressed && styles.counterButtonPressed,
+                      ]}>
+                      <MaterialCommunityIcons
+                        name={habit.complete ? 'check' : 'plus'}
+                        size={17}
+                        color={habit.complete ? '#8DECB4' : '#7EE7FF'}
+                      />
+                    </Pressable>
+                  </View>
+                ) : (
+                  <Pressable
+                    accessibilityLabel={`${habit.complete ? 'Undo' : 'Complete'} ${habit.title}`}
+                    accessibilityRole="checkbox"
+                    accessibilityState={{ checked: habit.complete }}
+                    disabled={updatingHabitId === habit.id}
+                    onPress={() => void toggleHabit(habit.id)}
+                    style={({ pressed }) => [
+                      styles.checkButton,
+                      habit.complete && styles.checkButtonComplete,
+                      updatingHabitId === habit.id && styles.counterButtonDisabled,
+                      pressed && styles.checkButtonPressed,
+                    ]}>
+                    {habit.complete ? (
+                      <MaterialCommunityIcons name="check" size={20} color="#061018" />
+                    ) : null}
+                  </Pressable>
+                )}
+              </View>
             );
           })}
         </View>
@@ -498,6 +616,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#293252',
   },
+  avatarInitials: { color: '#FF9BCB', fontSize: 13, fontWeight: '900' },
   playerCard: {
     borderRadius: 22,
     borderWidth: 1,
@@ -685,7 +804,6 @@ const styles = StyleSheet.create({
     borderColor: '#222842',
   },
   habitCardComplete: { backgroundColor: 'rgba(12, 25, 35, 0.94)', borderColor: '#254B58' },
-  habitCardPressed: { opacity: 0.78, transform: [{ scale: 0.99 }] },
   habitIcon: {
     width: 45,
     height: 45,
@@ -699,6 +817,23 @@ const styles = StyleSheet.create({
   habitTitleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   habitTitle: { color: '#E8E9F4', fontSize: 14, fontWeight: '800', flexShrink: 1 },
   habitTitleComplete: { color: '#A9B7C2' },
+  habitBadgeRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginLeft: 8 },
+  modeBadge: {
+    color: '#7EE7FF',
+    fontSize: 8,
+    fontWeight: '900',
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    borderRadius: 8,
+    backgroundColor: '#0D2230',
+    borderWidth: 1,
+    borderColor: '#24506A',
+  },
+  modeBadgeOptional: {
+    color: '#FFD27A',
+    backgroundColor: '#251E15',
+    borderColor: '#5A4524',
+  },
   difficulty: { fontSize: 8, fontWeight: '900', letterSpacing: 0.9, marginLeft: 8 },
   habitDetail: { color: '#737B98', fontSize: 10, marginTop: 4 },
   rewardRow: { flexDirection: 'row', alignItems: 'center', marginTop: 8, gap: 6 },
@@ -714,6 +849,37 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   checkButtonComplete: { backgroundColor: '#67DDF6', borderColor: '#67DDF6' },
+  checkButtonPressed: { opacity: 0.72, transform: [{ scale: 0.96 }] },
+  counterControl: {
+    width: 106,
+    height: 34,
+    borderRadius: 11,
+    borderWidth: 1,
+    borderColor: '#313955',
+    backgroundColor: '#11162A',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 3,
+  },
+  counterButton: {
+    width: 27,
+    height: 27,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#192037',
+  },
+  counterButtonDisabled: { opacity: 0.35 },
+  counterButtonPressed: { opacity: 0.7 },
+  counterValue: {
+    minWidth: 42,
+    color: '#E9E8F7',
+    fontSize: 11,
+    fontWeight: '900',
+    textAlign: 'center',
+    fontVariant: ['tabular-nums'],
+  },
   addButton: {
     height: 50,
     marginTop: 14,

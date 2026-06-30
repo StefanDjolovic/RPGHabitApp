@@ -28,6 +28,7 @@ export default function RootLayout() {
       <ThemeProvider value={habitRpgTheme}>
         <Stack screenOptions={{ contentStyle: { backgroundColor: '#050711' } }}>
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+          <Stack.Screen name="onboarding" options={{ headerShown: false, gestureEnabled: false }} />
           <Stack.Screen
             name="create-habit"
             options={{ animation: 'slide_from_bottom', headerShown: false, presentation: 'modal' }}

@@ -3,6 +3,12 @@
     "name": "Habit RPG",
     "slug": "habit-rpg",
     "version": "1.0.0",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/b3a64e61-ed77-468c-ba70-95ec6b97fafd"
+    },
     "orientation": "portrait",
     "icon": "./assets/images/habit-rpg-icon.png",
     "scheme": "habitrpg",

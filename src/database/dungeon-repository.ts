@@ -30,7 +30,12 @@ type DungeonRunRow = Omit<DungeonRun, 'rewardName'>;
 
 async function getDungeonEnergyAvailable(db: SQLiteDatabase) {
   const [earnedRow, spentRow] = await Promise.all([
-    db.getFirstAsync<TotalRow>('SELECT COALESCE(SUM(amount), 0) AS total FROM energy_events'),
+    db.getFirstAsync<TotalRow>(
+      `SELECT
+         COALESCE((SELECT SUM(amount) FROM energy_events), 0) +
+         COALESCE((SELECT SUM(energy_amount) FROM boss_quest_reward_events), 0) +
+         COALESCE((SELECT SUM(energy_amount) FROM recovery_quest_events), 0) AS total`,
+    ),
     db.getFirstAsync<TotalRow>('SELECT COALESCE(SUM(energy_cost), 0) AS total FROM dungeon_runs'),
   ]);
   const earnedEnergy = Math.max(0, earnedRow?.total ?? 0);

@@ -670,7 +670,7 @@ export default function QuestsScreen() {
                       />
                       <Text style={styles.streakText}>
                         {quest.cadence === 'weekly'
-                          ? 'This week'
+                          ? `${habitStreak} ${habitStreak === 1 ? 'week' : 'weeks'}`
                           : quest.cadence === 'one-time'
                             ? 'Single objective'
                           : `${habitStreak} ${habitStreak === 1 ? 'day' : 'days'}`}

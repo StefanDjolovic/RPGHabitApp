@@ -31,6 +31,15 @@ import {
 } from '@/src/database/profile-repository';
 import { getActivityStreak } from '@/src/progression/activity-streak';
 import {
+  getCharacterChronicle,
+  type ChronicleEvent,
+} from '@/src/progression/character-chronicle';
+import {
+  getHabitInsights,
+  type HabitInsight,
+  type HabitTrend,
+} from '@/src/progression/habit-insights';
+import {
   allocateStatPoint,
   getPlayerProgress,
   INITIAL_PLAYER_PROGRESS,
@@ -100,11 +109,37 @@ function formatCalendarDate(dateKey: string) {
   });
 }
 
+function formatChronicleDate(value: string) {
+  const normalized = value.includes('T') ? value : `${value.replace(' ', 'T')}Z`;
+  const date = new Date(normalized);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
 function getActivityLevel(completedCount: number) {
   if (completedCount >= 4) return 3;
   if (completedCount >= 2) return 2;
   if (completedCount >= 1) return 1;
   return 0;
+}
+
+const trendMeta: Record<
+  HabitTrend,
+  { color: string; icon: keyof typeof MaterialCommunityIcons.glyphMap; label: string }
+> = {
+  up: { color: '#68E1A8', icon: 'trending-up', label: 'Improving' },
+  steady: { color: '#7EE7FF', icon: 'trending-neutral', label: 'Steady' },
+  down: { color: '#FF9BCB', icon: 'trending-down', label: 'Rebuild' },
+};
+
+function formatCadence(cadence: HabitInsight['cadence']) {
+  if (cadence === 'one-time') return 'ONE-TIME';
+  return cadence.toUpperCase();
 }
 
 export default function ProfileScreen() {
@@ -114,6 +149,8 @@ export default function ProfileScreen() {
   const [activityStreak, setActivityStreak] = useState(0);
   const [recentActivity, setRecentActivity] = useState<ActivitySummaryDay[]>([]);
   const [activityCalendar, setActivityCalendar] = useState<ActivitySummaryDay[]>([]);
+  const [habitInsights, setHabitInsights] = useState<HabitInsight[]>([]);
+  const [chronicleEvents, setChronicleEvents] = useState<ChronicleEvent[]>([]);
   const [selectedActivityDate, setSelectedActivityDate] = useState('');
   const [achievementSummary, setAchievementSummary] =
     useState<AchievementSummary>(initialAchievementSummary);
@@ -123,14 +160,25 @@ export default function ProfileScreen() {
   const loadProfile = useCallback(async () => {
     try {
       setLoading(true);
-      const [progressSummary, profile, streak, activityDays, calendarDays, achievements] =
+      const [
+        progressSummary,
+        profile,
+        streak,
+        activityDays,
+        calendarDays,
+        achievements,
+        insights,
+        chronicle,
+      ] =
         await Promise.all([
-        getPlayerProgress(db),
-        getPlayerProfile(db),
-        getActivityStreak(db),
-        getRecentActivityDays(db),
-        getActivityCalendarDays(db),
-        getAchievementSummary(db),
+          getPlayerProgress(db),
+          getPlayerProfile(db),
+          getActivityStreak(db),
+          getRecentActivityDays(db),
+          getActivityCalendarDays(db),
+          getAchievementSummary(db),
+          getHabitInsights(db),
+          getCharacterChronicle(db),
         ]);
       setPlayerProgress(progressSummary);
       setPlayerProfile(profile);
@@ -139,6 +187,8 @@ export default function ProfileScreen() {
       setActivityCalendar(calendarDays);
       setSelectedActivityDate((current) => current || calendarDays.at(-1)?.dateKey || '');
       setAchievementSummary(achievements);
+      setHabitInsights(insights);
+      setChronicleEvents(chronicle);
     } finally {
       setLoading(false);
     }
@@ -553,6 +603,145 @@ export default function ProfileScreen() {
             )}
           </View>
         ) : null}
+
+        <View style={styles.sectionHeader}>
+          <View>
+            <Text style={styles.sectionEyebrow}>HABIT INSIGHTS</Text>
+            <Text style={styles.sectionTitle}>28-day consistency</Text>
+          </View>
+          <View style={styles.insightCountBadge}>
+            <Text style={styles.insightCountText}>{habitInsights.length} ACTIVE</Text>
+          </View>
+        </View>
+
+        <View style={styles.insightList}>
+          {!loading && habitInsights.length === 0 ? (
+            <View style={styles.emptyActivityCard}>
+              <MaterialCommunityIcons name="chart-line" size={25} color="#707894" />
+              <Text style={styles.emptyActivityText}>No active habits to analyze.</Text>
+            </View>
+          ) : null}
+
+          {habitInsights.map((insight) => {
+            const attribute = attributeMeta[insight.attribute];
+            const trend = trendMeta[insight.trend];
+            const successPercent = Math.round(insight.successRate * 100);
+            const streakValue =
+              insight.cadence === 'one-time'
+                ? insight.currentStreak > 0
+                  ? 'Done'
+                  : 'Open'
+                : String(insight.currentStreak);
+            const streakLabel =
+              insight.cadence === 'weekly'
+                ? 'WEEK STREAK'
+                : insight.cadence === 'daily'
+                  ? 'DAY STREAK'
+                  : 'STATUS';
+
+            return (
+              <View key={insight.id} style={styles.insightCard}>
+                <View style={styles.insightTopRow}>
+                  <View style={styles.insightIdentity}>
+                    <View
+                      style={[
+                        styles.insightIcon,
+                        { borderColor: `${attribute.color}66` },
+                      ]}>
+                      <MaterialCommunityIcons
+                        name={attribute.icon}
+                        size={20}
+                        color={attribute.color}
+                      />
+                    </View>
+                    <View style={styles.insightTitleBlock}>
+                      <Text numberOfLines={1} style={styles.insightTitle}>
+                        {insight.title}
+                      </Text>
+                      <Text style={styles.insightCadence}>{formatCadence(insight.cadence)}</Text>
+                    </View>
+                  </View>
+                  <View style={styles.insightTrend}>
+                    <MaterialCommunityIcons name={trend.icon} size={15} color={trend.color} />
+                    <Text style={[styles.insightTrendText, { color: trend.color }]}>
+                      {trend.label}
+                    </Text>
+                  </View>
+                </View>
+
+                <View style={styles.insightRateHeader}>
+                  <Text style={styles.insightRateLabel}>SUCCESS RATE</Text>
+                  <Text style={styles.insightRateValue}>{successPercent}%</Text>
+                </View>
+                <View style={styles.insightTrack}>
+                  <View
+                    style={[
+                      styles.insightFill,
+                      { backgroundColor: attribute.color, width: `${successPercent}%` },
+                    ]}
+                  />
+                </View>
+
+                <View style={styles.insightStats}>
+                  <View style={styles.insightStat}>
+                    <Text style={styles.insightStatValue}>{streakValue}</Text>
+                    <Text style={styles.insightStatLabel}>{streakLabel}</Text>
+                  </View>
+                  <View style={styles.insightStat}>
+                    <Text style={styles.insightStatValue}>{insight.totalCompletions}</Text>
+                    <Text style={styles.insightStatLabel}>TOTAL CLEARS</Text>
+                  </View>
+                  <View style={styles.insightStat}>
+                    <Text style={styles.insightStatValue}>+{insight.attributeXp}</Text>
+                    <Text style={styles.insightStatLabel}>{attribute.label.toUpperCase()} XP</Text>
+                  </View>
+                </View>
+              </View>
+            );
+          })}
+        </View>
+
+        <View style={styles.sectionHeader}>
+          <View>
+            <Text style={styles.sectionEyebrow}>CHARACTER CHRONICLE</Text>
+            <Text style={styles.sectionTitle}>Milestone history</Text>
+          </View>
+          <View style={styles.chronicleCountBadge}>
+            <MaterialCommunityIcons name="book-open-page-variant" size={14} color="#C8A8FF" />
+            <Text style={styles.chronicleCountText}>{chronicleEvents.length}</Text>
+          </View>
+        </View>
+
+        <View style={styles.chronicleList}>
+          {!loading && chronicleEvents.length === 0 ? (
+            <View style={styles.emptyActivityCard}>
+              <MaterialCommunityIcons name="book-outline" size={25} color="#707894" />
+              <Text style={styles.emptyActivityText}>No Chronicle milestones recorded yet.</Text>
+            </View>
+          ) : null}
+
+          {chronicleEvents.map((event, index) => (
+            <View key={event.id} style={styles.chronicleRow}>
+              <View style={styles.chronicleRail}>
+                <View style={[styles.chronicleIcon, { borderColor: `${event.accent}88` }]}>
+                  <MaterialCommunityIcons name={event.icon} size={19} color={event.accent} />
+                </View>
+                {index < chronicleEvents.length - 1 ? (
+                  <View style={styles.chronicleLine} />
+                ) : null}
+              </View>
+              <View style={styles.chronicleBody}>
+                <View style={styles.chronicleTopRow}>
+                  <Text numberOfLines={1} style={styles.chronicleTitle}>
+                    {event.title}
+                  </Text>
+                  <Text style={styles.chronicleDate}>{formatChronicleDate(event.occurredAt)}</Text>
+                </View>
+                <Text style={styles.chronicleDetail}>{event.detail}</Text>
+              </View>
+            </View>
+          ))}
+        </View>
 
         <View style={styles.sectionHeader}>
           <View>
@@ -977,6 +1166,131 @@ const styles = StyleSheet.create({
   calendarRewardRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 9, paddingTop: 10 },
   calendarReward: { color: '#6FC8DC', fontSize: 9, fontWeight: '700' },
   calendarRestText: { color: '#737B98', fontSize: 10, fontWeight: '700', paddingTop: 9 },
+  insightCountBadge: {
+    height: 26,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#303652',
+    backgroundColor: '#12172A',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 9,
+  },
+  insightCountText: { color: '#8EDFF2', fontSize: 8, fontWeight: '900' },
+  insightList: { gap: 10, marginBottom: 24 },
+  insightCard: {
+    minHeight: 176,
+    borderRadius: 8,
+    padding: 13,
+    backgroundColor: 'rgba(12, 16, 31, 0.94)',
+    borderWidth: 1,
+    borderColor: '#252B44',
+  },
+  insightTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  insightIdentity: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center' },
+  insightIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#11172A',
+    borderWidth: 1,
+  },
+  insightTitleBlock: { flex: 1, minWidth: 0, paddingLeft: 10 },
+  insightTitle: { color: '#E8E9F4', fontSize: 13, fontWeight: '900' },
+  insightCadence: { color: '#747D98', fontSize: 8, fontWeight: '900', marginTop: 3 },
+  insightTrend: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  insightTrendText: { fontSize: 9, fontWeight: '900' },
+  insightRateHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingTop: 14,
+    paddingBottom: 7,
+  },
+  insightRateLabel: { color: '#747D98', fontSize: 8, fontWeight: '900', letterSpacing: 1 },
+  insightRateValue: {
+    color: '#F1EFFF',
+    fontSize: 11,
+    fontWeight: '900',
+    fontVariant: ['tabular-nums'],
+  },
+  insightTrack: {
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#080B18',
+    overflow: 'hidden',
+  },
+  insightFill: { height: '100%', borderRadius: 3 },
+  insightStats: { flexDirection: 'row', paddingTop: 13 },
+  insightStat: { flex: 1, minWidth: 0 },
+  insightStatValue: {
+    color: '#EDF0FF',
+    fontSize: 14,
+    fontWeight: '900',
+    fontVariant: ['tabular-nums'],
+  },
+  insightStatLabel: { color: '#68718C', fontSize: 7, fontWeight: '900', marginTop: 3 },
+  chronicleCountBadge: {
+    height: 28,
+    minWidth: 46,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#40345A',
+    backgroundColor: '#171326',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingHorizontal: 8,
+  },
+  chronicleCountText: { color: '#D7C5F3', fontSize: 9, fontWeight: '900' },
+  chronicleList: { marginBottom: 24 },
+  chronicleRow: {
+    minHeight: 74,
+    flexDirection: 'row',
+    alignItems: 'stretch',
+  },
+  chronicleRail: { width: 42, alignItems: 'center' },
+  chronicleIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#111426',
+    borderWidth: 1,
+  },
+  chronicleLine: {
+    width: 1,
+    flex: 1,
+    minHeight: 24,
+    backgroundColor: '#313650',
+    marginVertical: 4,
+  },
+  chronicleBody: {
+    flex: 1,
+    minWidth: 0,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#242940',
+    paddingLeft: 10,
+    paddingBottom: 15,
+  },
+  chronicleTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  chronicleTitle: { flex: 1, minWidth: 0, color: '#E8E9F4', fontSize: 12, fontWeight: '900' },
+  chronicleDate: { color: '#747D98', fontSize: 8, fontWeight: '800' },
+  chronicleDetail: { color: '#8D96AE', fontSize: 10, fontWeight: '700', paddingTop: 5 },
   activityList: { gap: 10 },
   emptyActivityCard: {
     minHeight: 92,

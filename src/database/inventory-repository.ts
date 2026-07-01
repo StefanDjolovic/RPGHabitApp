@@ -114,6 +114,27 @@ export async function grantInventoryItem(
   return true;
 }
 
+export async function consumeInventoryItem(
+  db: SQLiteDatabase,
+  itemKey: string,
+  quantity = 1,
+) {
+  const safeQuantity = Math.max(1, Math.floor(quantity));
+  const result = await db.runAsync(
+    `UPDATE inventory_items
+     SET quantity = quantity - ?,
+         last_acquired_at = CURRENT_TIMESTAMP
+     WHERE item_key = ? AND quantity >= ?`,
+    safeQuantity,
+    itemKey,
+    safeQuantity,
+  );
+
+  if (result.changes === 0) {
+    throw new Error('The required item is not available.');
+  }
+}
+
 export async function grantDailyClearReward(
   db: SQLiteDatabase,
   dateKey: string,

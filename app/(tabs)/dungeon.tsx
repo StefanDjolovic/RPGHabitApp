@@ -6,16 +6,16 @@ import { useCallback, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
-  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 import {
+  beginDungeonBattle,
   getDungeonOverview,
-  startDungeonRun,
   type DungeonOverview,
 } from '@/src/database/dungeon-repository';
 import { getDungeonDefinition } from '@/src/dungeon/dungeon-catalog';
@@ -25,6 +25,9 @@ const firstDungeon = getDungeonDefinition('ashen-ruins');
 
 const initialOverview: DungeonOverview = {
   energyAvailable: 0,
+  entryCost: firstDungeon.energyCost,
+  isTrialEntry: false,
+  hasActiveBattle: false,
   totalClears: 0,
   recentRuns: [],
 };
@@ -34,8 +37,8 @@ export default function DungeonScreen() {
   const [overview, setOverview] = useState<DungeonOverview>(initialOverview);
   const [loading, setLoading] = useState(true);
   const [entering, setEntering] = useState(false);
-  const [lastResult, setLastResult] = useState<string | null>(null);
-  const canEnter = overview.energyAvailable >= firstDungeon.energyCost;
+  const canEnter =
+    overview.hasActiveBattle || overview.energyAvailable >= overview.entryCost;
 
   const loadDungeon = useCallback(async () => {
     try {
@@ -56,16 +59,9 @@ export default function DungeonScreen() {
     if (!canEnter || entering) return;
 
     setEntering(true);
-    setLastResult(null);
     try {
-      const nextOverview = await startDungeonRun(db, firstDungeon.key);
-      const latestRun = nextOverview.recentRuns[0];
-      setOverview(nextOverview);
-      setLastResult(
-        latestRun?.rewardName
-          ? `Cleared ${latestRun.dungeonName}: ${latestRun.rewardQuantity ?? 1}x ${latestRun.rewardName}`
-          : `Cleared ${firstDungeon.name}`,
-      );
+      await beginDungeonBattle(db, firstDungeon.key);
+      router.push('/dungeon-run' as Href);
     } finally {
       setEntering(false);
     }
@@ -155,15 +151,17 @@ export default function DungeonScreen() {
               <Text style={styles.gateMetaLabel}>Mode</Text>
             </View>
             <View style={styles.gateMetaTile}>
-              <Text style={styles.gateMetaValue}>{firstDungeon.energyCost}</Text>
+              <Text style={styles.gateMetaValue}>
+                {overview.isTrialEntry ? 'Free' : overview.entryCost}
+              </Text>
               <Text style={styles.gateMetaLabel}>Energy</Text>
             </View>
           </View>
 
-          {lastResult ? (
+          {overview.hasActiveBattle ? (
             <View style={styles.resultBanner}>
-              <MaterialCommunityIcons name="treasure-chest" size={17} color="#FFD27A" />
-              <Text style={styles.resultText}>{lastResult}</Text>
+              <MaterialCommunityIcons name="sword-cross" size={17} color="#FFD27A" />
+              <Text style={styles.resultText}>An unfinished gate battle is waiting.</Text>
             </View>
           ) : null}
 
@@ -179,13 +177,19 @@ export default function DungeonScreen() {
               <ActivityIndicator color="#061018" />
             ) : (
               <MaterialCommunityIcons
-                name={canEnter ? 'sword-cross' : 'lock-outline'}
+                name={overview.hasActiveBattle ? 'play' : canEnter ? 'sword-cross' : 'lock-outline'}
                 size={18}
                 color={canEnter ? '#061018' : '#777E9C'}
               />
             )}
             <Text style={[styles.enterButtonText, !canEnter && styles.enterButtonTextLocked]}>
-              {entering ? 'Entering' : canEnter ? 'Enter Gate' : 'Need Energy'}
+              {entering
+                ? 'Entering'
+                : overview.hasActiveBattle
+                  ? 'Resume Battle'
+                  : canEnter
+                    ? 'Enter Gate'
+                    : 'Need Energy'}
             </Text>
           </Pressable>
 
@@ -201,7 +205,7 @@ export default function DungeonScreen() {
 
         <View style={styles.sectionHeaderSecondary}>
           <Text style={styles.sectionEyebrow}>RUN LOG</Text>
-          <Text style={styles.sectionTitle}>Recent clears</Text>
+          <Text style={styles.sectionTitle}>Recent runs</Text>
         </View>
 
         {loading ? (
@@ -223,18 +227,25 @@ export default function DungeonScreen() {
           <View style={styles.runList}>
             {overview.recentRuns.map((run) => (
               <View key={run.id} style={styles.runCard}>
-                <View style={styles.runIcon}>
-                  <MaterialCommunityIcons name="check-decagram" size={21} color="#7FE7A9" />
+                <View style={[styles.runIcon, run.status === 'failed' && styles.runIconFailed]}>
+                  <MaterialCommunityIcons
+                    name={run.status === 'cleared' ? 'check-decagram' : 'close-octagon-outline'}
+                    size={21}
+                    color={run.status === 'cleared' ? '#7FE7A9' : '#E78AA5'}
+                  />
                 </View>
                 <View style={styles.runBody}>
                   <Text style={styles.runTitle}>{run.dungeonName}</Text>
                   <Text style={styles.runMeta}>
-                    {run.difficulty} - {run.energyCost} Energy spent
+                    {run.status === 'cleared' ? 'Cleared' : 'Defeated'} - {run.difficulty} -{' '}
+                    {run.energyCost === 0 ? 'Trial entry' : `${run.energyCost} Energy spent`}
                   </Text>
                   <Text style={styles.runReward}>
                     {run.rewardName
                       ? `${run.rewardQuantity ?? 1}x ${run.rewardName}`
-                      : 'Loot stored'}
+                      : run.status === 'cleared'
+                        ? 'Loot stored'
+                        : 'No final chest'}
                   </Text>
                 </View>
               </View>
@@ -459,6 +470,10 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(17, 36, 35, 0.82)',
     borderWidth: 1,
     borderColor: '#2D6557',
+  },
+  runIconFailed: {
+    backgroundColor: 'rgba(51, 20, 34, 0.82)',
+    borderColor: '#6A3048',
   },
   runBody: { flex: 1, paddingLeft: 11 },
   runTitle: { color: '#EBE9F8', fontSize: 13, fontWeight: '900' },

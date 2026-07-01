@@ -1,6 +1,6 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 
-const DATABASE_VERSION = 17;
+const DATABASE_VERSION = 18;
 
 export async function migrateDatabase(db: SQLiteDatabase) {
   await db.execAsync('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
@@ -500,6 +500,83 @@ export async function migrateDatabase(db: SQLiteDatabase) {
 
       CREATE INDEX idx_attribute_events_attribute
         ON attribute_events(attribute);
+
+      COMMIT;
+    `);
+  }
+
+  if (currentVersion < 18) {
+    await db.execAsync(`
+      BEGIN TRANSACTION;
+
+      CREATE TABLE dungeon_runs_v18 (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        client_run_id TEXT NOT NULL UNIQUE,
+        dungeon_key TEXT NOT NULL,
+        dungeon_name TEXT NOT NULL,
+        difficulty TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('cleared', 'failed')),
+        energy_cost INTEGER NOT NULL CHECK (energy_cost >= 0),
+        reward_item_key TEXT,
+        reward_quantity INTEGER,
+        started_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        completed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      INSERT INTO dungeon_runs_v18 (
+        id,
+        client_run_id,
+        dungeon_key,
+        dungeon_name,
+        difficulty,
+        status,
+        energy_cost,
+        reward_item_key,
+        reward_quantity,
+        started_at,
+        completed_at
+      )
+      SELECT
+        id,
+        client_run_id,
+        dungeon_key,
+        dungeon_name,
+        difficulty,
+        status,
+        energy_cost,
+        reward_item_key,
+        reward_quantity,
+        started_at,
+        completed_at
+      FROM dungeon_runs;
+
+      DROP TABLE dungeon_runs;
+      ALTER TABLE dungeon_runs_v18 RENAME TO dungeon_runs;
+
+      CREATE INDEX idx_dungeon_runs_completed_at
+        ON dungeon_runs(completed_at);
+
+      CREATE TABLE IF NOT EXISTS dungeon_battle_sessions (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        client_run_id TEXT NOT NULL UNIQUE,
+        dungeon_key TEXT NOT NULL,
+        dungeon_name TEXT NOT NULL,
+        difficulty TEXT NOT NULL,
+        energy_cost INTEGER NOT NULL CHECK (energy_cost >= 0),
+        player_hp INTEGER NOT NULL CHECK (player_hp >= 0),
+        enemy_hp INTEGER NOT NULL CHECK (enemy_hp >= 0),
+        max_player_hp INTEGER NOT NULL CHECK (max_player_hp > 0),
+        max_enemy_hp INTEGER NOT NULL CHECK (max_enemy_hp > 0),
+        basic_damage INTEGER NOT NULL CHECK (basic_damage > 0),
+        skill_damage INTEGER NOT NULL CHECK (skill_damage > 0),
+        potion_healing INTEGER NOT NULL CHECK (potion_healing > 0),
+        enemy_power INTEGER NOT NULL CHECK (enemy_power >= 0),
+        turn_number INTEGER NOT NULL DEFAULT 1 CHECK (turn_number > 0),
+        skill_cooldown INTEGER NOT NULL DEFAULT 0 CHECK (skill_cooldown >= 0),
+        combat_log TEXT NOT NULL DEFAULT '[]',
+        started_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
 
       COMMIT;
     `);

@@ -5,6 +5,7 @@ import { useSQLiteContext } from 'expo-sqlite';
 import { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Pressable,
   SafeAreaView,
   ScrollView,
@@ -12,6 +13,12 @@ import {
   Text,
   View,
 } from 'react-native';
+
+import {
+  completeCurrentBossMilestone,
+  getActiveBossQuest,
+  type BossQuest,
+} from '@/src/database/boss-quest-repository';
 
 import {
   changeHabitCounter,
@@ -46,6 +53,7 @@ import {
   type RecoveryQuestStatus,
 } from '@/src/progression/recovery-quest';
 import { getItemDefinition } from '@/src/inventory/item-catalog';
+import { syncHabitReminderFromDatabase } from '@/src/notifications/habit-reminders';
 
 const difficultyColors = {
   easy: '#68E1A8',
@@ -107,6 +115,7 @@ const initialDailyClearStatus: DailyClearStatus = {
 export default function TodayScreen() {
   const db = useSQLiteContext();
   const [habits, setHabits] = useState<Habit[]>([]);
+  const [bossQuest, setBossQuest] = useState<BossQuest | null>(null);
   const [playerProgress, setPlayerProgress] = useState<PlayerProgress>(INITIAL_PLAYER_PROGRESS);
   const [playerProfile, setPlayerProfile] = useState<PlayerProfile>(INITIAL_PLAYER_PROFILE);
   const [activityStreak, setActivityStreak] = useState(0);
@@ -115,6 +124,7 @@ export default function TodayScreen() {
     useState<DailyClearStatus>(initialDailyClearStatus);
   const [claimingDailyClear, setClaimingDailyClear] = useState(false);
   const [updatingHabitId, setUpdatingHabitId] = useState<number | null>(null);
+  const [updatingBossQuest, setUpdatingBossQuest] = useState(false);
   const [clockEpoch, setClockEpoch] = useState(() => Math.floor(Date.now() / 1000));
   const [loading, setLoading] = useState(true);
   const requiredProgress =
@@ -154,11 +164,20 @@ export default function TodayScreen() {
           : `${remainingDailyObjectives} ${
               remainingDailyObjectives === 1 ? 'objective' : 'objectives'
             } left before the chest unlocks.`;
+  const bossMilestone = bossQuest?.milestones.find((milestone) => !milestone.complete) ?? null;
+  const completedBossMilestones = bossQuest?.milestones.filter((milestone) => milestone.complete).length ?? 0;
+  const bossProgress = bossQuest?.milestones.length
+    ? completedBossMilestones / bossQuest.milestones.length
+    : 0;
+  const bossMilestoneReward = bossMilestone
+    ? rewardByDifficulty[bossMilestone.difficulty]
+    : null;
 
   const loadTodayData = useCallback(async () => {
     try {
-      const [todayHabits, progressSummary, profile, streak, recovery, dailyClear] = await Promise.all([
+      const [todayHabits, activeBoss, progressSummary, profile, streak, recovery, dailyClear] = await Promise.all([
         getTodayHabits(db),
+        getActiveBossQuest(db),
         getPlayerProgress(db),
         getPlayerProfile(db),
         getActivityStreak(db),
@@ -166,6 +185,7 @@ export default function TodayScreen() {
         getDailyClearStatus(db),
       ]);
       setHabits(todayHabits);
+      setBossQuest(activeBoss);
       setPlayerProgress(progressSummary);
       setPlayerProfile(profile);
       setActivityStreak(streak);
@@ -184,7 +204,14 @@ export default function TodayScreen() {
 
   const toggleHabit = async (id: number) => {
     const habit = habits.find((item) => item.id === id);
-    if (!habit || habit.goalType !== 'single' || updatingHabitId === id) return;
+    if (
+      !habit ||
+      habit.goalType !== 'single' ||
+      (habit.cadence !== 'daily' && habit.cadence !== 'one-time') ||
+      updatingHabitId === id
+    ) {
+      return;
+    }
 
     const nextComplete = !habit.complete;
     setUpdatingHabitId(id);
@@ -193,7 +220,10 @@ export default function TodayScreen() {
     );
 
     try {
-      await setHabitCompletion(db, id, nextComplete);
+      await setHabitCompletion(db, id, nextComplete, habit.cadence);
+      if (habit.cadence === 'one-time') {
+        await syncHabitReminderFromDatabase(db, id).catch(() => false);
+      }
       const [progressSummary, streak, recovery, dailyClear] = await Promise.all([
         getPlayerProgress(db),
         getActivityStreak(db),
@@ -432,6 +462,46 @@ export default function TodayScreen() {
     if (finishedTimer) void updateTimedHabit(finishedTimer, false);
   }, [clockEpoch, habits, updateTimedHabit, updatingHabitId]);
 
+  const completeBossPhase = async () => {
+    if (!bossQuest || updatingBossQuest) return;
+
+    try {
+      setUpdatingBossQuest(true);
+      const nextBoss = await completeCurrentBossMilestone(db, bossQuest.id);
+      setBossQuest(nextBoss);
+      const [progressSummary, streak, recovery] = await Promise.all([
+        getPlayerProgress(db),
+        getActivityStreak(db),
+        getRecoveryQuestStatus(db),
+      ]);
+      setPlayerProgress(progressSummary);
+      setActivityStreak(streak);
+      setRecoveryStatus(recovery);
+
+      if (!nextBoss) {
+        Alert.alert(
+          'Boss Quest defeated',
+          'Final bonus granted. Dungeon Key and Boss Quest Chest are now in Inventory.',
+        );
+      }
+    } catch {
+      Alert.alert('Boss phase not completed', 'The phase could not be saved. Please try again.');
+    } finally {
+      setUpdatingBossQuest(false);
+    }
+  };
+
+  const confirmBossPhase = () => {
+    if (!bossQuest) return;
+    const milestone = bossQuest.milestones.find((item) => !item.complete);
+    if (!milestone) return;
+
+    Alert.alert('Complete boss phase?', milestone.title, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Complete', onPress: () => void completeBossPhase() },
+    ]);
+  };
+
   const claimDailyClear = async () => {
     if (!dailyClearStatus.eligible || dailyClearStatus.claimed || claimingDailyClear) return;
 
@@ -640,6 +710,61 @@ export default function TodayScreen() {
           </LinearGradient>
         ) : null}
 
+        {bossQuest && bossMilestone && bossMilestoneReward ? (
+          <LinearGradient
+            colors={['rgba(70, 24, 45, 0.98)', 'rgba(23, 15, 39, 0.98)', 'rgba(8, 12, 25, 0.98)']}
+            end={{ x: 1, y: 1 }}
+            start={{ x: 0, y: 0 }}
+            style={styles.bossCard}>
+            <View style={styles.bossTopRow}>
+              <View style={styles.bossIcon}>
+                <MaterialCommunityIcons name="skull-crossbones" size={24} color="#FF91AD" />
+              </View>
+              <View style={styles.bossIdentity}>
+                <Text style={styles.bossEyebrow}>ACTIVE BOSS QUEST</Text>
+                <Text style={styles.bossTitle}>{bossQuest.title}</Text>
+              </View>
+              <Text style={styles.bossProgressValue}>
+                {completedBossMilestones}/{bossQuest.milestones.length}
+              </Text>
+            </View>
+
+            <View style={styles.bossTrack}>
+              <LinearGradient
+                colors={['#D54470', '#8A62FF']}
+                end={{ x: 1, y: 0 }}
+                start={{ x: 0, y: 0 }}
+                style={[styles.bossTrackFill, { width: `${bossProgress * 100}%` }]}
+              />
+            </View>
+
+            <View style={styles.bossPhaseRow}>
+              <View style={styles.bossPhaseBody}>
+                <Text style={styles.bossPhaseLabel}>PHASE {bossMilestone.position}</Text>
+                <Text style={styles.bossPhaseTitle}>{bossMilestone.title}</Text>
+                <Text style={styles.bossRewardText}>
+                  {bossMilestone.difficulty.toUpperCase()} · +{bossMilestoneReward.xp} EXP · +{bossMilestoneReward.statXp} STAT
+                </Text>
+              </View>
+              <Pressable
+                accessibilityLabel={`Complete ${bossMilestone.title}`}
+                disabled={updatingBossQuest}
+                onPress={confirmBossPhase}
+                style={({ pressed }) => [
+                  styles.bossCompleteButton,
+                  updatingBossQuest && styles.counterButtonDisabled,
+                  pressed && styles.counterButtonPressed,
+                ]}>
+                {updatingBossQuest ? (
+                  <ActivityIndicator color="#FFFFFF" size="small" />
+                ) : (
+                  <MaterialCommunityIcons name="sword-cross" size={20} color="#FFFFFF" />
+                )}
+              </Pressable>
+            </View>
+          </LinearGradient>
+        ) : null}
+
         <View style={styles.habitList}>
           {loading ? (
             <View style={styles.loadingState}>
@@ -681,7 +806,13 @@ export default function TodayScreen() {
                     </Text>
                     <View style={styles.habitBadgeRow}>
                       <Text style={[styles.modeBadge, !habit.isRequired && styles.modeBadgeOptional]}>
-                        {habit.cadence === 'weekly' ? 'WEEKLY' : habit.isRequired ? 'REQ' : 'OPT'}
+                        {habit.cadence === 'weekly'
+                          ? 'WEEKLY'
+                          : habit.cadence === 'one-time'
+                            ? 'ONE-TIME'
+                            : habit.isRequired
+                              ? 'REQ'
+                              : 'OPT'}
                       </Text>
                       <Text style={[styles.difficulty, { color: accent }]}>
                         {habit.difficulty.toUpperCase()}
@@ -692,6 +823,8 @@ export default function TodayScreen() {
                     {habit.description ||
                       (habit.cadence === 'weekly'
                         ? `Check in ${habit.targetCount} times this week`
+                        : habit.cadence === 'one-time'
+                          ? 'Complete this objective once'
                         : habit.goalType === 'timer'
                           ? `${habit.targetDurationMinutes} minute focused session`
                         : 'Complete this daily quest')}
@@ -1058,6 +1191,58 @@ const styles = StyleSheet.create({
   recoveryTitle: { color: '#F1EEFF', fontSize: 14, fontWeight: '900' },
   recoveryText: { color: '#BFC5DB', fontSize: 11, fontWeight: '700', marginTop: 5 },
   recoveryMeta: { color: '#777E9C', fontSize: 10, fontWeight: '700', marginTop: 7 },
+  bossCard: {
+    minHeight: 164,
+    borderRadius: 17,
+    borderWidth: 1,
+    borderColor: '#6C3049',
+    padding: 14,
+    marginBottom: 12,
+    overflow: 'hidden',
+  },
+  bossTopRow: { flexDirection: 'row', alignItems: 'center' },
+  bossIcon: {
+    width: 43,
+    height: 43,
+    borderRadius: 13,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#321522',
+    borderWidth: 1,
+    borderColor: '#7A3852',
+  },
+  bossIdentity: { flex: 1, minWidth: 0, paddingHorizontal: 11 },
+  bossEyebrow: { color: '#D66B93', fontSize: 8, fontWeight: '900' },
+  bossTitle: { color: '#F5ECF2', fontSize: 15, fontWeight: '900', marginTop: 3 },
+  bossProgressValue: {
+    color: '#FFB2C5',
+    fontSize: 13,
+    fontWeight: '900',
+    fontVariant: ['tabular-nums'],
+  },
+  bossTrack: {
+    height: 5,
+    borderRadius: 3,
+    backgroundColor: '#241525',
+    overflow: 'hidden',
+    marginVertical: 13,
+  },
+  bossTrackFill: { height: '100%', borderRadius: 3 },
+  bossPhaseRow: { flexDirection: 'row', alignItems: 'center' },
+  bossPhaseBody: { flex: 1, minWidth: 0, paddingRight: 12 },
+  bossPhaseLabel: { color: '#B898FF', fontSize: 8, fontWeight: '900' },
+  bossPhaseTitle: { color: '#EDEAF6', fontSize: 12, fontWeight: '800', marginTop: 3 },
+  bossRewardText: { color: '#A998B1', fontSize: 8, fontWeight: '800', marginTop: 5 },
+  bossCompleteButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 13,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#A63861',
+    borderWidth: 1,
+    borderColor: '#D05D84',
+  },
   habitList: { gap: 10 },
   loadingState: {
     minHeight: 90,

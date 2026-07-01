@@ -219,12 +219,17 @@ export default function CreateHabitScreen() {
 
   const selectCadence = (nextCadence: HabitCadence) => {
     setCadence(nextCadence);
-    if (nextCadence === 'weekly') {
+    if (nextCadence !== 'daily') {
       setGoalType('single');
       setIsRequired(false);
+    }
+    if (nextCadence === 'weekly') {
       setTargetCount((current) =>
         Math.min(scheduleDays.length, current <= 1 ? 3 : current),
       );
+    }
+    if (nextCadence === 'one-time') {
+      setScheduleDays(everyDaySchedule);
     }
   };
 
@@ -306,6 +311,20 @@ export default function CreateHabitScreen() {
               />
               <Text style={[styles.modeText, cadence === 'weekly' && styles.modeTextSelected]}>
                 Weekly
+              </Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="radio"
+              accessibilityState={{ checked: cadence === 'one-time' }}
+              onPress={() => selectCadence('one-time')}
+              style={[styles.modeOption, cadence === 'one-time' && styles.modeOptionSelected]}>
+              <MaterialCommunityIcons
+                color={cadence === 'one-time' ? '#7EE7FF' : '#707894'}
+                name="calendar-check-outline"
+                size={18}
+              />
+              <Text style={[styles.modeText, cadence === 'one-time' && styles.modeTextSelected]}>
+                One-time
               </Text>
             </Pressable>
           </View>
@@ -506,25 +525,29 @@ export default function CreateHabitScreen() {
             </>
           ) : null}
 
-          <Text style={styles.label}>{cadence === 'weekly' ? 'CHECK-IN DAYS' : 'SCHEDULE'}</Text>
-          <View style={styles.weekdayRow}>
-            {weekdayOptions.map((day) => {
-              const selected = scheduleDays.includes(day.value);
+          {cadence !== 'one-time' ? (
+            <>
+              <Text style={styles.label}>{cadence === 'weekly' ? 'CHECK-IN DAYS' : 'SCHEDULE'}</Text>
+              <View style={styles.weekdayRow}>
+                {weekdayOptions.map((day) => {
+                  const selected = scheduleDays.includes(day.value);
 
-              return (
-                <Pressable
-                  accessibilityRole="checkbox"
-                  accessibilityState={{ checked: selected }}
-                  key={day.value}
-                  onPress={() => toggleScheduleDay(day.value)}
-                  style={[styles.weekdayButton, selected && styles.weekdayButtonSelected]}>
-                  <Text style={[styles.weekdayText, selected && styles.weekdayTextSelected]}>
-                    {day.label}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </View>
+                  return (
+                    <Pressable
+                      accessibilityRole="checkbox"
+                      accessibilityState={{ checked: selected }}
+                      key={day.value}
+                      onPress={() => toggleScheduleDay(day.value)}
+                      style={[styles.weekdayButton, selected && styles.weekdayButtonSelected]}>
+                      <Text style={[styles.weekdayText, selected && styles.weekdayTextSelected]}>
+                        {day.label}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </>
+          ) : null}
 
           <Text style={styles.label}>HABIT REMINDER</Text>
           <View style={[styles.reminderHeader, !reminderEnabled && styles.reminderHeaderOff]}>

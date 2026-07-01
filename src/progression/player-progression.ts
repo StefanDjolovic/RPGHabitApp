@@ -107,19 +107,42 @@ export async function getPlayerProgress(db: SQLiteDatabase): Promise<PlayerProgr
     manualStatRows,
     spentStatRow,
   ] = await Promise.all([
-    db.getFirstAsync<TotalRow>('SELECT COALESCE(SUM(amount), 0) AS total FROM xp_events'),
-    db.getFirstAsync<TotalRow>('SELECT COALESCE(SUM(amount), 0) AS total FROM energy_events'),
+    db.getFirstAsync<TotalRow>(
+      `SELECT
+         COALESCE((SELECT SUM(amount) FROM xp_events), 0) +
+         COALESCE((SELECT SUM(xp_amount) FROM boss_quest_reward_events), 0) AS total`,
+    ),
+    db.getFirstAsync<TotalRow>(
+      `SELECT
+         COALESCE((SELECT SUM(amount) FROM energy_events), 0) +
+         COALESCE((SELECT SUM(energy_amount) FROM boss_quest_reward_events), 0) AS total`,
+    ),
     db.getFirstAsync<TotalRow>('SELECT COALESCE(SUM(energy_cost), 0) AS total FROM dungeon_runs'),
     db.getFirstAsync<TotalRow>(
-      `SELECT COALESCE(SUM(ee.amount), 0) AS total
-       FROM energy_events ee
-       JOIN habit_completions hc ON hc.id = ee.completion_id
-       WHERE hc.completion_date = ? AND hc.status = 'complete'`,
+      `SELECT
+         COALESCE((
+           SELECT SUM(ee.amount)
+           FROM energy_events ee
+           JOIN habit_completions hc ON hc.id = ee.completion_id
+           WHERE hc.completion_date = ? AND hc.status = 'complete'
+         ), 0) +
+         COALESCE((
+           SELECT SUM(energy_amount)
+           FROM boss_quest_reward_events
+           WHERE event_date = ?
+         ), 0) AS total`,
+      todayKey,
       todayKey,
     ),
     db.getAllAsync<AttributeTotalRow>(
       `SELECT attribute, COALESCE(SUM(amount), 0) AS total
-       FROM attribute_events
+       FROM (
+         SELECT attribute, amount
+         FROM attribute_events
+         UNION ALL
+         SELECT attribute, stat_xp_amount AS amount
+         FROM boss_quest_reward_events
+       )
        GROUP BY attribute`,
     ),
     db.getAllAsync<AttributeTotalRow>(

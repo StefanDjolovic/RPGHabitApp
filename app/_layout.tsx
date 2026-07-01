@@ -34,6 +34,10 @@ export default function RootLayout() {
             name="create-habit"
             options={{ animation: 'slide_from_bottom', headerShown: false, presentation: 'modal' }}
           />
+          <Stack.Screen
+            name="create-boss-quest"
+            options={{ animation: 'slide_from_bottom', headerShown: false, presentation: 'modal' }}
+          />
           <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Habit RPG' }} />
         </Stack>
         <StatusBar style="light" />

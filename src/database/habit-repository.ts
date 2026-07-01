@@ -6,7 +6,7 @@ import { MAX_DAILY_DUNGEON_ENERGY } from '@/src/progression/dungeon-energy';
 
 export type HabitDifficulty = 'easy' | 'medium' | 'hard';
 export type HabitGoalType = 'single' | 'counter' | 'timer';
-export type HabitCadence = 'daily' | 'weekly';
+export type HabitCadence = 'daily' | 'weekly' | 'one-time';
 export type ReminderTone = 'gentle' | 'system' | 'strict';
 export type HabitAttribute =
   | 'strength'
@@ -274,7 +274,13 @@ export async function getTodayHabits(db: SQLiteDatabase): Promise<Habit[]> {
            WHERE hc_week.habit_id = h.id
              AND hc_week.status = 'complete'
              AND hc_week.completion_date >= ?
-             AND hc_week.completion_date < date(?, '+7 days')
+           AND hc_week.completion_date < date(?, '+7 days')
+         ) THEN 1 ELSE 0 END
+         WHEN h.habit_type = 'one-time' THEN CASE WHEN EXISTS (
+           SELECT 1
+           FROM habit_completions hc_once
+           WHERE hc_once.habit_id = h.id
+             AND hc_once.status = 'complete'
          ) THEN 1 ELSE 0 END
          WHEN hc_today.status = 'complete' THEN 1
          ELSE 0
@@ -294,9 +300,29 @@ export async function getTodayHabits(db: SQLiteDatabase): Promise<Habit[]> {
        WHERE week_start = ?
        GROUP BY habit_id
      ) weekly_checkins ON weekly_checkins.habit_id = h.id
-     WHERE h.is_active = 1 AND h.habit_type IN ('daily', 'weekly')
+     WHERE (
+         h.is_active = 1
+         OR (h.habit_type = 'one-time' AND hc_today.status = 'complete')
+       )
        AND h.is_paused = 0
-       AND (',' || h.schedule_days || ',') LIKE ?
+       AND (
+         (
+           h.habit_type IN ('daily', 'weekly')
+           AND (',' || h.schedule_days || ',') LIKE ?
+         )
+         OR (
+           h.habit_type = 'one-time'
+           AND (
+             hc_today.status = 'complete'
+             OR NOT EXISTS (
+               SELECT 1
+               FROM habit_completions hc_once
+               WHERE hc_once.habit_id = h.id
+                 AND hc_once.status = 'complete'
+             )
+           )
+         )
+       )
      ORDER BY h.created_at ASC, h.id ASC`,
     weekStart,
     weekStart,
@@ -357,7 +383,13 @@ export async function getQuestLogHabits(
            WHERE hc_week.habit_id = h.id
              AND hc_week.status = 'complete'
              AND hc_week.completion_date >= ?
-             AND hc_week.completion_date < date(?, '+7 days')
+           AND hc_week.completion_date < date(?, '+7 days')
+         ) THEN 1 ELSE 0 END
+         WHEN h.habit_type = 'one-time' THEN CASE WHEN EXISTS (
+           SELECT 1
+           FROM habit_completions hc_once
+           WHERE hc_once.habit_id = h.id
+             AND hc_once.status = 'complete'
          ) THEN 1 ELSE 0 END
          WHEN hc_today.status = 'complete' THEN 1
          ELSE 0
@@ -411,32 +443,53 @@ export async function getRecentActivityDays(
   const today = getLocalDateKey();
   const safeLimit = Math.max(1, Math.floor(limit));
   return db.getAllAsync<ActivitySummaryDayRow>(
-    `SELECT
-       hc.completion_date AS dateKey,
-       COUNT(DISTINCT hc.id) AS completedCount,
-       COALESCE(SUM(xp.total), 0) AS xpEarned,
-       COALESCE(SUM(attribute.total), 0) AS statXpEarned,
-       COALESCE(SUM(energy.total), 0) AS energyEarned
-     FROM habit_completions hc
-     LEFT JOIN (
-       SELECT completion_id, SUM(amount) AS total
-       FROM xp_events
-       GROUP BY completion_id
-     ) xp ON xp.completion_id = hc.id
-     LEFT JOIN (
-       SELECT completion_id, SUM(amount) AS total
-       FROM attribute_events
-       GROUP BY completion_id
-     ) attribute ON attribute.completion_id = hc.id
-     LEFT JOIN (
-       SELECT completion_id, SUM(amount) AS total
-       FROM energy_events
-       GROUP BY completion_id
-     ) energy ON energy.completion_id = hc.id
-     WHERE hc.status = 'complete'
-       AND hc.completion_date <= ?
-     GROUP BY hc.completion_date
-     ORDER BY hc.completion_date DESC
+    `WITH activity AS (
+       SELECT
+         hc.completion_date AS dateKey,
+         COUNT(DISTINCT hc.id) AS completedCount,
+         COALESCE(SUM(xp.total), 0) AS xpEarned,
+         COALESCE(SUM(attribute.total), 0) AS statXpEarned,
+         COALESCE(SUM(energy.total), 0) AS energyEarned
+       FROM habit_completions hc
+       LEFT JOIN (
+         SELECT completion_id, SUM(amount) AS total
+         FROM xp_events
+         GROUP BY completion_id
+       ) xp ON xp.completion_id = hc.id
+       LEFT JOIN (
+         SELECT completion_id, SUM(amount) AS total
+         FROM attribute_events
+         GROUP BY completion_id
+       ) attribute ON attribute.completion_id = hc.id
+       LEFT JOIN (
+         SELECT completion_id, SUM(amount) AS total
+         FROM energy_events
+         GROUP BY completion_id
+       ) energy ON energy.completion_id = hc.id
+       WHERE hc.status = 'complete'
+       GROUP BY hc.completion_date
+
+       UNION ALL
+
+       SELECT
+         event_date AS dateKey,
+         COUNT(DISTINCT milestone_id) AS completedCount,
+         SUM(xp_amount) AS xpEarned,
+         SUM(stat_xp_amount) AS statXpEarned,
+         SUM(energy_amount) AS energyEarned
+       FROM boss_quest_reward_events
+       GROUP BY event_date
+     )
+     SELECT
+       dateKey,
+       SUM(completedCount) AS completedCount,
+       SUM(xpEarned) AS xpEarned,
+       SUM(statXpEarned) AS statXpEarned,
+       SUM(energyEarned) AS energyEarned
+     FROM activity
+     WHERE dateKey <= ?
+     GROUP BY dateKey
+     ORDER BY dateKey DESC
      LIMIT ?`,
     today,
     safeLimit,
@@ -453,31 +506,52 @@ export async function getActivityCalendarDays(
   const startDateKey = getLocalDateKey(startDate);
   const todayKey = getLocalDateKey(today);
   const activityRows = await db.getAllAsync<ActivitySummaryDayRow>(
-    `SELECT
-       hc.completion_date AS dateKey,
-       COUNT(DISTINCT hc.id) AS completedCount,
-       COALESCE(SUM(xp.total), 0) AS xpEarned,
-       COALESCE(SUM(attribute.total), 0) AS statXpEarned,
-       COALESCE(SUM(energy.total), 0) AS energyEarned
-     FROM habit_completions hc
-     LEFT JOIN (
-       SELECT completion_id, SUM(amount) AS total
-       FROM xp_events
-       GROUP BY completion_id
-     ) xp ON xp.completion_id = hc.id
-     LEFT JOIN (
-       SELECT completion_id, SUM(amount) AS total
-       FROM attribute_events
-       GROUP BY completion_id
-     ) attribute ON attribute.completion_id = hc.id
-     LEFT JOIN (
-       SELECT completion_id, SUM(amount) AS total
-       FROM energy_events
-       GROUP BY completion_id
-     ) energy ON energy.completion_id = hc.id
-     WHERE hc.status = 'complete'
-       AND hc.completion_date BETWEEN ? AND ?
-     GROUP BY hc.completion_date`,
+    `WITH activity AS (
+       SELECT
+         hc.completion_date AS dateKey,
+         COUNT(DISTINCT hc.id) AS completedCount,
+         COALESCE(SUM(xp.total), 0) AS xpEarned,
+         COALESCE(SUM(attribute.total), 0) AS statXpEarned,
+         COALESCE(SUM(energy.total), 0) AS energyEarned
+       FROM habit_completions hc
+       LEFT JOIN (
+         SELECT completion_id, SUM(amount) AS total
+         FROM xp_events
+         GROUP BY completion_id
+       ) xp ON xp.completion_id = hc.id
+       LEFT JOIN (
+         SELECT completion_id, SUM(amount) AS total
+         FROM attribute_events
+         GROUP BY completion_id
+       ) attribute ON attribute.completion_id = hc.id
+       LEFT JOIN (
+         SELECT completion_id, SUM(amount) AS total
+         FROM energy_events
+         GROUP BY completion_id
+       ) energy ON energy.completion_id = hc.id
+       WHERE hc.status = 'complete'
+       GROUP BY hc.completion_date
+
+       UNION ALL
+
+       SELECT
+         event_date AS dateKey,
+         COUNT(DISTINCT milestone_id) AS completedCount,
+         SUM(xp_amount) AS xpEarned,
+         SUM(stat_xp_amount) AS statXpEarned,
+         SUM(energy_amount) AS energyEarned
+       FROM boss_quest_reward_events
+       GROUP BY event_date
+     )
+     SELECT
+       dateKey,
+       SUM(completedCount) AS completedCount,
+       SUM(xpEarned) AS xpEarned,
+       SUM(statXpEarned) AS statXpEarned,
+       SUM(energyEarned) AS energyEarned
+     FROM activity
+     WHERE dateKey BETWEEN ? AND ?
+     GROUP BY dateKey`,
     startDateKey,
     todayKey,
   );
@@ -623,7 +697,7 @@ export async function createHabit(db: SQLiteDatabase, habit: NewHabit) {
   const description = habit.description.trim();
   const normalizedScheduleDays = normalizeScheduleDays(habit.scheduleDays);
   const scheduleDays = serializeScheduleDays(normalizedScheduleDays);
-  const goalType = habit.cadence === 'weekly' ? 'single' : habit.goalType;
+  const goalType = habit.cadence === 'daily' ? habit.goalType : 'single';
   const storedGoalType = goalType === 'timer' ? 'single' : goalType;
   const targetCount = normalizeTargetCount(
     habit.cadence,
@@ -720,7 +794,7 @@ export async function updateHabit(db: SQLiteDatabase, habitId: number, habit: Ne
   const description = habit.description.trim();
   const normalizedScheduleDays = normalizeScheduleDays(habit.scheduleDays);
   const scheduleDays = serializeScheduleDays(normalizedScheduleDays);
-  const goalType = habit.cadence === 'weekly' ? 'single' : habit.goalType;
+  const goalType = habit.cadence === 'daily' ? habit.goalType : 'single';
   const storedGoalType = goalType === 'timer' ? 'single' : goalType;
   const targetCount = normalizeTargetCount(
     habit.cadence,
@@ -1047,11 +1121,39 @@ export async function setHabitCompletion(
   db: SQLiteDatabase,
   habitId: number,
   complete: boolean,
+  cadence: 'daily' | 'one-time' = 'daily',
 ) {
   const today = getLocalDateKey();
   const todayDay = new Date().getDay();
-  const applyTransition = (txn: SQLiteDatabase) =>
-    applyHabitCompletionTransition(txn, habitId, complete, today, todayDay, 'single', 'daily');
+  const applyTransition = async (txn: SQLiteDatabase) => {
+    if (cadence === 'one-time' && !complete) {
+      await txn.runAsync(
+        `UPDATE habits
+         SET is_active = 1, is_paused = 0
+         WHERE id = ?`,
+        habitId,
+      );
+    }
+
+    await applyHabitCompletionTransition(
+      txn,
+      habitId,
+      complete,
+      today,
+      todayDay,
+      'single',
+      cadence,
+    );
+
+    if (cadence === 'one-time' && complete) {
+      await txn.runAsync(
+        `UPDATE habits
+         SET is_active = 0
+         WHERE id = ?`,
+        habitId,
+      );
+    }
+  };
 
   if (Platform.OS === 'web') {
     await db.withTransactionAsync(() => applyTransition(db));

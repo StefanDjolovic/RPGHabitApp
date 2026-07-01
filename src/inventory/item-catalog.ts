@@ -82,6 +82,22 @@ export const itemCatalog = {
     icon: 'star-four-points',
     description: 'A hot core that hints at stronger dungeon crafting.',
   },
+  'dungeon-key': {
+    name: 'Dungeon Key',
+    rarity: 'rare',
+    category: 'material',
+    slot: 'Material',
+    icon: 'key-variant',
+    description: 'A system-issued key earned by defeating a real-life Boss Quest.',
+  },
+  'boss-quest-chest': {
+    name: 'Boss Quest Chest',
+    rarity: 'epic',
+    category: 'consumable',
+    slot: 'Consumable',
+    icon: 'treasure-chest',
+    description: 'A sealed reward chest granted for completing every boss milestone.',
+  },
 } as const satisfies Record<string, ItemDefinition>;
 
 export type ItemKey = keyof typeof itemCatalog;

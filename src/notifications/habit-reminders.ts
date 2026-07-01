@@ -7,12 +7,14 @@ const REMINDER_CHANNEL_ID = 'habit-reminders';
 
 type ReminderHabitRow = {
   title: string;
+  cadence: 'daily' | 'weekly' | 'one-time';
   scheduleDays: string;
   reminderEnabled: number;
   reminderTime: string;
   reminderTone: ReminderTone;
   isActive: number;
   isPaused: number;
+  isCompleted: number;
 };
 
 if (process.env.EXPO_OS !== 'web') {
@@ -115,12 +117,19 @@ export async function syncHabitReminderFromDatabase(
   const habit = await db.getFirstAsync<ReminderHabitRow>(
     `SELECT
        title,
+       habit_type AS cadence,
        schedule_days AS scheduleDays,
        reminder_enabled AS reminderEnabled,
        reminder_time AS reminderTime,
        reminder_tone AS reminderTone,
        is_active AS isActive,
-       is_paused AS isPaused
+       is_paused AS isPaused,
+       CASE WHEN habit_type = 'one-time' AND EXISTS (
+         SELECT 1
+         FROM habit_completions hc
+         WHERE hc.habit_id = habits.id
+           AND hc.status = 'complete'
+       ) THEN 1 ELSE 0 END AS isCompleted
      FROM habits
      WHERE id = ?`,
     habitId,
@@ -133,6 +142,7 @@ export async function syncHabitReminderFromDatabase(
     habit.reminderEnabled !== 1 ||
     habit.isActive !== 1 ||
     habit.isPaused === 1 ||
+    habit.isCompleted === 1 ||
     process.env.EXPO_OS === 'web'
   ) {
     return false;

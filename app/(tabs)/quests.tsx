@@ -15,6 +15,13 @@ import {
 } from 'react-native';
 
 import {
+  archiveBossQuest,
+  getBossQuests,
+  restoreBossQuest,
+  type BossQuest,
+} from '@/src/database/boss-quest-repository';
+
+import {
   archiveHabit,
   getQuestLogHabits,
   type HabitAttribute,
@@ -85,19 +92,23 @@ function formatTimedProgress(quest: QuestLogHabit) {
 export default function QuestsScreen() {
   const db = useSQLiteContext();
   const [quests, setQuests] = useState<QuestLogHabit[]>([]);
+  const [bossQuests, setBossQuests] = useState<BossQuest[]>([]);
   const [habitStreaksById, setHabitStreaksById] = useState<Record<number, number>>({});
   const [questFilter, setQuestFilter] = useState<QuestFilter>('active');
   const [updatingQuestId, setUpdatingQuestId] = useState<number | null>(null);
+  const [updatingBossId, setUpdatingBossId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
 
   const loadQuests = useCallback(async () => {
     try {
       setLoading(true);
-      const [questRows, streaksById] = await Promise.all([
+      const [questRows, bossRows, streaksById] = await Promise.all([
         getQuestLogHabits(db, questFilter),
+        getBossQuests(db, questFilter === 'active' ? 'active' : 'history'),
         getHabitStreaksById(db),
       ]);
       setQuests(questRows);
+      setBossQuests(bossRows);
       setHabitStreaksById(Object.fromEntries(streaksById));
     } finally {
       setLoading(false);
@@ -184,6 +195,53 @@ export default function QuestsScreen() {
     [archiveQuest],
   );
 
+  const archiveBoss = useCallback(
+    async (boss: BossQuest) => {
+      const previousBosses = bossQuests;
+      try {
+        setUpdatingBossId(boss.id);
+        setBossQuests((current) => current.filter((item) => item.id !== boss.id));
+        await archiveBossQuest(db, boss.id);
+      } catch {
+        setBossQuests(previousBosses);
+      } finally {
+        setUpdatingBossId(null);
+      }
+    },
+    [bossQuests, db],
+  );
+
+  const restoreBoss = useCallback(
+    async (boss: BossQuest) => {
+      const previousBosses = bossQuests;
+      try {
+        setUpdatingBossId(boss.id);
+        setBossQuests((current) => current.filter((item) => item.id !== boss.id));
+        await restoreBossQuest(db, boss.id);
+      } catch {
+        setBossQuests(previousBosses);
+        Alert.alert('Boss Quest not restored', 'Only one Boss Quest can be active at a time.');
+      } finally {
+        setUpdatingBossId(null);
+      }
+    },
+    [bossQuests, db],
+  );
+
+  const confirmArchiveBoss = useCallback(
+    (boss: BossQuest) => {
+      Alert.alert(
+        'Archive Boss Quest?',
+        'Completed phases and earned rewards remain saved.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Archive', style: 'destructive', onPress: () => void archiveBoss(boss) },
+        ],
+      );
+    },
+    [archiveBoss],
+  );
+
   useFocusEffect(
     useCallback(() => {
       void loadQuests();
@@ -238,12 +296,20 @@ export default function QuestsScreen() {
             <Text style={styles.heading}>Quests</Text>
           </View>
 
-          <Pressable
-            accessibilityLabel="Create quest"
-            onPress={() => router.push('/create-habit')}
-            style={styles.addIconButton}>
-            <MaterialCommunityIcons name="plus" size={24} color="#7EE8FF" />
-          </Pressable>
+          <View style={styles.headerActions}>
+            <Pressable
+              accessibilityLabel="Create Boss Quest"
+              onPress={() => router.push('/create-boss-quest' as Href)}
+              style={[styles.addIconButton, styles.bossAddButton]}>
+              <MaterialCommunityIcons name="skull-crossbones" size={20} color="#FF91AD" />
+            </Pressable>
+            <Pressable
+              accessibilityLabel="Create quest"
+              onPress={() => router.push('/create-habit')}
+              style={styles.addIconButton}>
+              <MaterialCommunityIcons name="plus" size={24} color="#7EE8FF" />
+            </Pressable>
+          </View>
         </View>
 
         <LinearGradient
@@ -327,6 +393,107 @@ export default function QuestsScreen() {
           })}
         </View>
 
+        {bossQuests.length > 0 ? (
+          <View style={styles.bossSection}>
+            <View style={styles.sectionHeader}>
+              <View>
+                <Text style={styles.bossSectionEyebrow}>BOSS QUESTS</Text>
+                <Text style={styles.sectionTitle}>
+                  {showingArchived ? 'Campaign history' : 'Active campaign'}
+                </Text>
+              </View>
+              <View style={styles.bossCountBadge}>
+                <Text style={styles.bossCountText}>{bossQuests.length}</Text>
+              </View>
+            </View>
+
+            <View style={styles.bossList}>
+              {bossQuests.map((boss) => {
+                const completedMilestones = boss.milestones.filter(
+                  (milestone) => milestone.complete,
+                ).length;
+                const currentMilestone = boss.milestones.find(
+                  (milestone) => !milestone.complete,
+                );
+                const progress = boss.milestones.length
+                  ? completedMilestones / boss.milestones.length
+                  : 0;
+
+                return (
+                  <LinearGradient
+                    colors={['rgba(64, 25, 44, 0.98)', 'rgba(19, 15, 35, 0.98)']}
+                    end={{ x: 1, y: 1 }}
+                    key={boss.id}
+                    start={{ x: 0, y: 0 }}
+                    style={styles.bossCard}>
+                    <View style={styles.bossCardTop}>
+                      <View style={styles.bossIcon}>
+                        <MaterialCommunityIcons
+                          name="skull-crossbones"
+                          size={22}
+                          color="#FF91AD"
+                        />
+                      </View>
+                      <View style={styles.bossCardIdentity}>
+                        <Text style={styles.bossCardLabel}>
+                          {boss.status === 'completed' ? 'DEFEATED' : boss.status.toUpperCase()}
+                        </Text>
+                        <Text style={styles.bossCardTitle}>{boss.title}</Text>
+                      </View>
+                      {boss.status !== 'completed' ? (
+                        <Pressable
+                          accessibilityLabel={
+                            showingArchived ? `Restore ${boss.title}` : `Archive ${boss.title}`
+                          }
+                          disabled={updatingBossId === boss.id}
+                          onPress={() =>
+                            showingArchived ? void restoreBoss(boss) : confirmArchiveBoss(boss)
+                          }
+                          style={({ pressed }) => [
+                            styles.cardActionButton,
+                            pressed && styles.cardActionButtonPressed,
+                            updatingBossId === boss.id && styles.cardActionButtonDisabled,
+                          ]}>
+                          <MaterialCommunityIcons
+                            name={showingArchived ? 'backup-restore' : 'archive-outline'}
+                            size={16}
+                            color={showingArchived ? '#7EE8FF' : '#D7849F'}
+                          />
+                        </Pressable>
+                      ) : (
+                        <MaterialCommunityIcons name="crown" size={20} color="#FFD27A" />
+                      )}
+                    </View>
+
+                    <View style={styles.bossMilestoneTrack}>
+                      {boss.milestones.map((milestone) => (
+                        <View
+                          key={milestone.id}
+                          style={[
+                            styles.bossMilestoneSegment,
+                            milestone.complete && styles.bossMilestoneSegmentComplete,
+                          ]}
+                        />
+                      ))}
+                    </View>
+
+                    <View style={styles.bossCardFooter}>
+                      <Text style={styles.bossPhaseText}>
+                        {currentMilestone
+                          ? `Phase ${currentMilestone.position}: ${currentMilestone.title}`
+                          : 'All phases complete'}
+                      </Text>
+                      <Text style={styles.bossProgressText}>
+                        {Math.round(progress * 100)}%
+                      </Text>
+                    </View>
+                  </LinearGradient>
+                );
+              })}
+            </View>
+          </View>
+        ) : null}
+
         <View style={styles.sectionHeader}>
           <View>
             <Text style={styles.sectionEyebrow}>
@@ -391,6 +558,8 @@ export default function QuestsScreen() {
                       <Text style={[styles.modeBadge, !quest.isRequired && styles.modeBadgeOptional]}>
                         {quest.cadence === 'weekly'
                           ? 'WEEKLY'
+                          : quest.cadence === 'one-time'
+                            ? 'ONE-TIME'
                           : quest.isRequired
                             ? 'REQ'
                             : 'OPT'}
@@ -426,31 +595,35 @@ export default function QuestsScreen() {
                           <MaterialCommunityIcons name="pencil" size={16} color="#7EE8FF" />
                         </Pressable>
                       ) : null}
-                      <Pressable
-                        accessibilityLabel={
-                          showingArchived ? `Restore ${quest.title}` : `Archive ${quest.title}`
-                        }
-                        disabled={updatingQuestId === quest.id}
-                        onPress={() =>
-                          showingArchived ? void restoreQuest(quest) : confirmArchiveQuest(quest)
-                        }
-                        style={({ pressed }) => [
-                          styles.cardActionButton,
-                          pressed && styles.cardActionButtonPressed,
-                          updatingQuestId === quest.id && styles.cardActionButtonDisabled,
-                        ]}>
-                        <MaterialCommunityIcons
-                          name={showingArchived ? 'backup-restore' : 'archive-outline'}
-                          size={16}
-                          color={showingArchived ? '#7EE8FF' : '#7F879F'}
-                        />
-                      </Pressable>
+                      {!(showingArchived && quest.cadence === 'one-time' && quest.complete) ? (
+                        <Pressable
+                          accessibilityLabel={
+                            showingArchived ? `Restore ${quest.title}` : `Archive ${quest.title}`
+                          }
+                          disabled={updatingQuestId === quest.id}
+                          onPress={() =>
+                            showingArchived ? void restoreQuest(quest) : confirmArchiveQuest(quest)
+                          }
+                          style={({ pressed }) => [
+                            styles.cardActionButton,
+                            pressed && styles.cardActionButtonPressed,
+                            updatingQuestId === quest.id && styles.cardActionButtonDisabled,
+                          ]}>
+                          <MaterialCommunityIcons
+                            name={showingArchived ? 'backup-restore' : 'archive-outline'}
+                            size={16}
+                            color={showingArchived ? '#7EE8FF' : '#7F879F'}
+                          />
+                        </Pressable>
+                      ) : null}
                     </View>
                   </View>
                   <Text style={styles.questDescription}>
                     {quest.description ||
                       (quest.cadence === 'weekly'
                         ? `Check in ${quest.targetCount} times this week`
+                        : quest.cadence === 'one-time'
+                          ? 'Complete this objective once'
                         : quest.goalType === 'timer'
                           ? `Focus for ${quest.targetDurationMinutes} minutes`
                         : quest.goalType === 'counter'
@@ -462,6 +635,8 @@ export default function QuestsScreen() {
                     <Text style={styles.goalTypeText}>
                       {quest.cadence === 'weekly'
                         ? `WEEKLY x${quest.targetCount}`
+                        : quest.cadence === 'one-time'
+                          ? 'ONE-TIME'
                         : quest.goalType === 'timer'
                           ? `TIMER ${quest.targetDurationMinutes}m`
                         : quest.goalType === 'counter'
@@ -481,13 +656,21 @@ export default function QuestsScreen() {
                   <View style={styles.questMetaRow}>
                     <View style={styles.streakPill}>
                       <MaterialCommunityIcons
-                        name={quest.cadence === 'weekly' ? 'calendar-week' : 'fire'}
+                        name={
+                          quest.cadence === 'weekly'
+                            ? 'calendar-week'
+                            : quest.cadence === 'one-time'
+                              ? 'flag-checkered'
+                              : 'fire'
+                        }
                         size={13}
-                        color={quest.cadence === 'weekly' ? '#7EE8FF' : '#FF8FC7'}
+                        color={quest.cadence === 'daily' ? '#FF8FC7' : '#7EE8FF'}
                       />
                       <Text style={styles.streakText}>
                         {quest.cadence === 'weekly'
                           ? 'This week'
+                          : quest.cadence === 'one-time'
+                            ? 'Single objective'
                           : `${habitStreak} ${habitStreak === 1 ? 'day' : 'days'}`}
                       </Text>
                     </View>
@@ -516,6 +699,10 @@ export default function QuestsScreen() {
                             ? quest.complete
                               ? 'Weekly goal reached'
                               : `${quest.currentCount} / ${quest.targetCount} this week`
+                            : quest.cadence === 'one-time'
+                              ? quest.complete
+                                ? 'Objective complete'
+                                : 'Pending'
                             : quest.goalType === 'timer'
                               ? quest.complete
                                 ? 'Duration reached'
@@ -532,9 +719,17 @@ export default function QuestsScreen() {
                     {quest.reminderEnabled ? (
                       <View style={styles.reminderPill}>
                         <MaterialCommunityIcons
-                          name={showingArchived || quest.isPaused ? 'bell-off-outline' : 'bell-outline'}
+                          name={
+                            showingArchived || quest.isPaused || quest.complete
+                              ? 'bell-off-outline'
+                              : 'bell-outline'
+                          }
                           size={12}
-                          color={showingArchived || quest.isPaused ? '#747C97' : '#8EEBFF'}
+                          color={
+                            showingArchived || quest.isPaused || quest.complete
+                              ? '#747C97'
+                              : '#8EEBFF'
+                          }
                         />
                         <Text style={styles.reminderPillText}>{quest.reminderTime}</Text>
                       </View>
@@ -542,6 +737,8 @@ export default function QuestsScreen() {
                     <Text style={styles.historyText}>
                       {quest.cadence === 'weekly'
                         ? `Weekly on ${formatSchedule(quest.scheduleDays)}`
+                        : quest.cadence === 'one-time'
+                          ? 'One-time quest'
                         : formatSchedule(quest.scheduleDays)}{' '}
                       - {quest.totalCompletions} clears -{' '}
                       {formatLastCompleted(quest.lastCompletedDate)}
@@ -552,6 +749,17 @@ export default function QuestsScreen() {
             );
           })}
         </View>
+
+        <Pressable
+          onPress={() => router.push('/create-boss-quest' as Href)}
+          style={({ pressed }) => [
+            styles.addButton,
+            styles.addBossButton,
+            pressed && styles.addButtonPressed,
+          ]}>
+          <MaterialCommunityIcons name="skull-crossbones" size={19} color="#FF91AD" />
+          <Text style={styles.addBossButtonText}>Create Boss Quest</Text>
+        </Pressable>
 
         <Pressable
           onPress={() => router.push('/create-habit')}
@@ -597,6 +805,7 @@ const styles = StyleSheet.create({
   onlineDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: '#50E8FF' },
   systemLabel: { color: '#6ECFE4', fontSize: 10, fontWeight: '800', letterSpacing: 1.8 },
   heading: { color: '#F5F2FF', fontSize: 31, fontWeight: '800' },
+  headerActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   addIconButton: {
     width: 46,
     height: 46,
@@ -607,6 +816,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#293252',
   },
+  bossAddButton: { borderColor: '#633148', backgroundColor: '#24121D' },
   summaryCard: {
     borderRadius: 22,
     borderWidth: 1,
@@ -698,6 +908,58 @@ const styles = StyleSheet.create({
     borderColor: '#282F4A',
   },
   countBadgeText: { color: '#8EDFF2', fontSize: 11, fontWeight: '800' },
+  bossSection: { marginBottom: 22 },
+  bossSectionEyebrow: { color: '#D66B93', fontSize: 9, fontWeight: '900', letterSpacing: 1.7 },
+  bossCountBadge: {
+    minWidth: 34,
+    height: 26,
+    borderRadius: 13,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#28131D',
+    borderWidth: 1,
+    borderColor: '#613047',
+  },
+  bossCountText: { color: '#FF91AD', fontSize: 11, fontWeight: '900' },
+  bossList: { gap: 10 },
+  bossCard: {
+    minHeight: 124,
+    borderRadius: 17,
+    borderWidth: 1,
+    borderColor: '#633148',
+    padding: 14,
+    overflow: 'hidden',
+  },
+  bossCardTop: { flexDirection: 'row', alignItems: 'center' },
+  bossIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#351622',
+    borderWidth: 1,
+    borderColor: '#793953',
+  },
+  bossCardIdentity: { flex: 1, minWidth: 0, paddingHorizontal: 10 },
+  bossCardLabel: { color: '#D66B93', fontSize: 8, fontWeight: '900' },
+  bossCardTitle: { color: '#F5ECF2', fontSize: 14, fontWeight: '900', marginTop: 2 },
+  bossMilestoneTrack: { flexDirection: 'row', gap: 5, marginVertical: 13 },
+  bossMilestoneSegment: {
+    flex: 1,
+    height: 5,
+    borderRadius: 3,
+    backgroundColor: '#312033',
+  },
+  bossMilestoneSegmentComplete: { backgroundColor: '#D54470' },
+  bossCardFooter: { flexDirection: 'row', alignItems: 'center' },
+  bossPhaseText: { flex: 1, color: '#B8AEBF', fontSize: 10, fontWeight: '700' },
+  bossProgressText: {
+    color: '#FFB2C5',
+    fontSize: 10,
+    fontWeight: '900',
+    fontVariant: ['tabular-nums'],
+  },
   questList: { gap: 10 },
   loadingState: {
     minHeight: 90,
@@ -848,4 +1110,6 @@ const styles = StyleSheet.create({
   },
   addButtonPressed: { opacity: 0.72 },
   addButtonText: { color: '#86DDF0', fontSize: 13, fontWeight: '700' },
+  addBossButton: { borderColor: '#633148', backgroundColor: 'rgba(48, 20, 33, 0.72)' },
+  addBossButtonText: { color: '#FFAAC0', fontSize: 13, fontWeight: '800' },
 });

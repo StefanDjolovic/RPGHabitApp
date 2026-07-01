@@ -140,7 +140,7 @@ export default function InventoryScreen() {
             </View>
             <Text style={styles.emptyTitle}>No loot stored yet</Text>
             <Text style={styles.emptyText}>
-              Claim a Daily Clear chest after finishing every required objective.
+              Claim Daily Clear rewards, defeat Boss Quests, or clear a dungeon to store loot.
             </Text>
             <Pressable
               onPress={() => router.push('/' as Href)}

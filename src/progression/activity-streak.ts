@@ -31,10 +31,18 @@ export function getConsecutiveActivityStreak(activeDateKeys: string[], todayKey 
 export async function getActivityStreak(db: SQLiteDatabase) {
   const today = getLocalDateKey();
   const rows = await db.getAllAsync<ActivityDateRow>(
-    `SELECT DISTINCT completion_date AS completionDate
-     FROM habit_completions
-     WHERE status = 'complete' AND completion_date <= ?
-     ORDER BY completion_date DESC`,
+    `SELECT DISTINCT completionDate
+     FROM (
+       SELECT completion_date AS completionDate
+       FROM habit_completions
+       WHERE status = 'complete'
+       UNION ALL
+       SELECT event_date AS completionDate
+       FROM boss_quest_reward_events
+       WHERE reason = 'milestone'
+     )
+     WHERE completionDate <= ?
+     ORDER BY completionDate DESC`,
     today,
   );
 

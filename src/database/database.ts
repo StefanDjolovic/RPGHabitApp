@@ -1,6 +1,6 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 
-const DATABASE_VERSION = 13;
+const DATABASE_VERSION = 14;
 
 export async function migrateDatabase(db: SQLiteDatabase) {
   await db.execAsync('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
@@ -328,6 +328,61 @@ export async function migrateDatabase(db: SQLiteDatabase) {
 
       CREATE INDEX IF NOT EXISTS idx_habit_timer_progress_date
         ON habit_timer_progress(progress_date);
+    `);
+  }
+
+  if (currentVersion < 14) {
+    await db.execAsync(`
+      CREATE TABLE IF NOT EXISTS boss_quests (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        title TEXT NOT NULL,
+        description TEXT NOT NULL DEFAULT '',
+        attribute TEXT NOT NULL
+          CHECK (attribute IN ('strength', 'intelligence', 'discipline', 'vitality', 'creativity')),
+        status TEXT NOT NULL DEFAULT 'active'
+          CHECK (status IN ('active', 'completed', 'archived')),
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        completed_at TEXT,
+        archived_at TEXT
+      );
+
+      CREATE TABLE IF NOT EXISTS boss_quest_milestones (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        boss_quest_id INTEGER NOT NULL,
+        position INTEGER NOT NULL CHECK (position >= 1),
+        title TEXT NOT NULL,
+        difficulty TEXT NOT NULL
+          CHECK (difficulty IN ('easy', 'medium', 'hard')),
+        status TEXT NOT NULL DEFAULT 'pending'
+          CHECK (status IN ('pending', 'complete')),
+        completed_at TEXT,
+        completion_date TEXT,
+        FOREIGN KEY (boss_quest_id) REFERENCES boss_quests(id) ON DELETE CASCADE,
+        UNIQUE (boss_quest_id, position)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_boss_quest_milestones_status
+        ON boss_quest_milestones(boss_quest_id, status, position);
+
+      CREATE TABLE IF NOT EXISTS boss_quest_reward_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        client_event_id TEXT NOT NULL UNIQUE,
+        boss_quest_id INTEGER NOT NULL,
+        milestone_id INTEGER,
+        event_date TEXT NOT NULL,
+        xp_amount INTEGER NOT NULL CHECK (xp_amount >= 0),
+        attribute TEXT NOT NULL
+          CHECK (attribute IN ('strength', 'intelligence', 'discipline', 'vitality', 'creativity')),
+        stat_xp_amount INTEGER NOT NULL CHECK (stat_xp_amount >= 0),
+        energy_amount INTEGER NOT NULL CHECK (energy_amount >= 0),
+        reason TEXT NOT NULL CHECK (reason IN ('milestone', 'final_bonus')),
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (boss_quest_id) REFERENCES boss_quests(id) ON DELETE CASCADE,
+        FOREIGN KEY (milestone_id) REFERENCES boss_quest_milestones(id) ON DELETE CASCADE
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_boss_quest_reward_events_date
+        ON boss_quest_reward_events(event_date);
     `);
   }
 

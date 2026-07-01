@@ -6,6 +6,10 @@ import {
   type HabitAttribute,
 } from '@/src/database/habit-repository';
 import {
+  getAttributeProgressionMap,
+  type AttributeProgression,
+} from '@/src/progression/attribute-progression';
+import {
   MAX_DAILY_DUNGEON_ENERGY,
   MAX_DUNGEON_ENERGY,
 } from '@/src/progression/dungeon-energy';
@@ -24,6 +28,7 @@ export type PlayerProgress = {
   dungeonEnergy: number;
   todayDungeonEnergy: number;
   attributeXp: Record<HabitAttribute, number>;
+  attributeProgression: Record<HabitAttribute, AttributeProgression>;
   manualStatPoints: Record<HabitAttribute, number>;
   totalStatPointsEarned: number;
   spentStatPoints: number;
@@ -51,6 +56,7 @@ export const INITIAL_PLAYER_PROGRESS: PlayerProgress = {
   dungeonEnergy: 0,
   todayDungeonEnergy: 0,
   attributeXp: { ...emptyAttributeXp },
+  attributeProgression: getAttributeProgressionMap(emptyAttributeXp),
   manualStatPoints: { ...emptyAttributeXp },
   totalStatPointsEarned: STAT_POINTS_PER_LEVEL,
   spentStatPoints: 0,
@@ -193,6 +199,8 @@ export async function getPlayerProgress(db: SQLiteDatabase): Promise<PlayerProgr
     manualStatPoints[row.attribute] = Math.max(0, row.total);
   }
 
+  const attributeProgression = getAttributeProgressionMap(attributeXp);
+
   return {
     ...levelProgress,
     ...rank,
@@ -200,6 +208,7 @@ export async function getPlayerProgress(db: SQLiteDatabase): Promise<PlayerProgr
     dungeonEnergy,
     todayDungeonEnergy,
     attributeXp,
+    attributeProgression,
     manualStatPoints,
     totalStatPointsEarned,
     spentStatPoints,

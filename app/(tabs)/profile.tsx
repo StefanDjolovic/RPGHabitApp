@@ -13,6 +13,7 @@ import {
   View,
 } from 'react-native';
 
+import { AttributeRadarChart } from '@/components/attribute-radar-chart';
 import {
   getAchievementSummary,
   type AchievementSummary,
@@ -218,10 +219,6 @@ export default function ProfileScreen() {
   const achievementRatio = getProgressRatio(
     achievementSummary.unlockedCount,
     achievementSummary.totalCount,
-  );
-  const attributeMax = useMemo(
-    () => Math.max(1, ...attributeOrder.map((attribute) => playerProgress.attributeXp[attribute])),
-    [playerProgress.attributeXp],
   );
   const visibleAchievements = useMemo(
     () =>
@@ -470,17 +467,21 @@ export default function ProfileScreen() {
 
         <View style={styles.sectionHeader}>
           <View>
-            <Text style={styles.sectionEyebrow}>ATTRIBUTE XP</Text>
+            <Text style={styles.sectionEyebrow}>ATTRIBUTE BALANCE</Text>
             <Text style={styles.sectionTitle}>Hunter stats</Text>
           </View>
         </View>
 
+        <AttributeRadarChart
+          attributeProgression={playerProgress.attributeProgression}
+          manualStatPoints={playerProgress.manualStatPoints}
+        />
+
         <View style={styles.attributeList}>
           {attributeOrder.map((attribute) => {
             const meta = attributeMeta[attribute];
-            const value = playerProgress.attributeXp[attribute];
+            const progression = playerProgress.attributeProgression[attribute];
             const manualPoints = playerProgress.manualStatPoints[attribute];
-            const ratio = getProgressRatio(value, attributeMax);
             const canAllocate = playerProgress.availableStatPoints > 0 && !allocatingAttribute;
 
             return (
@@ -492,16 +493,25 @@ export default function ProfileScreen() {
                   <View style={styles.attributeTopRow}>
                     <Text style={styles.attributeName}>{meta.label}</Text>
                     <Text style={styles.attributeValue}>
-                      {formatNumber(value)} XP | +{manualPoints} pts
+                      {progression.naturalPoints} NAT | +{manualPoints} PTS
                     </Text>
                   </View>
                   <View style={styles.attributeTrack}>
                     <View
                       style={[
                         styles.attributeFill,
-                        { backgroundColor: meta.color, width: `${ratio * 100}%` },
+                        {
+                          backgroundColor: meta.color,
+                          width: `${progression.progressRatio * 100}%`,
+                        },
                       ]}
                     />
+                  </View>
+                  <View style={styles.attributeProgressRow}>
+                    <Text style={styles.attributeProgressText}>
+                      {progression.xpIntoPoint}/{progression.xpForNextPoint} STAT XP
+                    </Text>
+                    <Text style={styles.attributeProgressNext}>NEXT +1 NAT</Text>
                   </View>
                 </View>
                 <Pressable
@@ -1066,7 +1076,7 @@ const styles = StyleSheet.create({
   attributeCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    minHeight: 76,
+    minHeight: 88,
     borderRadius: 17,
     padding: 13,
     backgroundColor: 'rgba(12, 16, 31, 0.94)',
@@ -1093,6 +1103,19 @@ const styles = StyleSheet.create({
   attributeValue: { color: '#B9C1DA', fontSize: 11, fontWeight: '800', marginLeft: 10 },
   attributeTrack: { height: 6, borderRadius: 3, backgroundColor: '#080B18', overflow: 'hidden' },
   attributeFill: { height: '100%', borderRadius: 3 },
+  attributeProgressRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 6,
+  },
+  attributeProgressText: {
+    color: '#7E88A4',
+    fontSize: 8,
+    fontWeight: '900',
+    fontVariant: ['tabular-nums'],
+  },
+  attributeProgressNext: { color: '#626C89', fontSize: 8, fontWeight: '900' },
   allocateButton: {
     width: 32,
     height: 32,

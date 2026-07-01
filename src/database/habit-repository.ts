@@ -7,6 +7,7 @@ import {
   getEffectiveDateContext,
   getRuntimeUserSettings,
 } from '@/src/settings/user-settings';
+import { getSecondaryAttributeXp } from '@/src/progression/attribute-rewards';
 
 export type HabitDifficulty = 'easy' | 'medium' | 'hard';
 export type HabitGoalType = 'single' | 'counter' | 'timer';
@@ -25,6 +26,7 @@ export type Habit = {
   description: string;
   difficulty: HabitDifficulty;
   attribute: HabitAttribute;
+  secondaryAttribute: HabitAttribute | null;
   cadence: HabitCadence;
   goalType: HabitGoalType;
   targetCount: number;
@@ -80,6 +82,7 @@ export type NewHabit = {
   description: string;
   difficulty: HabitDifficulty;
   attribute: HabitAttribute;
+  secondaryAttribute: HabitAttribute | null;
   cadence: HabitCadence;
   goalType: HabitGoalType;
   targetCount: number;
@@ -246,6 +249,7 @@ export async function getTodayHabits(db: SQLiteDatabase): Promise<Habit[]> {
        h.description,
        h.difficulty,
        h.attribute,
+       h.secondary_attribute AS secondaryAttribute,
        h.habit_type AS cadence,
        CASE
          WHEN h.target_duration_minutes > 0 THEN 'timer'
@@ -354,6 +358,7 @@ export async function getQuestLogHabits(
        h.description,
        h.difficulty,
        h.attribute,
+       h.secondary_attribute AS secondaryAttribute,
        h.habit_type AS cadence,
        CASE
          WHEN h.target_duration_minutes > 0 THEN 'timer'
@@ -732,6 +737,8 @@ export async function createHabit(db: SQLiteDatabase, habit: NewHabit) {
     habit.targetDurationMinutes,
   );
   const reminderTime = normalizeReminderTime(habit.reminderTime);
+  const secondaryAttribute =
+    habit.secondaryAttribute === habit.attribute ? null : habit.secondaryAttribute;
 
   if (!title) {
     throw new Error('Habit title is required.');
@@ -744,6 +751,7 @@ export async function createHabit(db: SQLiteDatabase, habit: NewHabit) {
        habit_type,
        difficulty,
        attribute,
+       secondary_attribute,
        goal_type,
        target_count,
        target_duration_minutes,
@@ -754,12 +762,13 @@ export async function createHabit(db: SQLiteDatabase, habit: NewHabit) {
        is_required,
        start_date
      )
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     title,
     description,
     habit.cadence,
     habit.difficulty,
     habit.attribute,
+    secondaryAttribute,
     storedGoalType,
     targetCount,
     targetDurationMinutes,
@@ -786,6 +795,7 @@ export async function getHabitForEdit(
        habit_type AS cadence,
        difficulty,
        attribute,
+       secondary_attribute AS secondaryAttribute,
        CASE
          WHEN target_duration_minutes > 0 THEN 'timer'
          ELSE goal_type
@@ -831,6 +841,8 @@ export async function updateHabit(db: SQLiteDatabase, habitId: number, habit: Ne
     habit.targetDurationMinutes,
   );
   const reminderTime = normalizeReminderTime(habit.reminderTime);
+  const secondaryAttribute =
+    habit.secondaryAttribute === habit.attribute ? null : habit.secondaryAttribute;
 
   if (!title) {
     throw new Error('Habit title is required.');
@@ -846,6 +858,7 @@ export async function updateHabit(db: SQLiteDatabase, habitId: number, habit: Ne
        habit_type = ?,
        difficulty = ?,
        attribute = ?,
+       secondary_attribute = ?,
        goal_type = ?,
        target_count = ?,
        target_duration_minutes = ?,
@@ -860,6 +873,7 @@ export async function updateHabit(db: SQLiteDatabase, habitId: number, habit: Ne
     habit.cadence,
     habit.difficulty,
     habit.attribute,
+    secondaryAttribute,
     storedGoalType,
     targetCount,
     targetDurationMinutes,
@@ -951,6 +965,7 @@ async function applyHabitCompletionTransition(
       status: 'complete' | 'undone' | null;
       difficulty: HabitDifficulty;
       attribute: HabitAttribute;
+      secondaryAttribute: HabitAttribute | null;
       goalType: HabitGoalType;
       cadence: HabitCadence;
     }>(
@@ -959,6 +974,7 @@ async function applyHabitCompletionTransition(
          hc.status,
          h.difficulty,
          h.attribute,
+         h.secondary_attribute AS secondaryAttribute,
          CASE
            WHEN h.target_duration_minutes > 0 THEN 'timer'
            ELSE h.goal_type
@@ -1067,13 +1083,27 @@ async function applyHabitCompletionTransition(
         `INSERT INTO attribute_events
            (client_event_id, completion_id, transition_number, attribute, amount, reason)
          VALUES (?, ?, ?, ?, ?, ?)`,
-        `${eventId}-attribute`,
+        `${eventId}-attribute-primary`,
         completionId,
         transitionNumber,
         row.attribute,
         reward.statXp,
         reason,
       );
+
+      if (row.secondaryAttribute) {
+        await txn.runAsync(
+          `INSERT INTO attribute_events
+             (client_event_id, completion_id, transition_number, attribute, amount, reason)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+          `${eventId}-attribute-secondary`,
+          completionId,
+          transitionNumber,
+          row.secondaryAttribute,
+          getSecondaryAttributeXp(reward.statXp),
+          reason,
+        );
+      }
 
       if (energyAmount > 0) {
         await txn.runAsync(
@@ -1091,21 +1121,19 @@ async function applyHabitCompletionTransition(
       return;
     }
 
-    const [xpTotalRow, attributeTotalRow, energyTotalRow] = await Promise.all([
+    const [xpTotalRow, attributeTotalRows, energyTotalRow] = await Promise.all([
       txn.getFirstAsync<{ total: number }>(
         `SELECT COALESCE(SUM(amount), 0) AS total
          FROM xp_events
          WHERE completion_id = ?`,
         completionId,
       ),
-      txn.getFirstAsync<AttributeEventTotalRow>(
+      txn.getAllAsync<AttributeEventTotalRow>(
         `SELECT attribute, COALESCE(SUM(amount), 0) AS total
          FROM attribute_events
          WHERE completion_id = ?
          GROUP BY attribute
-         HAVING total > 0
-         ORDER BY total DESC
-         LIMIT 1`,
+         HAVING total > 0`,
         completionId,
       ),
       txn.getFirstAsync<{ total: number }>(
@@ -1116,7 +1144,6 @@ async function applyHabitCompletionTransition(
       ),
     ]);
     const xpAmount = Math.max(0, xpTotalRow?.total ?? 0);
-    const attributeAmount = Math.max(0, attributeTotalRow?.total ?? 0);
     const energyAmount = Math.max(0, energyTotalRow?.total ?? 0);
 
     if (xpAmount > 0) {
@@ -1132,12 +1159,15 @@ async function applyHabitCompletionTransition(
       );
     }
 
-    if (attributeTotalRow && attributeAmount > 0) {
+    for (const attributeTotalRow of attributeTotalRows) {
+      const attributeAmount = Math.max(0, attributeTotalRow.total);
+      if (attributeAmount <= 0) continue;
+
       await txn.runAsync(
         `INSERT INTO attribute_events
            (client_event_id, completion_id, transition_number, attribute, amount, reason)
          VALUES (?, ?, ?, ?, ?, ?)`,
-        `${eventId}-attribute`,
+        `${eventId}-attribute-${attributeTotalRow.attribute}`,
         completionId,
         transitionNumber,
         attributeTotalRow.attribute,

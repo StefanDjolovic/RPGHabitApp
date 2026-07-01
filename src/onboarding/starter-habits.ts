@@ -15,6 +15,7 @@ export type StarterHabit = {
 
 const everyDay = [0, 1, 2, 3, 4, 5, 6];
 const noReminder = {
+  secondaryAttribute: null,
   reminderEnabled: false,
   reminderTime: '09:00',
   reminderTone: 'gentle',

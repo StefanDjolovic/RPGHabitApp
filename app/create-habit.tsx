@@ -34,6 +34,7 @@ import {
   requestHabitReminderPermission,
   syncHabitReminderFromDatabase,
 } from '@/src/notifications/habit-reminders';
+import { getSecondaryAttributeXp } from '@/src/progression/attribute-rewards';
 
 const difficultyOptions: { value: HabitDifficulty; label: string; color: string }[] = [
   { value: 'easy', label: 'Easy', color: '#68E1A8' },
@@ -52,6 +53,14 @@ const attributeOptions: {
   { value: 'vitality', label: 'Vitality', icon: 'heart-pulse' },
   { value: 'creativity', label: 'Creativity', icon: 'palette' },
 ];
+
+const attributeShortLabels: Record<HabitAttribute, string> = {
+  strength: 'STR',
+  intelligence: 'INT',
+  discipline: 'DIS',
+  vitality: 'VIT',
+  creativity: 'CRE',
+};
 
 const weekdayOptions = [
   { value: 1, label: 'Mon' },
@@ -83,6 +92,7 @@ export default function CreateHabitScreen() {
   const [description, setDescription] = useState('');
   const [difficulty, setDifficulty] = useState<HabitDifficulty>('medium');
   const [attribute, setAttribute] = useState<HabitAttribute>('discipline');
+  const [secondaryAttribute, setSecondaryAttribute] = useState<HabitAttribute | null>(null);
   const [cadence, setCadence] = useState<HabitCadence>('daily');
   const [goalType, setGoalType] = useState<HabitGoalType>('single');
   const [targetCount, setTargetCount] = useState(3);
@@ -118,6 +128,7 @@ export default function CreateHabitScreen() {
         setDescription(habit.description);
         setDifficulty(habit.difficulty);
         setAttribute(habit.attribute);
+        setSecondaryAttribute(habit.secondaryAttribute);
         setCadence(habit.cadence);
         setGoalType(habit.goalType);
         setTargetCount(habit.targetCount);
@@ -167,6 +178,7 @@ export default function CreateHabitScreen() {
         description,
         difficulty,
         attribute,
+        secondaryAttribute,
         cadence,
         goalType,
         targetCount,
@@ -663,7 +675,12 @@ export default function CreateHabitScreen() {
                   accessibilityRole="radio"
                   accessibilityState={{ checked: selected }}
                   key={option.value}
-                  onPress={() => setAttribute(option.value)}
+                  onPress={() => {
+                    setAttribute(option.value);
+                    setSecondaryAttribute((current) =>
+                      current === option.value ? null : current,
+                    );
+                  }}
                   style={[styles.attributeOption, selected && styles.attributeOptionSelected]}>
                   <MaterialCommunityIcons
                     color={selected ? '#7EE7FF' : '#707894'}
@@ -671,6 +688,41 @@ export default function CreateHabitScreen() {
                     size={20}
                   />
                   <Text style={[styles.attributeText, selected && styles.attributeTextSelected]}>
+                    {option.label}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+
+          <Text style={styles.label}>SECONDARY ATTRIBUTE (OPTIONAL)</Text>
+          <View style={styles.attributeGrid}>
+            {[
+              {
+                value: null,
+                label: 'None',
+                icon: 'minus-circle-outline' as const,
+              },
+              ...attributeOptions.filter((option) => option.value !== attribute),
+            ].map((option) => {
+              const selected = secondaryAttribute === option.value;
+              return (
+                <Pressable
+                  accessibilityRole="radio"
+                  accessibilityState={{ checked: selected }}
+                  key={option.value ?? 'none'}
+                  onPress={() => setSecondaryAttribute(option.value)}
+                  style={[styles.attributeOption, selected && styles.attributeOptionSelected]}>
+                  <MaterialCommunityIcons
+                    color={selected ? '#F08ABD' : '#707894'}
+                    name={option.icon}
+                    size={20}
+                  />
+                  <Text
+                    style={[
+                      styles.attributeText,
+                      selected && styles.secondaryAttributeTextSelected,
+                    ]}>
                     {option.label}
                   </Text>
                 </Pressable>
@@ -692,8 +744,19 @@ export default function CreateHabitScreen() {
               </View>
               <View style={styles.rewardDivider} />
               <View style={styles.rewardItem}>
-                <Text style={styles.rewardValue}>+{reward.statXp}</Text>
-                <Text style={styles.rewardLabel}>{attribute.toUpperCase()} EXP</Text>
+                <Text style={styles.rewardValue}>
+                  +{reward.statXp}
+                  {secondaryAttribute
+                    ? ` / +${getSecondaryAttributeXp(reward.statXp)}`
+                    : ''}
+                </Text>
+                <Text style={styles.rewardLabel}>
+                  {attributeShortLabels[attribute]}
+                  {secondaryAttribute
+                    ? ` / ${attributeShortLabels[secondaryAttribute]}`
+                    : ''}{' '}
+                  STAT XP
+                </Text>
               </View>
               <View style={styles.rewardDivider} />
               <View style={styles.rewardItem}>
@@ -934,6 +997,7 @@ const styles = StyleSheet.create({
   attributeOptionSelected: { borderColor: '#3DAFCB', backgroundColor: '#0C202C' },
   attributeText: { color: '#747C97', fontSize: 11, fontWeight: '700' },
   attributeTextSelected: { color: '#9BEAFF' },
+  secondaryAttributeTextSelected: { color: '#FFABD3' },
   rewardCard: { borderRadius: 18, borderWidth: 1, borderColor: '#38345D', padding: 15 },
   rewardHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 15 },
   rewardTitle: { color: '#DCD7F4', fontSize: 13, fontWeight: '800' },

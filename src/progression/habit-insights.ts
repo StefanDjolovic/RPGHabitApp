@@ -18,11 +18,13 @@ export type HabitInsight = {
   id: number;
   title: string;
   attribute: HabitAttribute;
+  secondaryAttribute: HabitAttribute | null;
   cadence: HabitCadence;
   successRate: number;
   currentStreak: number;
   totalCompletions: number;
   attributeXp: number;
+  secondaryAttributeXp: number;
   trend: HabitTrend;
 };
 
@@ -30,13 +32,14 @@ type HabitInsightRow = {
   id: number;
   title: string;
   attribute: HabitAttribute;
+  secondaryAttribute: HabitAttribute | null;
   cadence: HabitCadence;
   scheduleDays: string;
   startDate: string;
 };
 
 type CompletionRow = { habitId: number; completionDate: string };
-type AttributeXpRow = { habitId: number; attributeXp: number };
+type AttributeXpRow = { habitId: number; attribute: HabitAttribute; attributeXp: number };
 
 function getDateRange(startDate: string, endDate: string) {
   const dates: string[] = [];
@@ -112,6 +115,7 @@ export async function getHabitInsights(db: SQLiteDatabase): Promise<HabitInsight
          id,
          title,
          attribute,
+         secondary_attribute AS secondaryAttribute,
          habit_type AS cadence,
          schedule_days AS scheduleDays,
          start_date AS startDate
@@ -126,16 +130,22 @@ export async function getHabitInsights(db: SQLiteDatabase): Promise<HabitInsight
       today,
     ),
     db.getAllAsync<AttributeXpRow>(
-      `SELECT hc.habit_id AS habitId, COALESCE(SUM(ae.amount), 0) AS attributeXp
+      `SELECT
+         hc.habit_id AS habitId,
+         ae.attribute,
+         COALESCE(SUM(ae.amount), 0) AS attributeXp
        FROM attribute_events ae
        JOIN habit_completions hc ON hc.id = ae.completion_id
-       GROUP BY hc.habit_id`,
+       GROUP BY hc.habit_id, ae.attribute`,
     ),
     getHabitStreaksById(db),
   ]);
   const completionsByHabit = new Map<number, string[]>();
   const attributeXpByHabit = new Map(
-    attributeXpRows.map((row) => [row.habitId, Math.max(0, row.attributeXp)]),
+    attributeXpRows.map((row) => [
+      `${row.habitId}:${row.attribute}`,
+      Math.max(0, row.attributeXp),
+    ]),
   );
 
   for (const completion of completions) {
@@ -175,11 +185,15 @@ export async function getHabitInsights(db: SQLiteDatabase): Promise<HabitInsight
       id: habit.id,
       title: habit.title,
       attribute: habit.attribute,
+      secondaryAttribute: habit.secondaryAttribute,
       cadence: habit.cadence,
       successRate: insightPeriod.rate,
       currentStreak: streaksById.get(habit.id) ?? 0,
       totalCompletions: completionDates.length,
-      attributeXp: attributeXpByHabit.get(habit.id) ?? 0,
+      attributeXp: attributeXpByHabit.get(`${habit.id}:${habit.attribute}`) ?? 0,
+      secondaryAttributeXp: habit.secondaryAttribute
+        ? (attributeXpByHabit.get(`${habit.id}:${habit.secondaryAttribute}`) ?? 0)
+        : 0,
       trend: getTrend(currentPeriod.rate, previousPeriod.rate, currentPeriod.completed),
     };
   });

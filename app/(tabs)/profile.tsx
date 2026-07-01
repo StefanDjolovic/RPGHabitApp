@@ -634,6 +634,9 @@ export default function ProfileScreen() {
 
           {habitInsights.map((insight) => {
             const attribute = attributeMeta[insight.attribute];
+            const secondaryAttribute = insight.secondaryAttribute
+              ? attributeMeta[insight.secondaryAttribute]
+              : null;
             const trend = trendMeta[insight.trend];
             const successPercent = Math.round(insight.successRate * 100);
             const streakValue =
@@ -702,8 +705,17 @@ export default function ProfileScreen() {
                     <Text style={styles.insightStatLabel}>TOTAL CLEARS</Text>
                   </View>
                   <View style={styles.insightStat}>
-                    <Text style={styles.insightStatValue}>+{insight.attributeXp}</Text>
-                    <Text style={styles.insightStatLabel}>{attribute.label.toUpperCase()} XP</Text>
+                    <Text style={styles.insightStatValue}>
+                      +{insight.attributeXp}
+                      {secondaryAttribute ? ` / +${insight.secondaryAttributeXp}` : ''}
+                    </Text>
+                    <Text style={styles.insightStatLabel}>
+                      {attribute.label.slice(0, 3).toUpperCase()}
+                      {secondaryAttribute
+                        ? ` / ${secondaryAttribute.label.slice(0, 3).toUpperCase()}`
+                        : ''}{' '}
+                      XP
+                    </Text>
                   </View>
                 </View>
               </View>

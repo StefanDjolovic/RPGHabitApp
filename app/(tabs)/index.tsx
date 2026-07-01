@@ -35,6 +35,7 @@ import {
   setWeeklyHabitCheckIn,
 } from '@/src/database/habit-repository';
 import { getActivityStreak } from '@/src/progression/activity-streak';
+import { getSecondaryAttributeXp } from '@/src/progression/attribute-rewards';
 import {
   getPlayerProgress,
   INITIAL_PLAYER_PROGRESS,
@@ -893,6 +894,15 @@ export default function TodayScreen() {
                     <Text style={styles.rewardText}>
                       +{reward.statXp} {formatAttribute(habit.attribute)}
                     </Text>
+                    {habit.secondaryAttribute ? (
+                      <>
+                        <View style={styles.rewardDot} />
+                        <Text style={styles.rewardText}>
+                          +{getSecondaryAttributeXp(reward.statXp)}{' '}
+                          {formatAttribute(habit.secondaryAttribute)}
+                        </Text>
+                      </>
+                    ) : null}
                   </View>
                 </View>
 
@@ -1382,7 +1392,13 @@ const styles = StyleSheet.create({
   },
   difficulty: { fontSize: 8, fontWeight: '900', letterSpacing: 0.9, marginLeft: 8 },
   habitDetail: { color: '#737B98', fontSize: 10, marginTop: 4 },
-  rewardRow: { flexDirection: 'row', alignItems: 'center', marginTop: 8, gap: 6 },
+  rewardRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    marginTop: 8,
+    gap: 6,
+  },
   rewardText: { color: '#6FC8DC', fontSize: 9, fontWeight: '700' },
   rewardDot: { width: 3, height: 3, borderRadius: 2, backgroundColor: '#454D69' },
   checkButton: {

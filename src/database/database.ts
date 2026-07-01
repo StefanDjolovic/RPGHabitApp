@@ -1,6 +1,6 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 
-const DATABASE_VERSION = 16;
+const DATABASE_VERSION = 17;
 
 export async function migrateDatabase(db: SQLiteDatabase) {
   await db.execAsync('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
@@ -446,6 +446,62 @@ export async function migrateDatabase(db: SQLiteDatabase) {
 
       CREATE INDEX IF NOT EXISTS idx_recovery_quest_events_date
         ON recovery_quest_events(event_date);
+    `);
+  }
+
+  if (currentVersion < 17) {
+    await db.execAsync(`
+      ALTER TABLE habits
+        ADD COLUMN secondary_attribute TEXT
+        CHECK (
+          secondary_attribute IS NULL OR
+          secondary_attribute IN ('strength', 'intelligence', 'discipline', 'vitality', 'creativity')
+        );
+
+      BEGIN TRANSACTION;
+
+      CREATE TABLE attribute_events_v17 (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        client_event_id TEXT NOT NULL UNIQUE,
+        completion_id INTEGER NOT NULL,
+        transition_number INTEGER NOT NULL,
+        attribute TEXT NOT NULL
+          CHECK (attribute IN ('strength', 'intelligence', 'discipline', 'vitality', 'creativity')),
+        amount INTEGER NOT NULL CHECK (amount != 0),
+        reason TEXT NOT NULL CHECK (reason IN ('completion', 'undo')),
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (completion_id) REFERENCES habit_completions(id) ON DELETE CASCADE,
+        UNIQUE (completion_id, transition_number, attribute)
+      );
+
+      INSERT INTO attribute_events_v17 (
+        id,
+        client_event_id,
+        completion_id,
+        transition_number,
+        attribute,
+        amount,
+        reason,
+        created_at
+      )
+      SELECT
+        id,
+        client_event_id,
+        completion_id,
+        transition_number,
+        attribute,
+        amount,
+        reason,
+        created_at
+      FROM attribute_events;
+
+      DROP TABLE attribute_events;
+      ALTER TABLE attribute_events_v17 RENAME TO attribute_events;
+
+      CREATE INDEX idx_attribute_events_attribute
+        ON attribute_events(attribute);
+
+      COMMIT;
     `);
   }
 

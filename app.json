@@ -12,6 +12,8 @@
       "supportsTablet": true
     },
     "android": {
+      "package": "com.stefan.habitrpg",
+      "versionCode": 1,
       "adaptiveIcon": {
         "backgroundColor": "#070912",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -51,6 +53,12 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "b3a64e61-ed77-468c-ba70-95ec6b97fafd"
+      }
     }
   }
 }

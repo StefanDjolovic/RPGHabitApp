@@ -35,6 +35,7 @@ import {
   restoreHabit,
 } from '@/src/database/habit-repository';
 import { getHabitStreaksById } from '@/src/progression/habit-streak';
+import { getSecondaryAttributeXp } from '@/src/progression/attribute-rewards';
 import { syncHabitReminderFromDatabase } from '@/src/notifications/habit-reminders';
 
 const difficultyMeta: Record<HabitDifficulty, { color: string; label: string }> = {
@@ -651,6 +652,15 @@ export default function QuestsScreen() {
                     <Text style={styles.rewardText}>
                       +{reward.statXp} {formatAttribute(quest.attribute)}
                     </Text>
+                    {quest.secondaryAttribute ? (
+                      <>
+                        <View style={styles.rewardDot} />
+                        <Text style={styles.rewardText}>
+                          +{getSecondaryAttributeXp(reward.statXp)}{' '}
+                          {formatAttribute(quest.secondaryAttribute)}
+                        </Text>
+                      </>
+                    ) : null}
                     <View style={styles.rewardDot} />
                     <Text style={styles.rewardText}>+{reward.energy} Energy</Text>
                   </View>

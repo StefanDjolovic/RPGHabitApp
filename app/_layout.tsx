@@ -48,6 +48,10 @@ export default function RootLayout() {
             name="settings"
             options={{ animation: 'slide_from_bottom', headerShown: false, presentation: 'modal' }}
           />
+          <Stack.Screen
+            name="weekly-review"
+            options={{ animation: 'slide_from_right', headerShown: false }}
+          />
           <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Habit RPG' }} />
         </Stack>
         <StatusBar style="light" />

@@ -701,6 +701,20 @@ export default function ProfileScreen() {
           })}
         </View>
 
+        <Pressable
+          accessibilityLabel="Open Weekly Review"
+          onPress={() => router.push('/weekly-review' as Href)}
+          style={({ pressed }) => [styles.weeklyReviewLink, pressed && styles.buttonPressed]}>
+          <View style={styles.weeklyReviewIcon}>
+            <MaterialCommunityIcons name="calendar-week" size={21} color="#7EE7FF" />
+          </View>
+          <View style={styles.weeklyReviewText}>
+            <Text style={styles.weeklyReviewEyebrow}>WEEKLY REVIEW</Text>
+            <Text style={styles.weeklyReviewTitle}>Review this week</Text>
+          </View>
+          <MaterialCommunityIcons name="chevron-right" size={22} color="#7B849D" />
+        </Pressable>
+
         <View style={styles.sectionHeader}>
           <View>
             <Text style={styles.sectionEyebrow}>CHARACTER CHRONICLE</Text>
@@ -1237,6 +1251,28 @@ const styles = StyleSheet.create({
     fontVariant: ['tabular-nums'],
   },
   insightStatLabel: { color: '#68718C', fontSize: 7, fontWeight: '900', marginTop: 3 },
+  weeklyReviewLink: {
+    minHeight: 68,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#2A4050',
+    backgroundColor: '#0C151F',
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    marginBottom: 24,
+  },
+  weeklyReviewIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#102330',
+  },
+  weeklyReviewText: { flex: 1, minWidth: 0, paddingHorizontal: 11 },
+  weeklyReviewEyebrow: { color: '#76CDE0', fontSize: 8, fontWeight: '900', letterSpacing: 1 },
+  weeklyReviewTitle: { color: '#E8E9F4', fontSize: 13, fontWeight: '900', paddingTop: 3 },
   chronicleCountBadge: {
     height: 28,
     minWidth: 46,

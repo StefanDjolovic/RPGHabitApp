@@ -1,6 +1,6 @@
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { useFocusEffect } from 'expo-router';
+import { router, type Href, useFocusEffect } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
 import { useCallback, useMemo, useState } from 'react';
 import {
@@ -220,8 +220,16 @@ export default function ProfileScreen() {
             <Text style={styles.heading}>Profile</Text>
           </View>
 
-          <View style={styles.rankSeal}>
-            <Text style={styles.rankSealText}>{playerProgress.rankShort}</Text>
+          <View style={styles.headerActions}>
+            <Pressable
+              accessibilityLabel="Open settings"
+              onPress={() => router.push('/settings' as Href)}
+              style={({ pressed }) => [styles.settingsButton, pressed && styles.buttonPressed]}>
+              <MaterialCommunityIcons name="cog-outline" size={22} color="#BFC5DB" />
+            </Pressable>
+            <View style={styles.rankSeal}>
+              <Text style={styles.rankSealText}>{playerProgress.rankShort}</Text>
+            </View>
           </View>
         </View>
 
@@ -635,6 +643,18 @@ const styles = StyleSheet.create({
   onlineDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: '#FF8FC7' },
   systemLabel: { color: '#F08ABD', fontSize: 10, fontWeight: '800', letterSpacing: 1.8 },
   heading: { color: '#F5F2FF', fontSize: 31, fontWeight: '800' },
+  headerActions: { flexDirection: 'row', alignItems: 'center', gap: 9 },
+  settingsButton: {
+    width: 42,
+    height: 42,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#101421',
+    borderWidth: 1,
+    borderColor: '#292E44',
+  },
+  buttonPressed: { opacity: 0.65 },
   rankSeal: {
     width: 48,
     height: 48,

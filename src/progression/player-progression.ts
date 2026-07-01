@@ -1,7 +1,10 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 import { Platform } from 'react-native';
 
-import type { HabitAttribute } from '@/src/database/habit-repository';
+import {
+  getLocalDateKey,
+  type HabitAttribute,
+} from '@/src/database/habit-repository';
 import {
   MAX_DAILY_DUNGEON_ENERGY,
   MAX_DUNGEON_ENERGY,
@@ -94,10 +97,7 @@ export function getRankForLevel(level: number) {
 }
 
 export async function getPlayerProgress(db: SQLiteDatabase): Promise<PlayerProgress> {
-  const today = new Date();
-  const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(
-    today.getDate(),
-  ).padStart(2, '0')}`;
+  const todayKey = getLocalDateKey();
   const [
     xpRow,
     energyRow,
@@ -110,12 +110,14 @@ export async function getPlayerProgress(db: SQLiteDatabase): Promise<PlayerProgr
     db.getFirstAsync<TotalRow>(
       `SELECT
          COALESCE((SELECT SUM(amount) FROM xp_events), 0) +
-         COALESCE((SELECT SUM(xp_amount) FROM boss_quest_reward_events), 0) AS total`,
+         COALESCE((SELECT SUM(xp_amount) FROM boss_quest_reward_events), 0) +
+         COALESCE((SELECT SUM(xp_amount) FROM recovery_quest_events), 0) AS total`,
     ),
     db.getFirstAsync<TotalRow>(
       `SELECT
          COALESCE((SELECT SUM(amount) FROM energy_events), 0) +
-         COALESCE((SELECT SUM(energy_amount) FROM boss_quest_reward_events), 0) AS total`,
+         COALESCE((SELECT SUM(energy_amount) FROM boss_quest_reward_events), 0) +
+         COALESCE((SELECT SUM(energy_amount) FROM recovery_quest_events), 0) AS total`,
     ),
     db.getFirstAsync<TotalRow>('SELECT COALESCE(SUM(energy_cost), 0) AS total FROM dungeon_runs'),
     db.getFirstAsync<TotalRow>(
@@ -130,7 +132,13 @@ export async function getPlayerProgress(db: SQLiteDatabase): Promise<PlayerProgr
            SELECT SUM(energy_amount)
            FROM boss_quest_reward_events
            WHERE event_date = ?
+         ), 0) +
+         COALESCE((
+           SELECT SUM(energy_amount)
+           FROM recovery_quest_events
+           WHERE event_date = ?
          ), 0) AS total`,
+      todayKey,
       todayKey,
       todayKey,
     ),
@@ -142,6 +150,9 @@ export async function getPlayerProgress(db: SQLiteDatabase): Promise<PlayerProgr
          UNION ALL
          SELECT attribute, stat_xp_amount AS amount
          FROM boss_quest_reward_events
+         UNION ALL
+         SELECT attribute, stat_xp_amount AS amount
+         FROM recovery_quest_events
        )
        GROUP BY attribute`,
     ),

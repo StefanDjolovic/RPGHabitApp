@@ -3,6 +3,10 @@ import { Platform } from 'react-native';
 
 import { grantDailyClearReward } from '@/src/database/inventory-repository';
 import { MAX_DAILY_DUNGEON_ENERGY } from '@/src/progression/dungeon-energy';
+import {
+  getEffectiveDateContext,
+  getRuntimeUserSettings,
+} from '@/src/settings/user-settings';
 
 export type HabitDifficulty = 'easy' | 'medium' | 'hard';
 export type HabitGoalType = 'single' | 'counter' | 'timer';
@@ -213,28 +217,27 @@ function toQuestLogHabit(row: QuestLogHabitRow): QuestLogHabit {
   };
 }
 
-function getDayFromDateKey(dateKey: string) {
+export function getDayFromDateKey(dateKey: string) {
   const [year, month, day] = dateKey.split('-').map(Number);
-  return new Date(year, month - 1, day).getDay();
+  return new Date(Date.UTC(year, month - 1, day)).getUTCDay();
 }
 
 export function getLocalDateKey(date = new Date()) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
+  return getEffectiveDateContext(date).dateKey;
 }
 
 export function getWeekStartDateKey(date = new Date()) {
-  const weekStart = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-  const daysSinceMonday = (weekStart.getDay() + 6) % 7;
-  weekStart.setDate(weekStart.getDate() - daysSinceMonday);
-  return getLocalDateKey(weekStart);
+  const dateKey = getLocalDateKey(date);
+  const [year, month, day] = dateKey.split('-').map(Number);
+  const weekStart = new Date(Date.UTC(year, month - 1, day));
+  const daysSinceMonday = (weekStart.getUTCDay() + 6) % 7;
+  weekStart.setUTCDate(weekStart.getUTCDate() - daysSinceMonday);
+  return weekStart.toISOString().slice(0, 10);
 }
 
 export async function getTodayHabits(db: SQLiteDatabase): Promise<Habit[]> {
   const today = getLocalDateKey();
-  const todayDay = new Date().getDay();
+  const todayDay = getDayFromDateKey(today);
   const weekStart = getWeekStartDateKey();
   const rows = await db.getAllAsync<HabitRow>(
     `SELECT
@@ -479,6 +482,17 @@ export async function getRecentActivityDays(
          SUM(energy_amount) AS energyEarned
        FROM boss_quest_reward_events
        GROUP BY event_date
+
+       UNION ALL
+
+       SELECT
+         event_date AS dateKey,
+         COUNT(*) AS completedCount,
+         SUM(xp_amount) AS xpEarned,
+         SUM(stat_xp_amount) AS statXpEarned,
+         SUM(energy_amount) AS energyEarned
+       FROM recovery_quest_events
+       GROUP BY event_date
      )
      SELECT
        dateKey,
@@ -501,10 +515,10 @@ export async function getActivityCalendarDays(
   dayCount = 28,
 ): Promise<ActivitySummaryDay[]> {
   const safeDayCount = Math.max(7, Math.min(84, Math.floor(dayCount)));
-  const today = new Date();
-  const startDate = new Date(today.getFullYear(), today.getMonth(), today.getDate() - safeDayCount + 1);
-  const startDateKey = getLocalDateKey(startDate);
-  const todayKey = getLocalDateKey(today);
+  const todayKey = getLocalDateKey();
+  const [todayYear, todayMonth, todayDay] = todayKey.split('-').map(Number);
+  const startDate = new Date(Date.UTC(todayYear, todayMonth - 1, todayDay - safeDayCount + 1));
+  const startDateKey = startDate.toISOString().slice(0, 10);
   const activityRows = await db.getAllAsync<ActivitySummaryDayRow>(
     `WITH activity AS (
        SELECT
@@ -542,6 +556,17 @@ export async function getActivityCalendarDays(
          SUM(energy_amount) AS energyEarned
        FROM boss_quest_reward_events
        GROUP BY event_date
+
+       UNION ALL
+
+       SELECT
+         event_date AS dateKey,
+         COUNT(*) AS completedCount,
+         SUM(xp_amount) AS xpEarned,
+         SUM(stat_xp_amount) AS statXpEarned,
+         SUM(energy_amount) AS energyEarned
+       FROM recovery_quest_events
+       GROUP BY event_date
      )
      SELECT
        dateKey,
@@ -558,12 +583,9 @@ export async function getActivityCalendarDays(
   const activityByDate = new Map(activityRows.map((day) => [day.dateKey, day]));
 
   return Array.from({ length: safeDayCount }, (_, index) => {
-    const date = new Date(
-      startDate.getFullYear(),
-      startDate.getMonth(),
-      startDate.getDate() + index,
-    );
-    const dateKey = getLocalDateKey(date);
+    const date = new Date(startDate);
+    date.setUTCDate(startDate.getUTCDate() + index);
+    const dateKey = date.toISOString().slice(0, 10);
     return (
       activityByDate.get(dateKey) ?? {
         dateKey,
@@ -729,9 +751,10 @@ export async function createHabit(db: SQLiteDatabase, habit: NewHabit) {
        reminder_time,
        reminder_tone,
        schedule_days,
-       is_required
+       is_required,
+       start_date
      )
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     title,
     description,
     habit.cadence,
@@ -745,6 +768,7 @@ export async function createHabit(db: SQLiteDatabase, habit: NewHabit) {
     habit.reminderTone,
     scheduleDays,
     habit.cadence === 'daily' && habit.isRequired ? 1 : 0,
+    getLocalDateKey(),
   );
 
   return result.lastInsertRowId;
@@ -963,11 +987,15 @@ async function applyHabitCompletionTransition(
 
     let completionId = row.completionId;
     if (completionId === null) {
+      const settings = getRuntimeUserSettings();
       const result = await txn.runAsync(
-        `INSERT INTO habit_completions (habit_id, completion_date, status, updated_at)
-         VALUES (?, ?, 'complete', CURRENT_TIMESTAMP)`,
+        `INSERT INTO habit_completions (
+           habit_id, completion_date, status, local_timezone, day_cutoff_hour, updated_at
+         ) VALUES (?, ?, 'complete', ?, ?, CURRENT_TIMESTAMP)`,
         habitId,
         completionDate,
+        settings.timezone,
+        settings.dayCutoffHour,
       );
       completionId = result.lastInsertRowId;
     } else {
@@ -998,10 +1026,25 @@ async function applyHabitCompletionTransition(
 
     if (complete) {
       const dailyEnergyRow = await txn.getFirstAsync<{ total: number }>(
-        `SELECT COALESCE(SUM(ee.amount), 0) AS total
-         FROM energy_events ee
-         JOIN habit_completions hc ON hc.id = ee.completion_id
-         WHERE hc.completion_date = ? AND hc.status = 'complete'`,
+        `SELECT
+           COALESCE((
+             SELECT SUM(ee.amount)
+             FROM energy_events ee
+             JOIN habit_completions hc ON hc.id = ee.completion_id
+             WHERE hc.completion_date = ? AND hc.status = 'complete'
+           ), 0) +
+           COALESCE((
+             SELECT SUM(energy_amount)
+             FROM boss_quest_reward_events
+             WHERE event_date = ?
+           ), 0) +
+           COALESCE((
+             SELECT SUM(energy_amount)
+             FROM recovery_quest_events
+             WHERE event_date = ?
+           ), 0) AS total`,
+        completionDate,
+        completionDate,
         completionDate,
       );
       const remainingDailyEnergy = Math.max(
@@ -1124,7 +1167,7 @@ export async function setHabitCompletion(
   cadence: 'daily' | 'one-time' = 'daily',
 ) {
   const today = getLocalDateKey();
-  const todayDay = new Date().getDay();
+  const todayDay = getDayFromDateKey(today);
   const applyTransition = async (txn: SQLiteDatabase) => {
     if (cadence === 'one-time' && !complete) {
       await txn.runAsync(
@@ -1169,7 +1212,7 @@ export async function changeHabitCounter(
   delta: number,
 ) {
   const today = getLocalDateKey();
-  const todayDay = new Date().getDay();
+  const todayDay = getDayFromDateKey(today);
   const increment = delta > 0 ? 1 : delta < 0 ? -1 : 0;
   let nextCount = 0;
 
@@ -1249,7 +1292,7 @@ export async function setTimedHabitRunning(
   running: boolean,
 ): Promise<TimedHabitProgress> {
   const today = getLocalDateKey();
-  const todayDay = new Date().getDay();
+  const todayDay = getDayFromDateKey(today);
   let result: TimedHabitProgress = {
     elapsedSeconds: 0,
     timerStartedAtEpoch: null,
@@ -1398,7 +1441,7 @@ export async function setTimedHabitRunning(
 
 export async function resetTimedHabitForToday(db: SQLiteDatabase, habitId: number) {
   const today = getLocalDateKey();
-  const todayDay = new Date().getDay();
+  const todayDay = getDayFromDateKey(today);
 
   const applyReset = async (txn: SQLiteDatabase) => {
     const row = await txn.getFirstAsync<{ status: 'complete' | 'undone' | null }>(
@@ -1457,7 +1500,7 @@ export async function setWeeklyHabitCheckIn(
   checked: boolean,
 ) {
   const today = getLocalDateKey();
-  const todayDay = new Date().getDay();
+  const todayDay = getDayFromDateKey(today);
   const weekStart = getWeekStartDateKey();
   let nextCount = 0;
 

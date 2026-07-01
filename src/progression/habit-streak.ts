@@ -7,15 +7,15 @@ type HabitCompletionDateRow = {
   completionDate: string;
 };
 
-function parseLocalDateKey(dateKey: string) {
+function parseDateKey(dateKey: string) {
   const [year, month, day] = dateKey.split('-').map(Number);
-  return new Date(year, month - 1, day);
+  return new Date(Date.UTC(year, month - 1, day));
 }
 
 function getPreviousLocalDateKey(dateKey: string) {
-  const date = parseLocalDateKey(dateKey);
-  date.setDate(date.getDate() - 1);
-  return getLocalDateKey(date);
+  const date = parseDateKey(dateKey);
+  date.setUTCDate(date.getUTCDate() - 1);
+  return date.toISOString().slice(0, 10);
 }
 
 export function getConsecutiveHabitStreak(

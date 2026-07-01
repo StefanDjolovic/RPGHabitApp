@@ -1,11 +1,12 @@
 import { DarkTheme, ThemeProvider } from '@react-navigation/native';
 import { Stack } from 'expo-router';
-import { SQLiteProvider } from 'expo-sqlite';
+import { SQLiteProvider, type SQLiteDatabase } from 'expo-sqlite';
 import { StatusBar } from 'expo-status-bar';
 import 'react-native-reanimated';
 import '@/src/notifications/habit-reminders';
 
 import { migrateDatabase } from '@/src/database/database';
+import { loadUserSettings } from '@/src/settings/user-settings';
 
 const habitRpgTheme = {
   ...DarkTheme,
@@ -23,9 +24,14 @@ export const unstable_settings = {
   anchor: '(tabs)',
 };
 
+async function initializeDatabase(db: SQLiteDatabase) {
+  await migrateDatabase(db);
+  await loadUserSettings(db);
+}
+
 export default function RootLayout() {
   return (
-    <SQLiteProvider databaseName="habit-rpg.db" onInit={migrateDatabase}>
+    <SQLiteProvider databaseName="habit-rpg.db" onInit={initializeDatabase}>
       <ThemeProvider value={habitRpgTheme}>
         <Stack screenOptions={{ contentStyle: { backgroundColor: '#050711' } }}>
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
@@ -36,6 +42,10 @@ export default function RootLayout() {
           />
           <Stack.Screen
             name="create-boss-quest"
+            options={{ animation: 'slide_from_bottom', headerShown: false, presentation: 'modal' }}
+          />
+          <Stack.Screen
+            name="settings"
             options={{ animation: 'slide_from_bottom', headerShown: false, presentation: 'modal' }}
           />
           <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Habit RPG' }} />

@@ -23,6 +23,8 @@ import {
 
 import {
   archiveHabit,
+  getDayFromDateKey,
+  getLocalDateKey,
   getQuestLogHabits,
   type HabitAttribute,
   type HabitDifficulty,
@@ -249,7 +251,7 @@ export default function QuestsScreen() {
   );
 
   const summary = useMemo(() => {
-    const todayDay = new Date().getDay();
+    const todayDay = getDayFromDateKey(getLocalDateKey());
     const summaryQuests =
       questFilter === 'archived'
         ? quests

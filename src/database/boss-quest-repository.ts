@@ -9,6 +9,7 @@ import {
 } from '@/src/database/habit-repository';
 import { grantInventoryItem } from '@/src/database/inventory-repository';
 import { MAX_DAILY_DUNGEON_ENERGY } from '@/src/progression/dungeon-energy';
+import { getRuntimeUserSettings } from '@/src/settings/user-settings';
 
 export type BossQuestStatus = 'active' | 'completed' | 'archived';
 
@@ -164,6 +165,7 @@ export async function createBossQuest(db: SQLiteDatabase, boss: NewBossQuest) {
 
 export async function completeCurrentBossMilestone(db: SQLiteDatabase, bossQuestId: number) {
   const today = getLocalDateKey();
+  const settings = getRuntimeUserSettings();
 
   const applyCompletion = async (txn: SQLiteDatabase) => {
     const milestone = await txn.getFirstAsync<{
@@ -195,7 +197,7 @@ export async function completeCurrentBossMilestone(db: SQLiteDatabase, bossQuest
     if (!milestone) throw new Error('Active Boss Quest phase not found.');
 
     const reward = rewardByDifficulty[milestone.difficulty];
-    const [habitEnergy, bossEnergy] = await Promise.all([
+    const [habitEnergy, bossEnergy, recoveryEnergy] = await Promise.all([
       txn.getFirstAsync<{ total: number }>(
         `SELECT COALESCE(SUM(ee.amount), 0) AS total
          FROM energy_events ee
@@ -209,8 +211,17 @@ export async function completeCurrentBossMilestone(db: SQLiteDatabase, bossQuest
          WHERE event_date = ?`,
         today,
       ),
+      txn.getFirstAsync<{ total: number }>(
+        `SELECT COALESCE(SUM(energy_amount), 0) AS total
+         FROM recovery_quest_events
+         WHERE event_date = ?`,
+        today,
+      ),
     ]);
-    const todayEnergy = Math.max(0, habitEnergy?.total ?? 0) + Math.max(0, bossEnergy?.total ?? 0);
+    const todayEnergy =
+      Math.max(0, habitEnergy?.total ?? 0) +
+      Math.max(0, bossEnergy?.total ?? 0) +
+      Math.max(0, recoveryEnergy?.total ?? 0);
     const energyAmount = Math.min(
       reward.energy,
       Math.max(0, MAX_DAILY_DUNGEON_ENERGY - todayEnergy),
@@ -226,8 +237,10 @@ export async function completeCurrentBossMilestone(db: SQLiteDatabase, bossQuest
          attribute,
          stat_xp_amount,
          energy_amount,
-         reason
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'milestone')`,
+         reason,
+         local_timezone,
+         day_cutoff_hour
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'milestone', ?, ?)`,
       `boss-milestone-${milestone.id}`,
       bossQuestId,
       milestone.id,
@@ -236,6 +249,8 @@ export async function completeCurrentBossMilestone(db: SQLiteDatabase, bossQuest
       milestone.attribute,
       reward.statXp,
       energyAmount,
+      settings.timezone,
+      settings.dayCutoffHour,
     );
     if (eventResult.changes === 0) return;
 
@@ -261,14 +276,18 @@ export async function completeCurrentBossMilestone(db: SQLiteDatabase, bossQuest
          attribute,
          stat_xp_amount,
          energy_amount,
-         reason
-       ) VALUES (?, ?, NULL, ?, ?, ?, ?, 0, 'final_bonus')`,
+         reason,
+         local_timezone,
+         day_cutoff_hour
+       ) VALUES (?, ?, NULL, ?, ?, ?, ?, 0, 'final_bonus', ?, ?)`,
       `boss-final-${bossQuestId}`,
       bossQuestId,
       today,
       reward.xp,
       milestone.attribute,
       reward.statXp,
+      settings.timezone,
+      settings.dayCutoffHour,
     );
     await txn.runAsync(
       `UPDATE boss_quests

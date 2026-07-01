@@ -1,6 +1,6 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 
-const DATABASE_VERSION = 14;
+const DATABASE_VERSION = 16;
 
 export async function migrateDatabase(db: SQLiteDatabase) {
   await db.execAsync('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
@@ -383,6 +383,69 @@ export async function migrateDatabase(db: SQLiteDatabase) {
 
       CREATE INDEX IF NOT EXISTS idx_boss_quest_reward_events_date
         ON boss_quest_reward_events(event_date);
+    `);
+  }
+
+  if (currentVersion < 15) {
+    await db.execAsync(`
+      CREATE TABLE IF NOT EXISTS user_settings (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        timezone TEXT NOT NULL DEFAULT 'system',
+        day_cutoff_hour INTEGER NOT NULL DEFAULT 4
+          CHECK (day_cutoff_hour BETWEEN 0 AND 12),
+        quiet_hours_enabled INTEGER NOT NULL DEFAULT 0
+          CHECK (quiet_hours_enabled IN (0, 1)),
+        quiet_start TEXT NOT NULL DEFAULT '22:00',
+        quiet_end TEXT NOT NULL DEFAULT '07:00',
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      INSERT OR IGNORE INTO user_settings (
+        id, timezone, day_cutoff_hour, quiet_hours_enabled, quiet_start, quiet_end
+      ) VALUES (1, 'system', 4, 0, '22:00', '07:00');
+
+      ALTER TABLE habit_completions
+        ADD COLUMN local_timezone TEXT NOT NULL DEFAULT 'system';
+
+      ALTER TABLE habit_completions
+        ADD COLUMN day_cutoff_hour INTEGER NOT NULL DEFAULT 0;
+
+      ALTER TABLE boss_quest_reward_events
+        ADD COLUMN local_timezone TEXT NOT NULL DEFAULT 'system';
+
+      ALTER TABLE boss_quest_reward_events
+        ADD COLUMN day_cutoff_hour INTEGER NOT NULL DEFAULT 0;
+    `);
+  }
+
+  if (currentVersion < 16) {
+    await db.execAsync(`
+      ALTER TABLE habits
+        ADD COLUMN start_date TEXT NOT NULL DEFAULT '1970-01-01';
+
+      UPDATE habits
+      SET start_date = substr(created_at, 1, 10)
+      WHERE start_date = '1970-01-01';
+
+      CREATE TABLE IF NOT EXISTS recovery_quest_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        client_event_id TEXT NOT NULL UNIQUE,
+        trigger_date TEXT NOT NULL UNIQUE,
+        event_date TEXT NOT NULL,
+        last_active_date TEXT NOT NULL,
+        missed_days INTEGER NOT NULL CHECK (missed_days > 0),
+        xp_amount INTEGER NOT NULL CHECK (xp_amount >= 0),
+        attribute TEXT NOT NULL DEFAULT 'discipline'
+          CHECK (attribute IN ('strength', 'intelligence', 'discipline', 'vitality', 'creativity')),
+        stat_xp_amount INTEGER NOT NULL CHECK (stat_xp_amount >= 0),
+        energy_amount INTEGER NOT NULL CHECK (energy_amount >= 0),
+        local_timezone TEXT NOT NULL,
+        day_cutoff_hour INTEGER NOT NULL,
+        completed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_recovery_quest_events_date
+        ON recovery_quest_events(event_date);
     `);
   }
 

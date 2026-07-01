@@ -49,7 +49,9 @@ import {
   type PlayerProfile,
 } from '@/src/database/profile-repository';
 import {
+  completeRecoveryQuest,
   getRecoveryQuestStatus,
+  RECOVERY_QUEST_REWARD,
   type RecoveryQuestStatus,
 } from '@/src/progression/recovery-quest';
 import { getItemDefinition } from '@/src/inventory/item-catalog';
@@ -97,6 +99,7 @@ const initialRecoveryStatus: RecoveryQuestStatus = {
   available: false,
   completedToday: false,
   lastActiveDate: null,
+  triggerDate: null,
   missedDays: 0,
 };
 
@@ -123,6 +126,7 @@ export default function TodayScreen() {
   const [dailyClearStatus, setDailyClearStatus] =
     useState<DailyClearStatus>(initialDailyClearStatus);
   const [claimingDailyClear, setClaimingDailyClear] = useState(false);
+  const [completingRecovery, setCompletingRecovery] = useState(false);
   const [updatingHabitId, setUpdatingHabitId] = useState<number | null>(null);
   const [updatingBossQuest, setUpdatingBossQuest] = useState(false);
   const [clockEpoch, setClockEpoch] = useState(() => Math.floor(Date.now() / 1000));
@@ -517,6 +521,32 @@ export default function TodayScreen() {
     }
   };
 
+  const completeRecovery = async () => {
+    if (!recoveryStatus.available || completingRecovery) return;
+
+    try {
+      setCompletingRecovery(true);
+      const recoveryResult = await completeRecoveryQuest(db);
+      const [progressSummary, streak] = await Promise.all([
+        getPlayerProgress(db),
+        getActivityStreak(db),
+      ]);
+      setRecoveryStatus(recoveryResult.status);
+      setPlayerProgress(progressSummary);
+      setActivityStreak(streak);
+      Alert.alert(
+        recoveryResult.unlockedSecondWind ? 'Second Wind unlocked' : 'Recovery complete',
+        recoveryResult.unlockedSecondWind
+          ? 'Recovery complete. The Second Wind achievement is now yours.'
+          : 'A new Activity Streak begins today.',
+      );
+    } catch {
+      Alert.alert('Recovery not completed', 'The quest could not be saved. Please try again.');
+    } finally {
+      setCompletingRecovery(false);
+    }
+  };
+
   return (
     <SafeAreaView style={styles.safeArea}>
       <View style={styles.backgroundGlowPurple} />
@@ -701,11 +731,39 @@ export default function TodayScreen() {
                   ? `New streak started after ${recoveryStatus.missedDays} missed ${
                       recoveryStatus.missedDays === 1 ? 'day' : 'days'
                     }.`
-                  : `Complete one real quest today to restart after ${recoveryStatus.missedDays} missed ${
+                  : `A fresh start after ${recoveryStatus.missedDays} missed ${
                       recoveryStatus.missedDays === 1 ? 'day' : 'days'
                     }.`}
               </Text>
-              <Text style={styles.recoveryMeta}>Earned XP stays safe. Start fresh with any quest below.</Text>
+              <View style={styles.recoveryRewardRow}>
+                <Text style={styles.recoveryReward}>+{RECOVERY_QUEST_REWARD.xp} EXP</Text>
+                <Text style={styles.recoveryReward}>+{RECOVERY_QUEST_REWARD.statXp} Discipline</Text>
+                <Text style={styles.recoveryReward}>+{RECOVERY_QUEST_REWARD.energy} Energy</Text>
+              </View>
+              {recoveryStatus.available ? (
+                <Pressable
+                  accessibilityLabel="Complete Recovery Quest"
+                  disabled={completingRecovery}
+                  onPress={() => void completeRecovery()}
+                  style={({ pressed }) => [
+                    styles.recoveryButton,
+                    pressed && styles.recoveryButtonPressed,
+                  ]}>
+                  {completingRecovery ? (
+                    <ActivityIndicator color="#071019" size="small" />
+                  ) : (
+                    <MaterialCommunityIcons name="check" size={18} color="#071019" />
+                  )}
+                  <Text style={styles.recoveryButtonText}>
+                    {completingRecovery ? 'Completing' : 'Complete'}
+                  </Text>
+                </Pressable>
+              ) : (
+                <View style={styles.recoveryCompleteBadge}>
+                  <MaterialCommunityIcons name="check-circle" size={16} color="#7EE7FF" />
+                  <Text style={styles.recoveryCompleteText}>SECOND WIND</Text>
+                </View>
+              )}
             </View>
           </LinearGradient>
         ) : null}
@@ -1167,20 +1225,20 @@ const styles = StyleSheet.create({
   dailyClaimButtonTextLocked: { color: '#68708D' },
   dailyClaimButtonTextClaimed: { color: '#8DECB4', fontSize: 10, fontWeight: '900' },
   recoveryCard: {
-    minHeight: 104,
-    borderRadius: 17,
+    minHeight: 146,
+    borderRadius: 8,
     borderWidth: 1,
     borderColor: '#3E3558',
     padding: 14,
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     marginBottom: 12,
     overflow: 'hidden',
   },
   recoveryIcon: {
     width: 46,
     height: 46,
-    borderRadius: 15,
+    borderRadius: 8,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: 'rgba(7, 9, 22, 0.7)',
@@ -1190,7 +1248,33 @@ const styles = StyleSheet.create({
   recoveryBody: { flex: 1, paddingLeft: 12 },
   recoveryTitle: { color: '#F1EEFF', fontSize: 14, fontWeight: '900' },
   recoveryText: { color: '#BFC5DB', fontSize: 11, fontWeight: '700', marginTop: 5 },
-  recoveryMeta: { color: '#777E9C', fontSize: 10, fontWeight: '700', marginTop: 7 },
+  recoveryRewardRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 9,
+    paddingTop: 9,
+  },
+  recoveryReward: { color: '#8E9AB8', fontSize: 9, fontWeight: '800' },
+  recoveryButton: {
+    minHeight: 38,
+    borderRadius: 8,
+    backgroundColor: '#7EE7FF',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    marginTop: 12,
+  },
+  recoveryButtonPressed: { opacity: 0.75 },
+  recoveryButtonText: { color: '#071019', fontSize: 11, fontWeight: '900' },
+  recoveryCompleteBadge: {
+    minHeight: 34,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    marginTop: 11,
+  },
+  recoveryCompleteText: { color: '#7EE7FF', fontSize: 10, fontWeight: '900' },
   bossCard: {
     minHeight: 164,
     borderRadius: 17,

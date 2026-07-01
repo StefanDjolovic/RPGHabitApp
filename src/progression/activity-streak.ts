@@ -4,15 +4,15 @@ import { getLocalDateKey } from '@/src/database/habit-repository';
 
 type ActivityDateRow = { completionDate: string };
 
-function parseLocalDateKey(dateKey: string) {
+function parseDateKey(dateKey: string) {
   const [year, month, day] = dateKey.split('-').map(Number);
-  return new Date(year, month - 1, day);
+  return new Date(Date.UTC(year, month - 1, day));
 }
 
 function getPreviousLocalDateKey(dateKey: string) {
-  const date = parseLocalDateKey(dateKey);
-  date.setDate(date.getDate() - 1);
-  return getLocalDateKey(date);
+  const date = parseDateKey(dateKey);
+  date.setUTCDate(date.getUTCDate() - 1);
+  return date.toISOString().slice(0, 10);
 }
 
 export function getConsecutiveActivityStreak(activeDateKeys: string[], todayKey = getLocalDateKey()) {
@@ -40,6 +40,9 @@ export async function getActivityStreak(db: SQLiteDatabase) {
        SELECT event_date AS completionDate
        FROM boss_quest_reward_events
        WHERE reason = 'milestone'
+       UNION ALL
+       SELECT event_date AS completionDate
+       FROM recovery_quest_events
      )
      WHERE completionDate <= ?
      ORDER BY completionDate DESC`,

@@ -45,6 +45,7 @@ export async function getAchievementSummary(
     dailyClearRow,
     dungeonClearRow,
     inventoryRow,
+    recoveryRow,
     xpRow,
   ] = await Promise.all([
     db.getFirstAsync<TotalRow>(
@@ -67,7 +68,15 @@ export async function getAchievementSummary(
       `SELECT COALESCE(SUM(quantity), 0) AS total
        FROM inventory_items`,
     ),
-    db.getFirstAsync<TotalRow>('SELECT COALESCE(SUM(amount), 0) AS total FROM xp_events'),
+    db.getFirstAsync<TotalRow>(
+      'SELECT COUNT(*) AS total FROM recovery_quest_events',
+    ),
+    db.getFirstAsync<TotalRow>(
+      `SELECT
+         COALESCE((SELECT SUM(amount) FROM xp_events), 0) +
+         COALESCE((SELECT SUM(xp_amount) FROM boss_quest_reward_events), 0) +
+         COALESCE((SELECT SUM(xp_amount) FROM recovery_quest_events), 0) AS total`,
+    ),
   ]);
 
   const metrics: AchievementMetrics = {
@@ -76,6 +85,7 @@ export async function getAchievementSummary(
     dailyClears: dailyClearRow?.total ?? 0,
     dungeonClears: dungeonClearRow?.total ?? 0,
     inventoryItems: inventoryRow?.total ?? 0,
+    recoveryCompletions: recoveryRow?.total ?? 0,
     playerLevel: getLevelProgress(Math.max(0, xpRow?.total ?? 0)).level,
   };
   const achievements = achievementCatalog.map((definition) => toProgress(definition, metrics));

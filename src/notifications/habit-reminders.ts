@@ -2,6 +2,10 @@ import * as Notifications from 'expo-notifications';
 import type { SQLiteDatabase } from 'expo-sqlite';
 
 import type { ReminderTone } from '@/src/database/habit-repository';
+import {
+  getQuietHoursAdjustedTime,
+  getRuntimeUserSettings,
+} from '@/src/settings/user-settings';
 
 const REMINDER_CHANNEL_ID = 'habit-reminders';
 
@@ -152,13 +156,17 @@ export async function syncHabitReminderFromDatabase(
   const permission = await Notifications.getPermissionsAsync();
   if (permission.status !== 'granted') return false;
 
-  const { hour, minute } = parseReminderTime(habit.reminderTime);
+  const scheduledTime = getQuietHoursAdjustedTime(
+    habit.reminderTime,
+    getRuntimeUserSettings(),
+  );
+  const { hour, minute } = parseReminderTime(scheduledTime.time);
   const message = getReminderMessage(habit.title, habit.reminderTone);
   const scheduled: { notificationId: string; weekday: number }[] = [];
 
   try {
     for (const scheduleDay of parseScheduleDays(habit.scheduleDays)) {
-      const weekday = scheduleDay + 1;
+      const weekday = ((scheduleDay + scheduledTime.dayOffset) % 7) + 1;
       const notificationId = await Notifications.scheduleNotificationAsync({
         content: {
           ...message,
@@ -199,6 +207,19 @@ export async function syncHabitReminderFromDatabase(
   }
 
   return scheduled.length > 0;
+}
+
+export async function syncAllHabitReminders(db: SQLiteDatabase) {
+  const habits = await db.getAllAsync<{ id: number }>(
+    `SELECT id
+     FROM habits
+     WHERE reminder_enabled = 1
+     ORDER BY id ASC`,
+  );
+
+  for (const habit of habits) {
+    await syncHabitReminderFromDatabase(db, habit.id).catch(() => false);
+  }
 }
 
 export async function disableHabitReminder(db: SQLiteDatabase, habitId: number) {

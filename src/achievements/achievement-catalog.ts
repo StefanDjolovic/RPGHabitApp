@@ -6,6 +6,7 @@ export type AchievementMetric =
   | 'dailyClears'
   | 'dungeonClears'
   | 'inventoryItems'
+  | 'recoveryCompletions'
   | 'playerLevel';
 
 export type AchievementCategory =
@@ -14,6 +15,7 @@ export type AchievementCategory =
   | 'Habit Mastery'
   | 'Dungeon'
   | 'Equipment'
+  | 'Recovery'
   | 'Growth';
 
 export type AchievementDefinition = {
@@ -87,6 +89,16 @@ export const achievementCatalog = [
     target: 1,
     icon: 'diamond',
     accent: '#68E1A8',
+  },
+  {
+    key: 'second-wind',
+    title: 'Second Wind',
+    category: 'Recovery',
+    description: 'Complete your first Recovery Quest.',
+    metric: 'recoveryCompletions',
+    target: 1,
+    icon: 'weather-windy',
+    accent: '#7EE7FF',
   },
   {
     key: 'awakening-threshold',

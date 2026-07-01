@@ -3,6 +3,7 @@ import { Redirect, Tabs, type Href } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { HapticTab } from '@/components/haptic-tab';
 import { getPlayerProfile } from '@/src/database/profile-repository';
@@ -12,6 +13,7 @@ const inactiveColor = '#666D87';
 
 export default function TabLayout() {
   const db = useSQLiteContext();
+  const insets = useSafeAreaInsets();
   const [onboardingCompleted, setOnboardingCompleted] = useState<boolean | null>(null);
 
   useEffect(() => {
@@ -46,9 +48,9 @@ export default function TabLayout() {
         tabBarLabelStyle: { fontSize: 9, fontWeight: '700', marginTop: 2 },
         tabBarStyle: {
           position: 'absolute',
-          height: 70,
+          height: 62 + insets.bottom,
           paddingTop: 8,
-          paddingBottom: 8,
+          paddingBottom: Math.max(insets.bottom, 8),
           backgroundColor: '#090C18',
           borderTopColor: '#20253B',
           borderTopWidth: 1,

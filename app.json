@@ -4,7 +4,7 @@
     "slug": "habit-rpg",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/icon.png",
+    "icon": "./assets/images/habit-rpg-icon.png",
     "scheme": "habitrpg",
     "userInterfaceStyle": "dark",
     "newArchEnabled": true,
@@ -16,23 +16,23 @@
       "versionCode": 1,
       "adaptiveIcon": {
         "backgroundColor": "#070912",
-        "foregroundImage": "./assets/images/android-icon-foreground.png",
-        "backgroundImage": "./assets/images/android-icon-background.png",
-        "monochromeImage": "./assets/images/android-icon-monochrome.png"
+        "foregroundImage": "./assets/images/habit-rpg-android-foreground.png",
+        "backgroundImage": "./assets/images/habit-rpg-android-background.png",
+        "monochromeImage": "./assets/images/habit-rpg-android-monochrome.png"
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false
     },
     "web": {
       "output": "static",
-      "favicon": "./assets/images/favicon.png"
+      "favicon": "./assets/images/habit-rpg-favicon.png"
     },
     "plugins": [
       "expo-router",
       [
         "expo-splash-screen",
         {
-          "image": "./assets/images/splash-icon.png",
+          "image": "./assets/images/habit-rpg-splash.png",
           "imageWidth": 200,
           "resizeMode": "contain",
           "backgroundColor": "#070912",

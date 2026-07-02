@@ -50,6 +50,11 @@ import {
   type PlayerProfile,
 } from '@/src/database/profile-repository';
 import {
+  getPlayerClassState,
+  INITIAL_PLAYER_CLASS_STATE,
+  type PlayerClassState,
+} from '@/src/database/class-repository';
+import {
   completeRecoveryQuest,
   getRecoveryQuestStatus,
   RECOVERY_QUEST_REWARD,
@@ -122,6 +127,8 @@ export default function TodayScreen() {
   const [bossQuest, setBossQuest] = useState<BossQuest | null>(null);
   const [playerProgress, setPlayerProgress] = useState<PlayerProgress>(INITIAL_PLAYER_PROGRESS);
   const [playerProfile, setPlayerProfile] = useState<PlayerProfile>(INITIAL_PLAYER_PROFILE);
+  const [playerClassState, setPlayerClassState] =
+    useState<PlayerClassState>(INITIAL_PLAYER_CLASS_STATE);
   const [activityStreak, setActivityStreak] = useState(0);
   const [recoveryStatus, setRecoveryStatus] = useState<RecoveryQuestStatus>(initialRecoveryStatus);
   const [dailyClearStatus, setDailyClearStatus] =
@@ -180,11 +187,21 @@ export default function TodayScreen() {
 
   const loadTodayData = useCallback(async () => {
     try {
-      const [todayHabits, activeBoss, progressSummary, profile, streak, recovery, dailyClear] = await Promise.all([
+      const [
+        todayHabits,
+        activeBoss,
+        progressSummary,
+        profile,
+        classState,
+        streak,
+        recovery,
+        dailyClear,
+      ] = await Promise.all([
         getTodayHabits(db),
         getActiveBossQuest(db),
         getPlayerProgress(db),
         getPlayerProfile(db),
+        getPlayerClassState(db),
         getActivityStreak(db),
         getRecoveryQuestStatus(db),
         getDailyClearStatus(db),
@@ -193,6 +210,7 @@ export default function TodayScreen() {
       setBossQuest(activeBoss);
       setPlayerProgress(progressSummary);
       setPlayerProfile(profile);
+      setPlayerClassState(classState);
       setActivityStreak(streak);
       setRecoveryStatus(recovery);
       setDailyClearStatus(dailyClear);
@@ -589,7 +607,9 @@ export default function TodayScreen() {
 
             <View style={styles.playerIdentity}>
               <Text style={styles.playerName}>{playerProfile.nickname}</Text>
-              <Text style={styles.playerSubtitle}>{playerProgress.rankLabel} - Path in progress</Text>
+              <Text style={styles.playerSubtitle}>
+                {playerProgress.rankLabel} - {playerClassState.activeClass?.name ?? 'Path in progress'}
+              </Text>
             </View>
 
             <View style={styles.rankBadge}>
@@ -638,6 +658,32 @@ export default function TodayScreen() {
             </View>
           </View>
         </LinearGradient>
+
+        {playerClassState.eligible && !playerClassState.awakened ? (
+          <LinearGradient
+            colors={['rgba(27, 54, 72, 0.98)', 'rgba(24, 20, 49, 0.98)']}
+            end={{ x: 1, y: 1 }}
+            start={{ x: 0, y: 0 }}
+            style={styles.awakeningCard}>
+            <View style={styles.awakeningIcon}>
+              <MaterialCommunityIcons name="star-four-points" size={25} color="#8DEAFF" />
+            </View>
+            <View style={styles.awakeningBody}>
+              <Text style={styles.awakeningEyebrow}>SYSTEM QUEST AVAILABLE</Text>
+              <Text style={styles.awakeningTitle}>Awakening</Text>
+              <Text style={styles.awakeningText}>Choose your first class and unlock its starter skills.</Text>
+            </View>
+            <Pressable
+              accessibilityLabel="Begin Awakening"
+              onPress={() => router.push('/awakening' as Href)}
+              style={({ pressed }) => [
+                styles.awakeningButton,
+                pressed && styles.awakeningButtonPressed,
+              ]}>
+              <MaterialCommunityIcons name="arrow-right" size={19} color="#071018" />
+            </Pressable>
+          </LinearGradient>
+        ) : null}
 
         <View style={styles.sectionHeader}>
           <View>
@@ -1157,6 +1203,41 @@ const styles = StyleSheet.create({
   quickStatDivider: { width: 1, height: 28, backgroundColor: '#30334E', marginHorizontal: 12 },
   quickStatValue: { color: '#EDF0FF', fontSize: 13, fontWeight: '800' },
   quickStatLabel: { color: '#777E9C', fontSize: 9, marginTop: 2 },
+  awakeningCard: {
+    minHeight: 86,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 11,
+    padding: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#31566A',
+    overflow: 'hidden',
+    marginBottom: 24,
+  },
+  awakeningIcon: {
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 8,
+    backgroundColor: '#102333',
+    borderWidth: 1,
+    borderColor: '#31566A',
+  },
+  awakeningBody: { flex: 1, minWidth: 0 },
+  awakeningEyebrow: { color: '#8DEAFF', fontSize: 7, fontWeight: '900', letterSpacing: 1.1 },
+  awakeningTitle: { color: '#F0F2FA', fontSize: 14, fontWeight: '900', marginTop: 2 },
+  awakeningText: { color: '#8590A5', fontSize: 9, lineHeight: 13, fontWeight: '700', marginTop: 3 },
+  awakeningButton: {
+    width: 40,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 8,
+    backgroundColor: '#8DEAFF',
+  },
+  awakeningButtonPressed: { opacity: 0.72, transform: [{ scale: 0.98 }] },
   sectionHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',

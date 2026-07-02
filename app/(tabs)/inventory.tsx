@@ -38,6 +38,7 @@ type InventoryView = 'vault' | 'loadout' | 'smith';
 const initialOverview: InventoryOverview = {
   items: [],
   gold: 0,
+  loadoutKey: 'unawakened',
   loadout: equipmentSlots.map((slot) => ({ ...slot, item: null })),
 };
 
@@ -171,7 +172,9 @@ export default function InventoryScreen() {
           style={styles.summaryPanel}>
           <View style={styles.summaryTitleRow}>
             <View>
-              <Text style={styles.summaryEyebrow}>UNAWAKENED ARMORY</Text>
+              <Text style={styles.summaryEyebrow}>
+                {overview.loadoutKey.toUpperCase()} ARMORY
+              </Text>
               <Text style={styles.summaryTitle}>
                 {summary.totalQuantity > 0 ? `${summary.totalQuantity} stored items` : 'Vault empty'}
               </Text>
@@ -240,6 +243,7 @@ export default function InventoryScreen() {
         {!loading && selectedView === 'loadout' ? (
           <LoadoutView
             loadout={overview.loadout}
+            loadoutKey={overview.loadoutKey}
             onUnequip={(slot) => void unequipSlot(slot)}
             updatingItemKey={updatingItemKey}
           />
@@ -385,10 +389,12 @@ function VaultView({
 
 function LoadoutView({
   loadout,
+  loadoutKey,
   updatingItemKey,
   onUnequip,
 }: {
   loadout: InventoryOverview['loadout'];
+  loadoutKey: string;
   updatingItemKey: string | null;
   onUnequip: (slot: EquipmentSlotKey) => void;
 }) {
@@ -397,7 +403,7 @@ function LoadoutView({
     <View style={styles.section}>
       <View style={styles.sectionHeaderRow}>
         <View>
-          <Text style={styles.sectionEyebrow}>UNAWAKENED LOADOUT</Text>
+          <Text style={styles.sectionEyebrow}>{loadoutKey.toUpperCase()} LOADOUT</Text>
           <Text style={styles.sectionTitle}>Equipped gear</Text>
         </View>
         <Text style={styles.slotCount}>{equippedCount} / {loadout.length}</Text>

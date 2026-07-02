@@ -180,7 +180,9 @@ export default function DungeonRunScreen() {
           <MaterialCommunityIcons name="arrow-left" size={21} color="#D5D9E8" />
         </Pressable>
         <View style={styles.topBarTitle}>
-          <Text style={styles.systemLabel}>UNAWAKENED COMBAT</Text>
+          <Text style={styles.systemLabel}>
+            {battle ? `${battle.className.toUpperCase()} COMBAT` : 'GATE COMBAT'}
+          </Text>
           <Text style={styles.runName}>{battle?.dungeonName ?? 'Gate Result'}</Text>
         </View>
         <View style={styles.turnBadge}>
@@ -238,7 +240,7 @@ export default function DungeonRunScreen() {
             <View style={styles.hpHeader}>
               <View>
                 <Text style={styles.hpLabel}>HUNTER HP</Text>
-                <Text style={styles.playerState}>Unawakened</Text>
+                <Text style={styles.playerState}>{battle.className}</Text>
               </View>
               <Text style={styles.hpValue}>
                 {battle.snapshot.playerHp} / {battle.stats.maxPlayerHp}

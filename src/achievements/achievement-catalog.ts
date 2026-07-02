@@ -14,6 +14,7 @@ export type AchievementMetric =
   | 'equipmentSalvages'
   | 'equippedSlots'
   | 'uniqueRarities'
+  | 'classesUnlocked'
   | 'recoveryCompletions'
   | 'playerLevel';
 
@@ -24,6 +25,7 @@ export type AchievementCategory =
   | 'Dungeon'
   | 'Combat'
   | 'Equipment'
+  | 'Class Mastery'
   | 'Recovery'
   | 'Growth'
   | 'Secret';
@@ -253,5 +255,25 @@ export const achievementCatalog = [
     target: 10,
     icon: 'star-four-points',
     accent: '#61D4FF',
+  },
+  {
+    key: 'the-awakening',
+    title: 'The Awakening',
+    category: 'Class Mastery',
+    description: 'Complete Awakening and unlock your first class.',
+    metric: 'classesUnlocked',
+    target: 1,
+    icon: 'star-four-points-circle-outline',
+    accent: '#8DEAFF',
+  },
+  {
+    key: 'another-path',
+    title: 'Another Path',
+    category: 'Class Mastery',
+    description: 'Unlock a second starter class.',
+    metric: 'classesUnlocked',
+    target: 2,
+    icon: 'source-branch',
+    accent: '#B493FF',
   },
 ] as const satisfies AchievementDefinition[];

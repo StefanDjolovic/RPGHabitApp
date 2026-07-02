@@ -1,5 +1,6 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 
+import { getStarterClass, isStarterClassKey } from '@/src/classes/class-catalog';
 import {
   consumeInventoryItem,
   getEquippedCombatBonuses,
@@ -50,6 +51,8 @@ export type DungeonBattle = {
   dungeonName: string;
   difficulty: string;
   bossName: string;
+  classKey: string;
+  className: string;
   energyCost: number;
   isTrialEntry: boolean;
   snapshot: CombatSnapshot;
@@ -87,6 +90,7 @@ type DungeonBattleSessionRow = {
   skillCooldown: number;
   combatLog: string;
   startedAt: string;
+  classKey: string;
 };
 
 const sessionSelect = `SELECT
@@ -108,7 +112,8 @@ const sessionSelect = `SELECT
   turn_number AS turnNumber,
   skill_cooldown AS skillCooldown,
   combat_log AS combatLog,
-  started_at AS startedAt
+  started_at AS startedAt,
+  class_key AS classKey
 FROM dungeon_battle_sessions
 WHERE id = 1`;
 
@@ -270,6 +275,10 @@ export async function getActiveDungeonBattle(
     dungeonName: row.dungeonName,
     difficulty: row.difficulty,
     bossName: getDungeonDefinition(row.dungeonKey).bossName,
+    classKey: row.classKey,
+    className: isStarterClassKey(row.classKey)
+      ? getStarterClass(row.classKey).name
+      : 'Unawakened',
     energyCost: row.energyCost,
     isTrialEntry: row.energyCost === 0,
     snapshot,
@@ -288,7 +297,7 @@ export async function beginDungeonBattle(
 
   const dungeon = getDungeonDefinition(dungeonKey);
   const createSession = async (txn: SQLiteDatabase) => {
-    const [energyAvailable, attemptsRow, progress, equipmentBonuses, eventIdRow] =
+    const [energyAvailable, attemptsRow, progress, equipmentBonuses, classRow, eventIdRow] =
       await Promise.all([
       getDungeonEnergyAvailable(txn),
       txn.getFirstAsync<TotalRow>(
@@ -297,6 +306,9 @@ export async function beginDungeonBattle(
       ),
       getPlayerProgress(txn),
       getEquippedCombatBonuses(txn),
+      txn.getFirstAsync<{ classKey: string }>(
+        'SELECT active_class_key AS classKey FROM player_class_state WHERE id = 1',
+      ),
       txn.getFirstAsync<{ eventId: string }>('SELECT lower(hex(randomblob(16))) AS eventId'),
     ]);
     const isTrialEntry = (attemptsRow?.total ?? 0) === 0;
@@ -327,8 +339,9 @@ export async function beginDungeonBattle(
          equipment_defense,
          turn_number,
          skill_cooldown,
-         combat_log
-       ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         combat_log,
+         class_key
+       ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       `${dungeon.key}-${eventId}`,
       dungeon.key,
       dungeon.name,
@@ -346,6 +359,7 @@ export async function beginDungeonBattle(
       snapshot.turnNumber,
       snapshot.skillCooldown,
       JSON.stringify(snapshot.log),
+      classRow?.classKey ?? 'unawakened',
     );
   };
 

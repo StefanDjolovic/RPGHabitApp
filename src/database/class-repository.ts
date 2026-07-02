@@ -1,0 +1,279 @@
+import type { SQLiteDatabase } from 'expo-sqlite';
+
+import {
+  getStarterClass,
+  isStarterClassKey,
+  type ClassSkillDefinition,
+  type StarterClassDefinition,
+  type StarterClassKey,
+} from '@/src/classes/class-catalog';
+import { getPlayerProgress } from '@/src/progression/player-progression';
+
+export const AWAKENING_LEVEL = 10;
+
+export type UserClassProgress = {
+  class: StarterClassDefinition;
+  masteryXp: number;
+  masteryLevel: number;
+  unlockedAt: string;
+  active: boolean;
+};
+
+export type PlayerClassState = {
+  eligible: boolean;
+  awakened: boolean;
+  activeClass: StarterClassDefinition | null;
+  activeSkills: ClassSkillDefinition[];
+  masteryXp: number;
+  masteryLevel: number;
+  awakenedAt: string | null;
+  freeChangeExpiresAt: string | null;
+  freeChangeAvailable: boolean;
+  freeChangeDaysRemaining: number;
+  unlockedClasses: UserClassProgress[];
+};
+
+type ClassStateRow = {
+  activeClassKey: string;
+  awakenedAt: string;
+  freeChangeExpiresAt: string;
+  freeChangeAvailable: number;
+  freeChangeDaysRemaining: number;
+};
+
+type UserClassRow = {
+  classKey: string;
+  masteryXp: number;
+  unlockedAt: string;
+};
+
+type UserSkillRow = { skillKey: string };
+
+export const INITIAL_PLAYER_CLASS_STATE: PlayerClassState = {
+  eligible: false,
+  awakened: false,
+  activeClass: null,
+  activeSkills: [],
+  masteryXp: 0,
+  masteryLevel: 0,
+  awakenedAt: null,
+  freeChangeExpiresAt: null,
+  freeChangeAvailable: false,
+  freeChangeDaysRemaining: 0,
+  unlockedClasses: [],
+};
+
+function getMasteryLevel(masteryXp: number) {
+  return masteryXp <= 0 ? 1 : Math.min(100, Math.floor(Math.sqrt(masteryXp / 25)) + 1);
+}
+
+async function runInTransaction(db: SQLiteDatabase, task: (txn: SQLiteDatabase) => Promise<void>) {
+  if (process.env.EXPO_OS === 'web') {
+    await db.withTransactionAsync(() => task(db));
+  } else {
+    await db.withExclusiveTransactionAsync(task);
+  }
+}
+
+async function createEventId(db: SQLiteDatabase) {
+  const row = await db.getFirstAsync<{ eventId: string }>(
+    'SELECT lower(hex(randomblob(16))) AS eventId',
+  );
+  if (!row?.eventId) throw new Error('Could not create a class event.');
+  return row.eventId;
+}
+
+async function unlockStarterSkills(
+  db: SQLiteDatabase,
+  classKey: StarterClassKey,
+) {
+  const definition = getStarterClass(classKey);
+  for (const skill of definition.starterSkills) {
+    await db.runAsync(
+      `INSERT OR IGNORE INTO user_skills (
+         skill_key,
+         class_key,
+         skill_type,
+         is_equipped,
+         slot_order
+       ) VALUES (?, ?, ?, ?, ?)`,
+      skill.key,
+      classKey,
+      skill.type,
+      skill.equippedByDefault ? 1 : 0,
+      skill.slotOrder,
+    );
+  }
+}
+
+export async function getPlayerClassState(db: SQLiteDatabase): Promise<PlayerClassState> {
+  const [progress, stateRow, classRows] = await Promise.all([
+    getPlayerProgress(db),
+    db.getFirstAsync<ClassStateRow>(
+      `SELECT
+         active_class_key AS activeClassKey,
+         awakened_at AS awakenedAt,
+         free_change_expires_at AS freeChangeExpiresAt,
+         CASE
+           WHEN free_change_used = 0 AND free_change_expires_at > CURRENT_TIMESTAMP THEN 1
+           ELSE 0
+         END AS freeChangeAvailable,
+         MAX(
+           0,
+           CAST((julianday(free_change_expires_at) - julianday('now')) + 0.999 AS INTEGER)
+         ) AS freeChangeDaysRemaining
+       FROM player_class_state
+       WHERE id = 1`,
+    ),
+    db.getAllAsync<UserClassRow>(
+      `SELECT
+         class_key AS classKey,
+         mastery_xp AS masteryXp,
+         unlocked_at AS unlockedAt
+       FROM user_classes
+       ORDER BY unlocked_at ASC`,
+    ),
+  ]);
+
+  if (!stateRow) {
+    return {
+      ...INITIAL_PLAYER_CLASS_STATE,
+      eligible: progress.level >= AWAKENING_LEVEL,
+    };
+  }
+
+  const activeClass = getStarterClass(stateRow.activeClassKey);
+  const activeClassRow = classRows.find((row) => row.classKey === activeClass.key);
+  const skillRows = await db.getAllAsync<UserSkillRow>(
+    `SELECT skill_key AS skillKey
+     FROM user_skills
+     WHERE class_key = ?
+     ORDER BY skill_type ASC, slot_order ASC, unlocked_at ASC`,
+    activeClass.key,
+  );
+  const unlockedSkillKeys = new Set(skillRows.map((row) => row.skillKey));
+  const masteryXp = Math.max(0, activeClassRow?.masteryXp ?? 0);
+
+  return {
+    eligible: true,
+    awakened: true,
+    activeClass,
+    activeSkills: activeClass.starterSkills.filter((skill) => unlockedSkillKeys.has(skill.key)),
+    masteryXp,
+    masteryLevel: getMasteryLevel(masteryXp),
+    awakenedAt: stateRow.awakenedAt,
+    freeChangeExpiresAt: stateRow.freeChangeExpiresAt,
+    freeChangeAvailable: stateRow.freeChangeAvailable === 1,
+    freeChangeDaysRemaining: stateRow.freeChangeDaysRemaining,
+    unlockedClasses: classRows
+      .filter((row) => isStarterClassKey(row.classKey))
+      .map((row) => ({
+        class: getStarterClass(row.classKey),
+        masteryXp: Math.max(0, row.masteryXp),
+        masteryLevel: getMasteryLevel(row.masteryXp),
+        unlockedAt: row.unlockedAt,
+        active: row.classKey === activeClass.key,
+      })),
+  };
+}
+
+export async function awakenPlayer(db: SQLiteDatabase, classKey: StarterClassKey) {
+  if (!isStarterClassKey(classKey)) throw new Error('Unknown starter class.');
+
+  await runInTransaction(db, async (txn) => {
+    const [progress, existingState, eventId] = await Promise.all([
+      getPlayerProgress(txn),
+      txn.getFirstAsync<{ id: number }>('SELECT id FROM player_class_state WHERE id = 1'),
+      createEventId(txn),
+    ]);
+    if (progress.level < AWAKENING_LEVEL) {
+      throw new Error(`Reach level ${AWAKENING_LEVEL} to begin Awakening.`);
+    }
+    if (existingState) throw new Error('Awakening has already been completed.');
+
+    await txn.runAsync(
+      `INSERT INTO user_classes (class_key)
+       VALUES (?)`,
+      classKey,
+    );
+    await txn.runAsync(
+      `INSERT INTO player_class_state (
+         id,
+         active_class_key,
+         free_change_expires_at
+       ) VALUES (1, ?, datetime('now', '+7 days'))`,
+      classKey,
+    );
+    await unlockStarterSkills(txn, classKey);
+    await txn.runAsync(
+      `INSERT INTO class_change_events (
+         client_event_id,
+         previous_class_key,
+         next_class_key,
+         reason
+       ) VALUES (?, NULL, ?, 'initial')`,
+      `awakening-${eventId}`,
+      classKey,
+    );
+  });
+
+  return getPlayerClassState(db);
+}
+
+export async function changeClassDuringFreeWindow(
+  db: SQLiteDatabase,
+  classKey: StarterClassKey,
+) {
+  if (!isStarterClassKey(classKey)) throw new Error('Unknown starter class.');
+
+  await runInTransaction(db, async (txn) => {
+    const state = await txn.getFirstAsync<{
+      activeClassKey: string;
+      freeChangeAvailable: number;
+    }>(
+      `SELECT
+         active_class_key AS activeClassKey,
+         CASE
+           WHEN free_change_used = 0 AND free_change_expires_at > CURRENT_TIMESTAMP THEN 1
+           ELSE 0
+         END AS freeChangeAvailable
+       FROM player_class_state
+       WHERE id = 1`,
+    );
+    if (!state) throw new Error('Complete Awakening before changing class.');
+    if (state.activeClassKey === classKey) throw new Error('This class is already active.');
+    if (state.freeChangeAvailable !== 1) {
+      throw new Error('The free class change window has ended. A Reawakening Quest is required.');
+    }
+
+    const eventId = await createEventId(txn);
+    await txn.runAsync(
+      `INSERT INTO user_classes (class_key)
+       VALUES (?)
+       ON CONFLICT(class_key) DO UPDATE SET last_active_at = CURRENT_TIMESTAMP`,
+      classKey,
+    );
+    await unlockStarterSkills(txn, classKey);
+    await txn.runAsync(
+      `UPDATE player_class_state
+       SET active_class_key = ?,
+           free_change_used = 1,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = 1`,
+      classKey,
+    );
+    await txn.runAsync(
+      `INSERT INTO class_change_events (
+         client_event_id,
+         previous_class_key,
+         next_class_key,
+         reason
+       ) VALUES (?, ?, ?, 'free_change')`,
+      `class-change-${eventId}`,
+      state.activeClassKey,
+      classKey,
+    );
+  });
+
+  return getPlayerClassState(db);
+}

@@ -56,6 +56,10 @@ export default function RootLayout() {
             name="dungeon-run"
             options={{ animation: 'fade', gestureEnabled: false, headerShown: false }}
           />
+          <Stack.Screen
+            name="awakening"
+            options={{ animation: 'fade', gestureEnabled: false, headerShown: false }}
+          />
           <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Habit RPG' }} />
         </Stack>
         <StatusBar style="light" />

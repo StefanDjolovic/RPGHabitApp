@@ -1,6 +1,6 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 
-const DATABASE_VERSION = 20;
+const DATABASE_VERSION = 21;
 
 export async function migrateDatabase(db: SQLiteDatabase) {
   await db.execAsync('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
@@ -706,6 +706,55 @@ export async function migrateDatabase(db: SQLiteDatabase) {
         progress_at_unlock INTEGER NOT NULL,
         unlocked_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
       );
+    `);
+  }
+
+  if (currentVersion < 21) {
+    await db.execAsync(`
+      ALTER TABLE dungeon_battle_sessions
+        ADD COLUMN class_key TEXT NOT NULL DEFAULT 'unawakened';
+
+      CREATE TABLE IF NOT EXISTS player_class_state (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        active_class_key TEXT NOT NULL,
+        awakened_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        free_change_expires_at TEXT NOT NULL,
+        free_change_used INTEGER NOT NULL DEFAULT 0
+          CHECK (free_change_used IN (0, 1)),
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS user_classes (
+        class_key TEXT PRIMARY KEY,
+        mastery_xp INTEGER NOT NULL DEFAULT 0 CHECK (mastery_xp >= 0),
+        unlocked_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        last_active_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS user_skills (
+        skill_key TEXT PRIMARY KEY,
+        class_key TEXT NOT NULL,
+        skill_type TEXT NOT NULL CHECK (skill_type IN ('active', 'passive')),
+        is_equipped INTEGER NOT NULL DEFAULT 0 CHECK (is_equipped IN (0, 1)),
+        slot_order INTEGER,
+        unlocked_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (class_key) REFERENCES user_classes(class_key) ON DELETE CASCADE
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_user_skills_class
+        ON user_skills(class_key, skill_type, is_equipped);
+
+      CREATE TABLE IF NOT EXISTS class_change_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        client_event_id TEXT NOT NULL UNIQUE,
+        previous_class_key TEXT,
+        next_class_key TEXT NOT NULL,
+        reason TEXT NOT NULL CHECK (reason IN ('initial', 'free_change', 'reawakening')),
+        changed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_class_change_events_changed_at
+        ON class_change_events(changed_at);
     `);
   }
 

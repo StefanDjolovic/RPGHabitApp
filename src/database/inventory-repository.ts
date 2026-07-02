@@ -45,6 +45,7 @@ export type EquipmentLoadoutSlot = {
 export type InventoryOverview = {
   items: InventoryItem[];
   gold: number;
+  loadoutKey: string;
   loadout: EquipmentLoadoutSlot[];
 };
 
@@ -90,7 +91,18 @@ async function getEventId(db: SQLiteDatabase) {
   return row.eventId;
 }
 
-export async function getInventoryItems(db: SQLiteDatabase): Promise<InventoryItem[]> {
+async function getActiveLoadoutKey(db: SQLiteDatabase) {
+  const row = await db.getFirstAsync<{ classKey: string }>(
+    'SELECT active_class_key AS classKey FROM player_class_state WHERE id = 1',
+  );
+  return row?.classKey ?? UNAWAKENED_LOADOUT;
+}
+
+export async function getInventoryItems(
+  db: SQLiteDatabase,
+  requestedLoadoutKey?: string,
+): Promise<InventoryItem[]> {
+  const loadoutKey = requestedLoadoutKey ?? (await getActiveLoadoutKey(db));
   const rows = await db.getAllAsync<InventoryItemRow>(
     `SELECT
        ii.item_key AS itemKey,
@@ -107,7 +119,7 @@ export async function getInventoryItems(db: SQLiteDatabase): Promise<InventoryIt
      WHERE ii.quantity > 0
      GROUP BY ii.item_key
      ORDER BY ii.last_acquired_at DESC`,
-    UNAWAKENED_LOADOUT,
+    loadoutKey,
   );
 
   return rows
@@ -143,7 +155,11 @@ export async function getGoldBalance(db: SQLiteDatabase) {
 }
 
 export async function getInventoryOverview(db: SQLiteDatabase): Promise<InventoryOverview> {
-  const [items, gold] = await Promise.all([getInventoryItems(db), getGoldBalance(db)]);
+  const loadoutKey = await getActiveLoadoutKey(db);
+  const [items, gold] = await Promise.all([
+    getInventoryItems(db, loadoutKey),
+    getGoldBalance(db),
+  ]);
   const equippedBySlot = new Map<EquipmentSlotKey, InventoryItem>();
   for (const item of items) {
     for (const slot of item.equippedSlots) equippedBySlot.set(slot, item);
@@ -152,6 +168,7 @@ export async function getInventoryOverview(db: SQLiteDatabase): Promise<Inventor
   return {
     items,
     gold,
+    loadoutKey,
     loadout: equipmentSlots.map((slot) => ({
       ...slot,
       item: equippedBySlot.get(slot.key) ?? null,
@@ -266,7 +283,7 @@ export async function grantGold(
 export async function equipInventoryItem(
   db: SQLiteDatabase,
   itemKey: string,
-  loadoutKey = UNAWAKENED_LOADOUT,
+  requestedLoadoutKey?: string,
 ) {
   const definition = getItemDefinition(itemKey);
   const compatibleSlots = getCompatibleSlots(definition.slot);
@@ -275,6 +292,7 @@ export async function equipInventoryItem(
   }
 
   await runInTransaction(db, async (txn) => {
+    const loadoutKey = requestedLoadoutKey ?? (await getActiveLoadoutKey(txn));
     const quantityRow = await txn.getFirstAsync<{ quantity: number }>(
       'SELECT quantity FROM inventory_items WHERE item_key = ?',
       itemKey,
@@ -342,9 +360,10 @@ export async function equipInventoryItem(
 export async function unequipLoadoutSlot(
   db: SQLiteDatabase,
   slot: EquipmentSlotKey,
-  loadoutKey = UNAWAKENED_LOADOUT,
+  requestedLoadoutKey?: string,
 ) {
   await runInTransaction(db, async (txn) => {
+    const loadoutKey = requestedLoadoutKey ?? (await getActiveLoadoutKey(txn));
     const row = await txn.getFirstAsync<{ itemKey: string }>(
       `SELECT item_key AS itemKey
        FROM equipment_loadouts
@@ -511,8 +530,9 @@ export async function salvageEquipment(db: SQLiteDatabase, itemKey: string) {
 
 export async function getEquippedCombatBonuses(
   db: SQLiteDatabase,
-  loadoutKey = UNAWAKENED_LOADOUT,
+  requestedLoadoutKey?: string,
 ): Promise<EquipmentCombatBonuses> {
+  const loadoutKey = requestedLoadoutKey ?? (await getActiveLoadoutKey(db));
   const rows = await db.getAllAsync<{ itemKey: string; upgradeLevel: number }>(
     `SELECT
        el.item_key AS itemKey,

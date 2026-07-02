@@ -30,6 +30,11 @@ import {
   INITIAL_PLAYER_PROFILE,
   type PlayerProfile,
 } from '@/src/database/profile-repository';
+import {
+  getPlayerClassState,
+  INITIAL_PLAYER_CLASS_STATE,
+  type PlayerClassState,
+} from '@/src/database/class-repository';
 import { getActivityStreak } from '@/src/progression/activity-streak';
 import {
   getCharacterChronicle,
@@ -147,6 +152,8 @@ export default function ProfileScreen() {
   const db = useSQLiteContext();
   const [playerProgress, setPlayerProgress] = useState<PlayerProgress>(INITIAL_PLAYER_PROGRESS);
   const [playerProfile, setPlayerProfile] = useState<PlayerProfile>(INITIAL_PLAYER_PROFILE);
+  const [playerClassState, setPlayerClassState] =
+    useState<PlayerClassState>(INITIAL_PLAYER_CLASS_STATE);
   const [activityStreak, setActivityStreak] = useState(0);
   const [recentActivity, setRecentActivity] = useState<ActivitySummaryDay[]>([]);
   const [activityCalendar, setActivityCalendar] = useState<ActivitySummaryDay[]>([]);
@@ -164,6 +171,7 @@ export default function ProfileScreen() {
       const [
         progressSummary,
         profile,
+        classState,
         streak,
         activityDays,
         calendarDays,
@@ -174,6 +182,7 @@ export default function ProfileScreen() {
         await Promise.all([
           getPlayerProgress(db),
           getPlayerProfile(db),
+          getPlayerClassState(db),
           getActivityStreak(db),
           getRecentActivityDays(db),
           getActivityCalendarDays(db),
@@ -183,6 +192,7 @@ export default function ProfileScreen() {
         ]);
       setPlayerProgress(progressSummary);
       setPlayerProfile(profile);
+      setPlayerClassState(classState);
       setActivityStreak(streak);
       setRecentActivity(activityDays);
       setActivityCalendar(calendarDays);
@@ -298,7 +308,10 @@ export default function ProfileScreen() {
             </View>
             <View style={styles.identityText}>
               <Text style={styles.playerName}>{playerProfile.nickname}</Text>
-              <Text style={styles.rankTitle}>{playerProgress.rankLabel}</Text>
+              <Text style={styles.rankTitle}>
+                {playerProgress.rankLabel}
+                {playerClassState.activeClass ? ` - ${playerClassState.activeClass.name}` : ''}
+              </Text>
             </View>
           </View>
 
@@ -335,6 +348,75 @@ export default function ProfileScreen() {
               : 'The hunter has reached the level cap'}
           </Text>
         </LinearGradient>
+
+        {playerClassState.eligible ? (
+          playerClassState.activeClass ? (
+            <View
+              style={[
+                styles.classPanel,
+                { borderColor: `${playerClassState.activeClass.accent}66` },
+              ]}>
+              <View
+                style={[
+                  styles.classPanelIcon,
+                  { borderColor: `${playerClassState.activeClass.accent}77` },
+                ]}>
+                <MaterialCommunityIcons
+                  name={playerClassState.activeClass.icon}
+                  size={29}
+                  color={playerClassState.activeClass.accent}
+                />
+              </View>
+              <View style={styles.classPanelBody}>
+                <Text style={styles.classPanelEyebrow}>ACTIVE CLASS</Text>
+                <Text style={styles.classPanelTitle}>{playerClassState.activeClass.name}</Text>
+                <Text style={styles.classPanelMeta}>
+                  {playerClassState.activeClass.resource} - Mastery {playerClassState.masteryLevel}
+                </Text>
+                <View style={styles.classSkillRow}>
+                  {playerClassState.activeSkills.slice(0, 3).map((skill) => (
+                    <View key={skill.key} style={styles.classSkillBadge}>
+                      <Text numberOfLines={1} style={styles.classSkillText}>{skill.name}</Text>
+                    </View>
+                  ))}
+                </View>
+              </View>
+              <Pressable
+                accessibilityLabel={
+                  playerClassState.freeChangeAvailable ? 'Change active class' : 'View active class'
+                }
+                onPress={() => router.push('/awakening' as Href)}
+                style={({ pressed }) => [styles.classPanelButton, pressed && styles.buttonPressed]}>
+                <MaterialCommunityIcons
+                  name={playerClassState.freeChangeAvailable ? 'sync' : 'chevron-right'}
+                  size={19}
+                  color="#071018"
+                />
+              </Pressable>
+            </View>
+          ) : (
+            <LinearGradient
+              colors={['rgba(28, 57, 73, 0.98)', 'rgba(27, 22, 53, 0.98)']}
+              end={{ x: 1, y: 1 }}
+              start={{ x: 0, y: 0 }}
+              style={styles.classPanel}>
+              <View style={styles.classPanelIcon}>
+                <MaterialCommunityIcons name="star-four-points" size={29} color="#8DEAFF" />
+              </View>
+              <View style={styles.classPanelBody}>
+                <Text style={styles.classPanelEyebrow}>SYSTEM QUEST</Text>
+                <Text style={styles.classPanelTitle}>Awakening available</Text>
+                <Text style={styles.classPanelMeta}>Choose your first class at level 10.</Text>
+              </View>
+              <Pressable
+                accessibilityLabel="Begin Awakening"
+                onPress={() => router.push('/awakening' as Href)}
+                style={({ pressed }) => [styles.classPanelButton, pressed && styles.buttonPressed]}>
+                <MaterialCommunityIcons name="arrow-right" size={19} color="#071018" />
+              </Pressable>
+            </LinearGradient>
+          )
+        ) : null}
 
         <View style={styles.statGrid}>
           <View style={styles.statCard}>
@@ -963,6 +1045,44 @@ const styles = StyleSheet.create({
   progressTrack: { height: 8, borderRadius: 4, backgroundColor: '#11152A', overflow: 'hidden' },
   progressFill: { height: '100%', borderRadius: 4 },
   progressHint: { color: '#767E9C', fontSize: 10, marginTop: 9 },
+  classPanel: {
+    minHeight: 100,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 11,
+    padding: 12,
+    borderRadius: 8,
+    backgroundColor: '#0D121E',
+    borderWidth: 1,
+    borderColor: '#31566A',
+    marginBottom: 14,
+    overflow: 'hidden',
+  },
+  classPanelIcon: {
+    width: 50,
+    height: 50,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 8,
+    backgroundColor: '#111827',
+    borderWidth: 1,
+    borderColor: '#31566A',
+  },
+  classPanelBody: { flex: 1, minWidth: 0 },
+  classPanelEyebrow: { color: '#8DEAFF', fontSize: 7, fontWeight: '900', letterSpacing: 1.1 },
+  classPanelTitle: { color: '#F0F2FA', fontSize: 15, fontWeight: '900', marginTop: 2 },
+  classPanelMeta: { color: '#848DA3', fontSize: 9, fontWeight: '700', marginTop: 3 },
+  classSkillRow: { flexDirection: 'row', gap: 5, marginTop: 7, overflow: 'hidden' },
+  classSkillBadge: { maxWidth: 92, height: 20, justifyContent: 'center', paddingHorizontal: 6, borderRadius: 5, backgroundColor: '#151B2A' },
+  classSkillText: { color: '#99A3B8', fontSize: 7, fontWeight: '800' },
+  classPanelButton: {
+    width: 40,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 8,
+    backgroundColor: '#8DEAFF',
+  },
   statGrid: { flexDirection: 'row', gap: 10, marginBottom: 24 },
   statCard: {
     flex: 1,

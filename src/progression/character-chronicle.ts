@@ -1,6 +1,7 @@
 import type MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import type { SQLiteDatabase } from 'expo-sqlite';
 
+import { getStarterClass } from '@/src/classes/class-catalog';
 import { getItemDefinition, rarityMeta } from '@/src/inventory/item-catalog';
 import { getLevelProgress } from '@/src/progression/player-progression';
 
@@ -10,6 +11,7 @@ export type ChronicleEventType =
   | 'recovery'
   | 'boss'
   | 'dungeon'
+  | 'class'
   | 'loot';
 
 export type ChronicleEvent = {
@@ -44,6 +46,12 @@ type LootRow = {
   quantity: number;
   createdAt: string;
 };
+type ClassChangeRow = {
+  id: number;
+  nextClassKey: string;
+  reason: 'initial' | 'free_change' | 'reawakening';
+  changedAt: string;
+};
 
 function getLevelEvents(rows: XpTimelineRow[]) {
   const events: ChronicleEvent[] = [];
@@ -70,7 +78,8 @@ function getLevelEvents(rows: XpTimelineRow[]) {
 }
 
 export async function getCharacterChronicle(db: SQLiteDatabase): Promise<ChronicleEvent[]> {
-  const [profile, xpRows, recoveryRows, bossRows, dungeonRows, lootRows] = await Promise.all([
+  const [profile, xpRows, recoveryRows, bossRows, dungeonRows, lootRows, classRows] =
+    await Promise.all([
     db.getFirstAsync<ProfileCreatedRow>(
       'SELECT created_at AS createdAt FROM player_profile WHERE id = 1',
     ),
@@ -125,6 +134,14 @@ export async function getCharacterChronicle(db: SQLiteDatabase): Promise<Chronic
     db.getAllAsync<LootRow>(
       `SELECT id, item_key AS itemKey, quantity, created_at AS createdAt
        FROM loot_events`,
+    ),
+    db.getAllAsync<ClassChangeRow>(
+      `SELECT
+         id,
+         next_class_key AS nextClassKey,
+         reason,
+         changed_at AS changedAt
+       FROM class_change_events`,
     ),
   ]);
   const events = getLevelEvents(xpRows);
@@ -196,6 +213,19 @@ export async function getCharacterChronicle(db: SQLiteDatabase): Promise<Chronic
       occurredAt: loot.createdAt,
       icon: item.icon,
       accent: rarityMeta[item.rarity].color,
+    });
+  }
+
+  for (const classChange of classRows) {
+    const definition = getStarterClass(classChange.nextClassKey);
+    events.push({
+      id: `class-${classChange.id}`,
+      type: 'class',
+      title: classChange.reason === 'initial' ? 'Awakening completed' : 'Class path changed',
+      detail: `${definition.name} - ${definition.resource}`,
+      occurredAt: classChange.changedAt,
+      icon: definition.icon,
+      accent: definition.accent,
     });
   }
 

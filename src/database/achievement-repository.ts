@@ -64,6 +64,7 @@ export async function getAchievementSummary(
     blacksmithRow,
     equippedSlotRow,
     historicalItemRows,
+    classesUnlockedRow,
     recoveryRow,
     xpRow,
   ] = await Promise.all([
@@ -121,6 +122,7 @@ export async function getAchievementSummary(
       `SELECT DISTINCT item_key AS itemKey
        FROM loot_events`,
     ),
+    db.getFirstAsync<TotalRow>('SELECT COUNT(*) AS total FROM user_classes'),
     db.getFirstAsync<TotalRow>(
       'SELECT COUNT(*) AS total FROM recovery_quest_events',
     ),
@@ -150,6 +152,7 @@ export async function getAchievementSummary(
     equipmentSalvages: blacksmithRow?.salvages ?? 0,
     equippedSlots: equippedSlotRow?.total ?? 0,
     uniqueRarities,
+    classesUnlocked: classesUnlockedRow?.total ?? 0,
     recoveryCompletions: recoveryRow?.total ?? 0,
     playerLevel: getLevelProgress(Math.max(0, xpRow?.total ?? 0)).level,
   };

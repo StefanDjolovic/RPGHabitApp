@@ -5,10 +5,22 @@ export type ItemCategory = 'equipment' | 'material' | 'consumable';
 export type EquipmentSlot =
   | 'Main Hand'
   | 'Off-hand'
+  | 'Helmet'
+  | 'Chestplate'
   | 'Gloves'
+  | 'Leggings'
+  | 'Boots'
+  | 'Necklace'
   | 'Ring'
   | 'Material'
   | 'Consumable';
+
+export type EquipmentCombatBonus = {
+  maxHp?: number;
+  basicDamage?: number;
+  skillDamage?: number;
+  defense?: number;
+};
 
 export type ItemDefinition = {
   name: string;
@@ -17,6 +29,7 @@ export type ItemDefinition = {
   slot: EquipmentSlot;
   icon: keyof typeof MaterialCommunityIcons.glyphMap;
   description: string;
+  combatBonus?: EquipmentCombatBonus;
 };
 
 export type LootReward = {
@@ -57,6 +70,7 @@ export const itemCatalog = {
     slot: 'Gloves',
     icon: 'shield',
     description: 'Rough starter gear with a small defensive edge.',
+    combatBonus: { maxHp: 4, defense: 1 },
   },
   'focus-crystal': {
     name: 'Focus Crystal',
@@ -73,6 +87,7 @@ export const itemCatalog = {
     slot: 'Ring',
     icon: 'ring',
     description: 'A practice ring for the first awakened builds.',
+    combatBonus: { basicDamage: 1, skillDamage: 1 },
   },
   'ember-core': {
     name: 'Ember Core',

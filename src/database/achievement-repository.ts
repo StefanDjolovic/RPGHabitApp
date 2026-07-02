@@ -6,6 +6,7 @@ import {
   type AchievementMetric,
 } from '@/src/achievements/achievement-catalog';
 import { getActivityStreak } from '@/src/progression/activity-streak';
+import { getItemDefinition } from '@/src/inventory/item-catalog';
 import { getLevelProgress } from '@/src/progression/player-progression';
 
 export type AchievementProgress = AchievementDefinition & {
@@ -21,18 +22,31 @@ export type AchievementSummary = {
 };
 
 type TotalRow = { total: number };
+type CombatMetricRow = {
+  losses: number;
+  lowHealthWins: number;
+  flawlessClears: number;
+};
+type BlacksmithMetricRow = { upgrades: number; salvages: number };
+type ItemKeyRow = { itemKey: string };
+type UnlockedAchievementRow = { achievementKey: string };
 
 type AchievementMetrics = Record<AchievementMetric, number>;
 
-function toProgress(definition: AchievementDefinition, metrics: AchievementMetrics) {
-  const current = metrics[definition.metric];
+function toProgress(
+  definition: AchievementDefinition,
+  metrics: AchievementMetrics,
+  permanentlyUnlocked: boolean,
+) {
+  const metricCurrent = metrics[definition.metric];
+  const current = permanentlyUnlocked ? Math.max(metricCurrent, definition.target) : metricCurrent;
   const progress = Math.min(1, Math.max(0, current / definition.target));
 
   return {
     ...definition,
     current,
     progress,
-    unlocked: current >= definition.target,
+    unlocked: permanentlyUnlocked || current >= definition.target,
   };
 }
 
@@ -45,6 +59,11 @@ export async function getAchievementSummary(
     dailyClearRow,
     dungeonClearRow,
     inventoryRow,
+    combatRow,
+    equipmentEventRow,
+    blacksmithRow,
+    equippedSlotRow,
+    historicalItemRows,
     recoveryRow,
     xpRow,
   ] = await Promise.all([
@@ -68,6 +87,40 @@ export async function getAchievementSummary(
       `SELECT COALESCE(SUM(quantity), 0) AS total
        FROM inventory_items`,
     ),
+    db.getFirstAsync<CombatMetricRow>(
+      `SELECT
+         COALESCE(SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END), 0) AS losses,
+         COALESCE(SUM(CASE
+           WHEN status = 'cleared'
+             AND max_player_hp IS NOT NULL
+             AND player_hp_remaining * 5 <= max_player_hp
+           THEN 1 ELSE 0 END), 0) AS lowHealthWins,
+         COALESCE(SUM(CASE
+           WHEN status = 'cleared'
+             AND max_player_hp IS NOT NULL
+             AND damage_taken = 0
+           THEN 1 ELSE 0 END), 0) AS flawlessClears
+       FROM dungeon_runs`,
+    ),
+    db.getFirstAsync<TotalRow>(
+      `SELECT COUNT(*) AS total
+       FROM equipment_events
+       WHERE action = 'equip'`,
+    ),
+    db.getFirstAsync<BlacksmithMetricRow>(
+      `SELECT
+         COALESCE(SUM(CASE WHEN action = 'upgrade' THEN 1 ELSE 0 END), 0) AS upgrades,
+         COALESCE(SUM(CASE WHEN action = 'salvage' THEN 1 ELSE 0 END), 0) AS salvages
+       FROM blacksmith_events`,
+    ),
+    db.getFirstAsync<TotalRow>(
+      `SELECT COUNT(*) AS total
+       FROM equipment_loadouts`,
+    ),
+    db.getAllAsync<ItemKeyRow>(
+      `SELECT DISTINCT item_key AS itemKey
+       FROM loot_events`,
+    ),
     db.getFirstAsync<TotalRow>(
       'SELECT COUNT(*) AS total FROM recovery_quest_events',
     ),
@@ -79,16 +132,48 @@ export async function getAchievementSummary(
     ),
   ]);
 
+  const uniqueRarities = new Set(
+    historicalItemRows.map((row) => getItemDefinition(row.itemKey).rarity),
+  ).size;
+
   const metrics: AchievementMetrics = {
     questCompletions: questRow?.total ?? 0,
     activityStreak: streak,
     dailyClears: dailyClearRow?.total ?? 0,
     dungeonClears: dungeonClearRow?.total ?? 0,
+    combatLosses: combatRow?.losses ?? 0,
+    lowHealthWins: combatRow?.lowHealthWins ?? 0,
+    flawlessClears: combatRow?.flawlessClears ?? 0,
     inventoryItems: inventoryRow?.total ?? 0,
+    equipmentEquips: equipmentEventRow?.total ?? 0,
+    equipmentUpgrades: blacksmithRow?.upgrades ?? 0,
+    equipmentSalvages: blacksmithRow?.salvages ?? 0,
+    equippedSlots: equippedSlotRow?.total ?? 0,
+    uniqueRarities,
     recoveryCompletions: recoveryRow?.total ?? 0,
     playerLevel: getLevelProgress(Math.max(0, xpRow?.total ?? 0)).level,
   };
-  const achievements = achievementCatalog.map((definition) => toProgress(definition, metrics));
+
+  const unlockedRows = await db.getAllAsync<UnlockedAchievementRow>(
+    'SELECT achievement_key AS achievementKey FROM user_achievements',
+  );
+  const unlockedKeys = new Set(unlockedRows.map((row) => row.achievementKey));
+
+  for (const definition of achievementCatalog) {
+    const current = metrics[definition.metric];
+    if (current < definition.target || unlockedKeys.has(definition.key)) continue;
+    await db.runAsync(
+      `INSERT OR IGNORE INTO user_achievements (achievement_key, progress_at_unlock)
+       VALUES (?, ?)`,
+      definition.key,
+      current,
+    );
+    unlockedKeys.add(definition.key);
+  }
+
+  const achievements = achievementCatalog.map((definition) =>
+    toProgress(definition, metrics, unlockedKeys.has(definition.key)),
+  );
 
   return {
     unlockedCount: achievements.filter((achievement) => achievement.unlocked).length,

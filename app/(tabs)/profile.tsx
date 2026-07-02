@@ -426,7 +426,11 @@ export default function ProfileScreen() {
                   achievement.unlocked && { backgroundColor: `${achievement.accent}22` },
                 ]}>
                 <MaterialCommunityIcons
-                  name={achievement.icon}
+                  name={
+                    achievement.secret && !achievement.unlocked
+                      ? 'help-rhombus-outline'
+                      : achievement.icon
+                  }
                   size={21}
                   color={achievement.unlocked ? achievement.accent : '#777E9C'}
                 />
@@ -438,17 +442,27 @@ export default function ProfileScreen() {
                       styles.achievementTitle,
                       achievement.unlocked && styles.achievementTitleUnlocked,
                     ]}>
-                    {achievement.title}
+                    {achievement.secret && !achievement.unlocked
+                      ? 'Hidden Record'
+                      : achievement.title}
                   </Text>
                   <Text
                     style={[
                       styles.achievementStatus,
                       achievement.unlocked && { color: achievement.accent },
                     ]}>
-                    {achievement.unlocked ? 'UNLOCKED' : `${achievement.current}/${achievement.target}`}
+                    {achievement.unlocked
+                      ? 'UNLOCKED'
+                      : achievement.secret
+                        ? 'SECRET'
+                        : `${achievement.current}/${achievement.target}`}
                   </Text>
                 </View>
-                <Text style={styles.achievementDescription}>{achievement.description}</Text>
+                <Text style={styles.achievementDescription}>
+                  {achievement.secret && !achievement.unlocked
+                    ? 'Keep exploring to reveal this achievement.'
+                    : achievement.description}
+                </Text>
                 <View style={styles.achievementMiniTrack}>
                   <View
                     style={[

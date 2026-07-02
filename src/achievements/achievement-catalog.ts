@@ -5,7 +5,15 @@ export type AchievementMetric =
   | 'activityStreak'
   | 'dailyClears'
   | 'dungeonClears'
+  | 'combatLosses'
+  | 'lowHealthWins'
+  | 'flawlessClears'
   | 'inventoryItems'
+  | 'equipmentEquips'
+  | 'equipmentUpgrades'
+  | 'equipmentSalvages'
+  | 'equippedSlots'
+  | 'uniqueRarities'
   | 'recoveryCompletions'
   | 'playerLevel';
 
@@ -14,9 +22,11 @@ export type AchievementCategory =
   | 'Consistency'
   | 'Habit Mastery'
   | 'Dungeon'
+  | 'Combat'
   | 'Equipment'
   | 'Recovery'
-  | 'Growth';
+  | 'Growth'
+  | 'Secret';
 
 export type AchievementDefinition = {
   key: string;
@@ -27,6 +37,7 @@ export type AchievementDefinition = {
   target: number;
   icon: keyof typeof MaterialCommunityIcons.glyphMap;
   accent: string;
+  secret?: boolean;
 };
 
 export const achievementCatalog = [
@@ -49,6 +60,36 @@ export const achievementCatalog = [
     target: 10,
     icon: 'sword-cross',
     accent: '#B493FF',
+  },
+  {
+    key: 'quest-hunter',
+    title: 'Quest Hunter',
+    category: 'Habit Mastery',
+    description: 'Clear 100 total quests.',
+    metric: 'questCompletions',
+    target: 100,
+    icon: 'sword',
+    accent: '#7EE7FF',
+  },
+  {
+    key: 'relentless',
+    title: 'Relentless',
+    category: 'Habit Mastery',
+    description: 'Clear 1,000 total quests.',
+    metric: 'questCompletions',
+    target: 1000,
+    icon: 'shield-sword',
+    accent: '#B493FF',
+  },
+  {
+    key: 'living-legend',
+    title: 'Living Legend',
+    category: 'Habit Mastery',
+    description: 'Clear 10,000 total quests.',
+    metric: 'questCompletions',
+    target: 10000,
+    icon: 'crown',
+    accent: '#FFD27A',
   },
   {
     key: 'three-day-streak',
@@ -81,6 +122,48 @@ export const achievementCatalog = [
     accent: '#AE8AFF',
   },
   {
+    key: 'gate-veteran',
+    title: 'Gate Veteran',
+    category: 'Dungeon',
+    description: 'Clear 10 dungeon runs.',
+    metric: 'dungeonClears',
+    target: 10,
+    icon: 'gate-open',
+    accent: '#9D83F6',
+  },
+  {
+    key: 'battle-tested',
+    title: 'Battle Tested',
+    category: 'Combat',
+    description: 'Return after your first dungeon defeat.',
+    metric: 'combatLosses',
+    target: 1,
+    icon: 'shield-off-outline',
+    accent: '#E78AA5',
+  },
+  {
+    key: 'against-all-odds',
+    title: 'Against All Odds',
+    category: 'Secret',
+    description: 'Defeat a dungeon boss with 20% HP or less.',
+    metric: 'lowHealthWins',
+    target: 1,
+    icon: 'heart-flash',
+    accent: '#FF7F9F',
+    secret: true,
+  },
+  {
+    key: 'untouchable',
+    title: 'Untouchable',
+    category: 'Secret',
+    description: 'Clear a dungeon without taking damage.',
+    metric: 'flawlessClears',
+    target: 1,
+    icon: 'shield-star-outline',
+    accent: '#7EE7FF',
+    secret: true,
+  },
+  {
     key: 'first-spoils',
     title: 'First Spoils',
     category: 'Equipment',
@@ -89,6 +172,67 @@ export const achievementCatalog = [
     target: 1,
     icon: 'diamond',
     accent: '#68E1A8',
+  },
+  {
+    key: 'armed-and-ready',
+    title: 'Armed and Ready',
+    category: 'Equipment',
+    description: 'Equip your first piece of gear.',
+    metric: 'equipmentEquips',
+    target: 1,
+    icon: 'shield-sword-outline',
+    accent: '#68E1A8',
+  },
+  {
+    key: 'tempered-steel',
+    title: 'Tempered Steel',
+    category: 'Equipment',
+    description: 'Complete your first guaranteed upgrade.',
+    metric: 'equipmentUpgrades',
+    target: 1,
+    icon: 'hammer',
+    accent: '#FFD27A',
+  },
+  {
+    key: 'master-smith',
+    title: 'Master Smith',
+    category: 'Equipment',
+    description: 'Complete 10 equipment upgrades.',
+    metric: 'equipmentUpgrades',
+    target: 10,
+    icon: 'anvil',
+    accent: '#FFB66E',
+  },
+  {
+    key: 'nothing-wasted',
+    title: 'Nothing Wasted',
+    category: 'Equipment',
+    description: 'Salvage your first spare item.',
+    metric: 'equipmentSalvages',
+    target: 1,
+    icon: 'recycle',
+    accent: '#D98BA4',
+  },
+  {
+    key: 'full-kit',
+    title: 'Full Kit',
+    category: 'Equipment',
+    description: 'Fill every slot in one loadout.',
+    metric: 'equippedSlots',
+    target: 10,
+    icon: 'account-hard-hat-outline',
+    accent: '#61D4FF',
+  },
+  {
+    key: 'the-collector',
+    title: 'The Collector',
+    category: 'Secret',
+    description: 'Find an item from every available rarity.',
+    metric: 'uniqueRarities',
+    target: 4,
+    icon: 'diamond-stone',
+    accent: '#C68CFF',
+    secret: true,
   },
   {
     key: 'second-wind',

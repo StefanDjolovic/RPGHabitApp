@@ -1,6 +1,6 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 
-const DATABASE_VERSION = 18;
+const DATABASE_VERSION = 20;
 
 export async function migrateDatabase(db: SQLiteDatabase) {
   await db.execAsync('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
@@ -579,6 +579,133 @@ export async function migrateDatabase(db: SQLiteDatabase) {
       );
 
       COMMIT;
+    `);
+  }
+
+  if (currentVersion < 19) {
+    await db.execAsync(`
+      ALTER TABLE dungeon_battle_sessions
+        ADD COLUMN equipment_defense INTEGER NOT NULL DEFAULT 0
+        CHECK (equipment_defense >= 0);
+
+      CREATE TABLE IF NOT EXISTS equipment_progress (
+        item_key TEXT PRIMARY KEY,
+        upgrade_level INTEGER NOT NULL DEFAULT 0
+          CHECK (upgrade_level BETWEEN 0 AND 5),
+        is_locked INTEGER NOT NULL DEFAULT 0
+          CHECK (is_locked IN (0, 1)),
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (item_key) REFERENCES inventory_items(item_key) ON DELETE CASCADE
+      );
+
+      CREATE TABLE IF NOT EXISTS equipment_loadouts (
+        loadout_key TEXT NOT NULL,
+        slot TEXT NOT NULL,
+        item_key TEXT NOT NULL,
+        equipped_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (loadout_key, slot),
+        FOREIGN KEY (item_key) REFERENCES inventory_items(item_key) ON DELETE CASCADE
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_equipment_loadouts_item
+        ON equipment_loadouts(loadout_key, item_key);
+
+      CREATE TABLE IF NOT EXISTS gold_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        client_event_id TEXT NOT NULL UNIQUE,
+        amount INTEGER NOT NULL CHECK (amount != 0),
+        reason TEXT NOT NULL,
+        source_ref TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_gold_events_created_at
+        ON gold_events(created_at);
+
+      CREATE TABLE IF NOT EXISTS blacksmith_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        client_event_id TEXT NOT NULL UNIQUE,
+        action TEXT NOT NULL CHECK (action IN ('salvage', 'upgrade')),
+        item_key TEXT NOT NULL,
+        level_before INTEGER NOT NULL CHECK (level_before >= 0),
+        level_after INTEGER,
+        gold_delta INTEGER NOT NULL,
+        material_key TEXT,
+        material_delta INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      INSERT OR IGNORE INTO gold_events (
+        client_event_id,
+        amount,
+        reason,
+        source_ref,
+        created_at
+      )
+      SELECT
+        'legacy-dungeon-gold-' || id,
+        10,
+        'dungeon_clear',
+        client_run_id,
+        completed_at
+      FROM dungeon_runs
+      WHERE status = 'cleared';
+    `);
+  }
+
+  if (currentVersion < 20) {
+    await db.execAsync(`
+      ALTER TABLE dungeon_battle_sessions
+        ADD COLUMN damage_taken INTEGER NOT NULL DEFAULT 0
+        CHECK (damage_taken >= 0);
+
+      ALTER TABLE dungeon_runs
+        ADD COLUMN player_hp_remaining INTEGER;
+
+      ALTER TABLE dungeon_runs
+        ADD COLUMN max_player_hp INTEGER;
+
+      ALTER TABLE dungeon_runs
+        ADD COLUMN damage_taken INTEGER;
+
+      ALTER TABLE dungeon_runs
+        ADD COLUMN turns_taken INTEGER;
+
+      CREATE TABLE IF NOT EXISTS equipment_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        client_event_id TEXT NOT NULL UNIQUE,
+        action TEXT NOT NULL CHECK (action IN ('equip', 'unequip')),
+        item_key TEXT NOT NULL,
+        loadout_key TEXT NOT NULL,
+        slot TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_equipment_events_action
+        ON equipment_events(action, created_at);
+
+      INSERT OR IGNORE INTO equipment_events (
+        client_event_id,
+        action,
+        item_key,
+        loadout_key,
+        slot,
+        created_at
+      )
+      SELECT
+        'legacy-equip-' || loadout_key || '-' || slot,
+        'equip',
+        item_key,
+        loadout_key,
+        slot,
+        equipped_at
+      FROM equipment_loadouts;
+
+      CREATE TABLE IF NOT EXISTS user_achievements (
+        achievement_key TEXT PRIMARY KEY,
+        progress_at_unlock INTEGER NOT NULL,
+        unlocked_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
     `);
   }
 

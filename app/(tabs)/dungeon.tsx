@@ -242,9 +242,9 @@ export default function DungeonScreen() {
                   </Text>
                   <Text style={styles.runReward}>
                     {run.rewardName
-                      ? `${run.rewardQuantity ?? 1}x ${run.rewardName}`
+                      ? `${run.rewardQuantity ?? 1}x ${run.rewardName}  |  ${run.goldEarned} Gold`
                       : run.status === 'cleared'
-                        ? 'Loot stored'
+                        ? `Loot stored  |  ${run.goldEarned} Gold`
                         : 'No final chest'}
                   </Text>
                 </View>

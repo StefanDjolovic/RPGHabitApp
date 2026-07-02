@@ -2,6 +2,8 @@ import type { SQLiteDatabase } from 'expo-sqlite';
 
 import {
   consumeInventoryItem,
+  getEquippedCombatBonuses,
+  grantGold,
   grantInventoryItem,
 } from '@/src/database/inventory-repository';
 import { getDungeonDefinition } from '@/src/dungeon/dungeon-catalog';
@@ -30,6 +32,7 @@ export type DungeonRun = {
   rewardItemKey: string | null;
   rewardQuantity: number | null;
   rewardName: string | null;
+  goldEarned: number;
   completedAt: string;
 };
 
@@ -78,6 +81,8 @@ type DungeonBattleSessionRow = {
   skillDamage: number;
   potionHealing: number;
   enemyPower: number;
+  defense: number;
+  damageTaken: number;
   turnNumber: number;
   skillCooldown: number;
   combatLog: string;
@@ -98,6 +103,8 @@ const sessionSelect = `SELECT
   skill_damage AS skillDamage,
   potion_healing AS potionHealing,
   enemy_power AS enemyPower,
+  equipment_defense AS defense,
+  damage_taken AS damageTaken,
   turn_number AS turnNumber,
   skill_cooldown AS skillCooldown,
   combat_log AS combatLog,
@@ -122,6 +129,7 @@ function getSessionStats(row: DungeonBattleSessionRow): UnawakenedCombatStats {
     skillDamage: row.skillDamage,
     potionHealing: row.potionHealing,
     enemyPower: row.enemyPower,
+    defense: row.defense,
   };
 }
 
@@ -176,9 +184,15 @@ async function getRunById(db: SQLiteDatabase, runId: number) {
        energy_cost AS energyCost,
        reward_item_key AS rewardItemKey,
        reward_quantity AS rewardQuantity,
+       COALESCE((
+         SELECT SUM(ge.amount)
+         FROM gold_events ge
+         WHERE ge.reason = 'dungeon_clear'
+           AND ge.source_ref = dr.client_run_id
+       ), 0) AS goldEarned,
        completed_at AS completedAt
-     FROM dungeon_runs
-     WHERE id = ?`,
+     FROM dungeon_runs dr
+     WHERE dr.id = ?`,
     runId,
   );
   return row ? toDungeonRun(row) : null;
@@ -212,9 +226,15 @@ export async function getDungeonOverview(db: SQLiteDatabase): Promise<DungeonOve
          energy_cost AS energyCost,
          reward_item_key AS rewardItemKey,
          reward_quantity AS rewardQuantity,
+         COALESCE((
+           SELECT SUM(ge.amount)
+           FROM gold_events ge
+           WHERE ge.reason = 'dungeon_clear'
+             AND ge.source_ref = dr.client_run_id
+         ), 0) AS goldEarned,
          completed_at AS completedAt
-       FROM dungeon_runs
-       ORDER BY completed_at DESC, id DESC
+       FROM dungeon_runs dr
+       ORDER BY dr.completed_at DESC, dr.id DESC
        LIMIT 5`,
     ),
   ]);
@@ -268,13 +288,15 @@ export async function beginDungeonBattle(
 
   const dungeon = getDungeonDefinition(dungeonKey);
   const createSession = async (txn: SQLiteDatabase) => {
-    const [energyAvailable, attemptsRow, progress, eventIdRow] = await Promise.all([
+    const [energyAvailable, attemptsRow, progress, equipmentBonuses, eventIdRow] =
+      await Promise.all([
       getDungeonEnergyAvailable(txn),
       txn.getFirstAsync<TotalRow>(
         'SELECT COUNT(*) AS total FROM dungeon_runs WHERE dungeon_key = ?',
         dungeon.key,
       ),
       getPlayerProgress(txn),
+      getEquippedCombatBonuses(txn),
       txn.getFirstAsync<{ eventId: string }>('SELECT lower(hex(randomblob(16))) AS eventId'),
     ]);
     const isTrialEntry = (attemptsRow?.total ?? 0) === 0;
@@ -284,7 +306,7 @@ export async function beginDungeonBattle(
     if (energyAvailable < energyCost) throw new Error('Not enough Dungeon Energy.');
     if (!eventId) throw new Error('Could not create a dungeon battle.');
 
-    const stats = getUnawakenedCombatStats(progress);
+    const stats = getUnawakenedCombatStats(progress, equipmentBonuses);
     const snapshot = createCombatSnapshot(stats);
     await txn.runAsync(
       `INSERT INTO dungeon_battle_sessions (
@@ -302,10 +324,11 @@ export async function beginDungeonBattle(
          skill_damage,
          potion_healing,
          enemy_power,
+         equipment_defense,
          turn_number,
          skill_cooldown,
          combat_log
-       ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       `${dungeon.key}-${eventId}`,
       dungeon.key,
       dungeon.name,
@@ -319,6 +342,7 @@ export async function beginDungeonBattle(
       stats.skillDamage,
       stats.potionHealing,
       stats.enemyPower,
+      stats.defense,
       snapshot.turnNumber,
       snapshot.skillCooldown,
       JSON.stringify(snapshot.log),
@@ -350,10 +374,14 @@ async function finalizeDungeonBattle(
        difficulty,
        status,
        energy_cost,
-       reward_item_key,
-       reward_quantity,
-       started_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         reward_item_key,
+         reward_quantity,
+         started_at,
+         player_hp_remaining,
+         max_player_hp,
+         damage_taken,
+         turns_taken
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     row.clientRunId,
     row.dungeonKey,
     row.dungeonName,
@@ -363,6 +391,10 @@ async function finalizeDungeonBattle(
     reward?.itemKey ?? null,
     reward?.quantity ?? null,
     row.startedAt,
+    row.playerHp,
+    row.maxPlayerHp,
+    row.damageTaken,
+    row.turnNumber,
   );
 
   if (reward) {
@@ -373,6 +405,13 @@ async function finalizeDungeonBattle(
       'dungeon_run',
       row.clientRunId,
       `dungeon-loot-${row.clientRunId}`,
+    );
+    await grantGold(
+      txn,
+      12,
+      'dungeon_clear',
+      row.clientRunId,
+      `dungeon-gold-${row.clientRunId}`,
     );
   }
 
@@ -408,6 +447,7 @@ export async function performDungeonBattleAction(
              enemy_hp = ?,
              turn_number = ?,
              skill_cooldown = ?,
+             damage_taken = damage_taken + ?,
              combat_log = ?,
              updated_at = CURRENT_TIMESTAMP
          WHERE id = 1`,
@@ -415,6 +455,7 @@ export async function performDungeonBattleAction(
         resolution.snapshot.enemyHp,
         resolution.snapshot.turnNumber,
         resolution.snapshot.skillCooldown,
+        resolution.enemyDamage,
         JSON.stringify(resolution.snapshot.log),
       );
       return;
@@ -422,7 +463,14 @@ export async function performDungeonBattleAction(
 
     completedRunId = await finalizeDungeonBattle(
       txn,
-      row,
+      {
+        ...row,
+        playerHp: resolution.snapshot.playerHp,
+        enemyHp: resolution.snapshot.enemyHp,
+        turnNumber: resolution.snapshot.turnNumber,
+        skillCooldown: resolution.snapshot.skillCooldown,
+        damageTaken: row.damageTaken + resolution.enemyDamage,
+      },
       resolution.outcome === 'cleared' ? 'cleared' : 'failed',
     );
   };

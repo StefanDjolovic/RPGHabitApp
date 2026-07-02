@@ -359,7 +359,7 @@ export default function DungeonRunScreen() {
           <Text style={styles.resultDescription}>
             {outcome === 'cleared'
               ? completedRun?.rewardName
-                ? `${completedRun.rewardQuantity ?? 1}x ${completedRun.rewardName} was added to Inventory.`
+                ? `${completedRun.rewardQuantity ?? 1}x ${completedRun.rewardName} and ${completedRun.goldEarned} Gold were added to Inventory.`
                 : 'The final chest was added to Inventory.'
               : 'Your habits, Player EXP, stats and streaks remain unchanged.'}
           </Text>

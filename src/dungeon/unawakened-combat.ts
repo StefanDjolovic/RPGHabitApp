@@ -24,6 +24,14 @@ export type UnawakenedCombatStats = {
   skillDamage: number;
   potionHealing: number;
   enemyPower: number;
+  defense: number;
+};
+
+export type CombatEquipmentBonuses = {
+  maxHp: number;
+  basicDamage: number;
+  skillDamage: number;
+  defense: number;
 };
 
 export type EnemyIntent = {
@@ -54,7 +62,10 @@ function getAttributePoints(progress: PlayerProgress, attribute: keyof PlayerPro
   );
 }
 
-export function getUnawakenedCombatStats(progress: PlayerProgress): UnawakenedCombatStats {
+export function getUnawakenedCombatStats(
+  progress: PlayerProgress,
+  equipment: CombatEquipmentBonuses = { maxHp: 0, basicDamage: 0, skillDamage: 0, defense: 0 },
+): UnawakenedCombatStats {
   const strength = getAttributePoints(progress, 'strength');
   const intelligence = getAttributePoints(progress, 'intelligence');
   const discipline = getAttributePoints(progress, 'discipline');
@@ -62,12 +73,14 @@ export function getUnawakenedCombatStats(progress: PlayerProgress): UnawakenedCo
   const creativity = getAttributePoints(progress, 'creativity');
 
   return {
-    maxPlayerHp: 72 + progress.level * 2 + vitality * 4,
+    maxPlayerHp: 72 + progress.level * 2 + vitality * 4 + equipment.maxHp,
     maxEnemyHp: 68 + progress.level * 3,
-    basicDamage: 9 + Math.floor(strength * 1.5) + Math.floor(discipline * 0.5),
-    skillDamage: 15 + intelligence + creativity,
+    basicDamage:
+      9 + Math.floor(strength * 1.5) + Math.floor(discipline * 0.5) + equipment.basicDamage,
+    skillDamage: 15 + intelligence + creativity + equipment.skillDamage,
     potionHealing: 24 + vitality * 2,
     enemyPower: Math.floor(Math.max(0, progress.level - 1) / 5),
+    defense: equipment.defense,
   };
 }
 
@@ -161,7 +174,8 @@ export function resolveCombatAction(
   }
 
   const intent = getEnemyIntent(snapshot.turnNumber, stats.enemyPower);
-  enemyDamage = action === 'defend' ? Math.ceil(intent.damage * 0.35) : intent.damage;
+  const damageAfterDefense = Math.max(0, intent.damage - stats.defense);
+  enemyDamage = action === 'defend' ? Math.ceil(damageAfterDefense * 0.35) : damageAfterDefense;
   playerHp = Math.max(0, playerHp - enemyDamage);
 
   entries.push({

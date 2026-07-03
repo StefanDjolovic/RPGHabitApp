@@ -1,6 +1,6 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 
-const DATABASE_VERSION = 23;
+const DATABASE_VERSION = 25;
 
 export async function migrateDatabase(db: SQLiteDatabase) {
   await db.execAsync('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
@@ -812,6 +812,71 @@ export async function migrateDatabase(db: SQLiteDatabase) {
 
       CREATE INDEX IF NOT EXISTS idx_skill_loadout_events_class
         ON skill_loadout_events(class_key, created_at);
+    `);
+  }
+
+  if (currentVersion < 24) {
+    await db.execAsync(`
+      ALTER TABLE dungeon_battle_sessions
+        ADD COLUMN player_statuses TEXT NOT NULL DEFAULT '[]';
+
+      ALTER TABLE dungeon_battle_sessions
+        ADD COLUMN enemy_statuses TEXT NOT NULL DEFAULT '[]';
+    `);
+  }
+
+  if (currentVersion < 25) {
+    await db.execAsync(`
+      ALTER TABLE dungeon_battle_sessions
+        ADD COLUMN room_index INTEGER NOT NULL DEFAULT 4 CHECK (room_index BETWEEN 1 AND 4);
+
+      ALTER TABLE dungeon_battle_sessions
+        ADD COLUMN room_type TEXT NOT NULL DEFAULT 'boss'
+        CHECK (room_type IN ('combat', 'path_choice', 'event', 'elite', 'boss_ready', 'boss'));
+
+      ALTER TABLE dungeon_battle_sessions
+        ADD COLUMN route_key TEXT CHECK (route_key IN ('safe', 'risky'));
+
+      ALTER TABLE dungeon_battle_sessions
+        ADD COLUMN rooms_cleared INTEGER NOT NULL DEFAULT 0 CHECK (rooms_cleared BETWEEN 0 AND 4);
+
+      ALTER TABLE dungeon_battle_sessions
+        ADD COLUMN enemy_name TEXT NOT NULL DEFAULT 'Cinder Warden';
+
+      ALTER TABLE dungeon_battle_sessions
+        ADD COLUMN boss_max_enemy_hp INTEGER NOT NULL DEFAULT 1 CHECK (boss_max_enemy_hp > 0);
+
+      ALTER TABLE dungeon_battle_sessions
+        ADD COLUMN turns_elapsed INTEGER NOT NULL DEFAULT 0 CHECK (turns_elapsed >= 0);
+
+      ALTER TABLE dungeon_battle_sessions
+        ADD COLUMN interim_gold INTEGER NOT NULL DEFAULT 0 CHECK (interim_gold >= 0);
+
+      ALTER TABLE dungeon_runs
+        ADD COLUMN route_key TEXT CHECK (route_key IN ('safe', 'risky'));
+
+      ALTER TABLE dungeon_runs
+        ADD COLUMN rooms_cleared INTEGER NOT NULL DEFAULT 1 CHECK (rooms_cleared BETWEEN 0 AND 4);
+
+      ALTER TABLE dungeon_runs
+        ADD COLUMN interim_gold INTEGER NOT NULL DEFAULT 0 CHECK (interim_gold >= 0);
+
+      CREATE TABLE IF NOT EXISTS dungeon_room_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        client_event_id TEXT NOT NULL UNIQUE,
+        client_run_id TEXT NOT NULL,
+        room_index INTEGER NOT NULL CHECK (room_index BETWEEN 1 AND 4),
+        room_type TEXT NOT NULL,
+        route_key TEXT,
+        outcome TEXT NOT NULL CHECK (outcome IN ('cleared', 'resolved')),
+        gold_earned INTEGER NOT NULL DEFAULT 0 CHECK (gold_earned >= 0),
+        item_key TEXT,
+        item_quantity INTEGER NOT NULL DEFAULT 0 CHECK (item_quantity >= 0),
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_dungeon_room_events_run
+        ON dungeon_room_events(client_run_id, room_index);
     `);
   }
 

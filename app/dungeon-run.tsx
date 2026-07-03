@@ -17,12 +17,19 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import {
+  chooseDungeonPath,
+  continueDungeonRoute,
   fleeDungeonBattle,
   getActiveDungeonBattle,
   performDungeonBattleAction,
   type DungeonBattle,
+  type DungeonPath,
   type DungeonRun,
 } from '@/src/database/dungeon-repository';
+import {
+  combatStatusCatalog,
+  type CombatStatus,
+} from '@/src/dungeon/combat-statuses';
 import type { CombatAction } from '@/src/dungeon/unawakened-combat';
 
 type BattleOutcome = 'cleared' | 'failed' | 'fled' | null;
@@ -58,6 +65,84 @@ function HealthBar({
   return (
     <View style={styles.healthTrack}>
       <View style={[styles.healthFill, { width: `${ratio * 100}%`, backgroundColor: color }]} />
+    </View>
+  );
+}
+
+function CombatStatusRow({ statuses }: { statuses: CombatStatus[] }) {
+  if (statuses.length === 0) return null;
+
+  return (
+    <View style={styles.statusRow}>
+      {statuses.map((status) => {
+        const definition = combatStatusCatalog[status.type];
+        return (
+          <View
+            key={status.type}
+            style={[styles.statusBadge, { borderColor: `${definition.accent}66` }]}>
+            <MaterialCommunityIcons
+              color={definition.accent}
+              name={definition.icon}
+              size={12}
+            />
+            <Text style={[styles.statusName, { color: definition.accent }]}>
+              {definition.label}
+            </Text>
+            <Text style={styles.statusValue}>
+              {status.type === 'barrier' ? status.potency : `${status.turns}T`}
+            </Text>
+          </View>
+        );
+      })}
+    </View>
+  );
+}
+
+function DungeonRouteProgress({ battle }: { battle: DungeonBattle }) {
+  const routeLabels = [
+    'Combat',
+    battle.routeKey === 'safe' ? 'Rest' : battle.routeKey === 'risky' ? 'Treasure' : 'Fork',
+    battle.routeKey === 'safe' ? 'Event' : battle.routeKey === 'risky' ? 'Elite' : 'Unknown',
+    'Boss',
+  ];
+  const routeIcons: (keyof typeof MaterialCommunityIcons.glyphMap)[] = [
+    'sword',
+    battle.routeKey === 'safe' ? 'campfire' : battle.routeKey === 'risky' ? 'treasure-chest' : 'source-fork',
+    battle.routeKey === 'safe' ? 'star-four-points-outline' : 'skull-crossbones-outline',
+    'crown-outline',
+  ];
+
+  return (
+    <View style={styles.routeMap}>
+      {routeLabels.map((label, index) => {
+        const roomNumber = index + 1;
+        const complete = roomNumber <= battle.roomsCleared;
+        const current = roomNumber === battle.roomIndex;
+        return (
+          <View key={roomNumber} style={styles.routeStepWrap}>
+            {index > 0 ? (
+              <View style={[styles.routeLine, complete && styles.routeLineComplete]} />
+            ) : null}
+            <View style={styles.routeStep}>
+              <View
+                style={[
+                  styles.routeNode,
+                  complete && styles.routeNodeComplete,
+                  current && styles.routeNodeCurrent,
+                ]}>
+                <MaterialCommunityIcons
+                  color={complete ? '#071018' : current ? '#FFD27A' : '#626A80'}
+                  name={complete ? 'check' : routeIcons[index]}
+                  size={14}
+                />
+              </View>
+              <Text numberOfLines={1} style={[styles.routeLabel, current && styles.routeLabelCurrent]}>
+                {label}
+              </Text>
+            </View>
+          </View>
+        );
+      })}
     </View>
   );
 }
@@ -127,7 +212,11 @@ export default function DungeonRunScreen() {
     setErrorMessage('');
     try {
       const result = await performDungeonBattleAction(db, action, skillKey);
-      if (result.outcome === 'active') {
+      if (
+        result.outcome === 'active' ||
+        result.outcome === 'path-choice' ||
+        result.outcome === 'room-cleared'
+      ) {
         setBattle(result.battle);
         if (process.env.EXPO_OS === 'ios') {
           void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -146,6 +235,35 @@ export default function DungeonRunScreen() {
       }
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'The action could not be completed.');
+    } finally {
+      setActing(false);
+    }
+  };
+
+  const choosePath = async (path: DungeonPath) => {
+    if (acting) return;
+    setActing(true);
+    setErrorMessage('');
+    try {
+      setBattle(await chooseDungeonPath(db, path));
+      if (process.env.EXPO_OS === 'ios') {
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      }
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'The path could not be opened.');
+    } finally {
+      setActing(false);
+    }
+  };
+
+  const continueRoute = async () => {
+    if (acting) return;
+    setActing(true);
+    setErrorMessage('');
+    try {
+      setBattle(await continueDungeonRoute(db));
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'The next room could not be opened.');
     } finally {
       setActing(false);
     }
@@ -207,18 +325,120 @@ export default function DungeonRunScreen() {
         </Pressable>
         <View style={styles.topBarTitle}>
           <Text style={styles.systemLabel}>
-            {battle ? `${battle.className.toUpperCase()} COMBAT` : 'GATE COMBAT'}
+            {battle
+              ? `${battle.className.toUpperCase()} - ROOM ${battle.roomIndex}/4`
+              : 'GATE COMBAT'}
           </Text>
           <Text style={styles.runName}>{battle?.dungeonName ?? 'Gate Result'}</Text>
         </View>
         <View style={styles.turnBadge}>
-          <Text style={styles.turnLabel}>TURN</Text>
-          <Text style={styles.turnValue}>{battle?.snapshot.turnNumber ?? '-'}</Text>
+          <Text style={styles.turnLabel}>
+            {battle && ['combat', 'elite', 'boss'].includes(battle.roomType) ? 'TURN' : 'ROOM'}
+          </Text>
+          <Text style={styles.turnValue}>
+            {battle
+              ? ['combat', 'elite', 'boss'].includes(battle.roomType)
+                ? battle.snapshot.turnNumber
+                : battle.roomIndex
+              : '-'}
+          </Text>
         </View>
       </View>
 
       {battle ? (
         <>
+          <DungeonRouteProgress battle={battle} />
+          {battle.roomType === 'path_choice' ? (
+            <View style={styles.pathPanel}>
+              <View style={styles.interludeIcon}>
+                <MaterialCommunityIcons color="#C8A8FF" name="source-fork" size={38} />
+              </View>
+              <Text style={styles.resultEyebrow}>THE FORKED HALL</Text>
+              <Text style={styles.resultTitle}>Choose your route</Text>
+              <Text style={styles.resultDescription}>
+                The quiet passage offers recovery. The burning passage holds treasure and an Elite guardian.
+              </Text>
+              <View style={styles.pathOptions}>
+                <Pressable
+                  disabled={acting}
+                  onPress={() => void choosePath('safe')}
+                  style={({ pressed }) => [styles.pathOption, pressed && styles.actionButtonPressed]}>
+                  <View style={[styles.pathOptionIcon, styles.pathOptionIconSafe]}>
+                    <MaterialCommunityIcons color="#68E1A8" name="campfire" size={25} />
+                  </View>
+                  <View style={styles.pathOptionBody}>
+                    <Text style={styles.pathOptionEyebrow}>SAFE PATH</Text>
+                    <Text style={styles.pathOptionTitle}>Rest and Event</Text>
+                    <Text style={styles.pathOptionDetail}>Restore 35% HP before the final encounter.</Text>
+                  </View>
+                  <MaterialCommunityIcons color="#8790A6" name="chevron-right" size={21} />
+                </Pressable>
+                <Pressable
+                  disabled={acting}
+                  onPress={() => void choosePath('risky')}
+                  style={({ pressed }) => [styles.pathOption, pressed && styles.actionButtonPressed]}>
+                  <View style={[styles.pathOptionIcon, styles.pathOptionIconRisky]}>
+                    <MaterialCommunityIcons color="#FFD166" name="treasure-chest" size={25} />
+                  </View>
+                  <View style={styles.pathOptionBody}>
+                    <Text style={[styles.pathOptionEyebrow, { color: '#FFD166' }]}>RISKY PATH</Text>
+                    <Text style={styles.pathOptionTitle}>Treasure and Elite</Text>
+                    <Text style={styles.pathOptionDetail}>Keep found loot even if the run later fails.</Text>
+                  </View>
+                  <MaterialCommunityIcons color="#8790A6" name="chevron-right" size={21} />
+                </Pressable>
+              </View>
+              <Pressable
+                disabled={acting}
+                onPress={confirmFlee}
+                style={({ pressed }) => [styles.interludeFleeButton, pressed && styles.buttonPressed]}>
+                <MaterialCommunityIcons color="#C87C96" name="exit-run" size={16} />
+                <Text style={styles.fleeText}>Leave Run</Text>
+              </Pressable>
+              {errorMessage ? <Text selectable style={styles.interludeError}>{errorMessage}</Text> : null}
+            </View>
+          ) : battle.roomType === 'event' || battle.roomType === 'boss_ready' ? (
+            <View style={styles.pathPanel}>
+              <View style={styles.interludeIcon}>
+                <MaterialCommunityIcons
+                  color={battle.roomType === 'event' ? '#68E1A8' : '#FFD166'}
+                  name={battle.roomType === 'event' ? 'star-four-points-outline' : 'sword-cross'}
+                  size={38}
+                />
+              </View>
+              <Text style={styles.resultEyebrow}>
+                {battle.roomType === 'event' ? 'WHISPERING SHRINE' : 'ELITE CLEARED'}
+              </Text>
+              <Text style={styles.resultTitle}>
+                {battle.roomType === 'event' ? 'A quiet cache remains' : 'The final gate opens'}
+              </Text>
+              <Text style={styles.resultDescription}>
+                {battle.roomType === 'event'
+                  ? 'The Rest Room restored your health. The shrine holds 2 Gold before the boss.'
+                  : `The Elite reward is secured. ${battle.interimGold} Gold and found materials remain yours even after defeat.`}
+              </Text>
+              <Pressable
+                disabled={acting}
+                onPress={() => void continueRoute()}
+                style={({ pressed }) => [styles.returnButton, pressed && styles.actionButtonPressed]}>
+                {acting ? (
+                  <ActivityIndicator color="#071018" />
+                ) : (
+                  <MaterialCommunityIcons color="#071018" name="gate" size={19} />
+                )}
+                <Text style={styles.returnButtonText}>Enter Boss Chamber</Text>
+              </Pressable>
+              <Pressable
+                disabled={acting}
+                onPress={confirmFlee}
+                style={({ pressed }) => [styles.interludeFleeButton, pressed && styles.buttonPressed]}>
+                <MaterialCommunityIcons color="#C87C96" name="exit-run" size={16} />
+                <Text style={styles.fleeText}>Leave Run</Text>
+              </Pressable>
+              {errorMessage ? <Text selectable style={styles.interludeError}>{errorMessage}</Text> : null}
+            </View>
+          ) : (
+            <>
           <LinearGradient
             colors={['#24172F', '#101422', '#090B13']}
             end={{ x: 1, y: 1 }}
@@ -232,15 +452,22 @@ export default function DungeonRunScreen() {
             <View style={styles.enemySigil}>
               <MaterialCommunityIcons name="fire" size={46} color="#FF8A6A" />
             </View>
-            <Text style={styles.enemyRank}>E-RANK BOSS</Text>
-            <Text style={styles.enemyName}>{battle.bossName}</Text>
+            <Text style={styles.enemyRank}>
+              {battle.roomType === 'boss'
+                ? 'E-RANK BOSS'
+                : battle.roomType === 'elite'
+                  ? 'ELITE ENCOUNTER'
+                  : 'NORMAL ENCOUNTER'}
+            </Text>
+            <Text style={styles.enemyName}>{battle.enemyName}</Text>
             <View style={styles.hpHeader}>
-              <Text style={styles.hpLabel}>WARDEN HP</Text>
+              <Text style={styles.hpLabel}>ENEMY HP</Text>
               <Text style={styles.hpValue}>
                 {battle.snapshot.enemyHp} / {battle.stats.maxEnemyHp}
               </Text>
             </View>
             <HealthBar current={battle.snapshot.enemyHp} maximum={battle.stats.maxEnemyHp} color="#FF786D" />
+            <CombatStatusRow statuses={battle.snapshot.enemyStatuses} />
           </LinearGradient>
 
           <View style={styles.intentPanel}>
@@ -288,6 +515,7 @@ export default function DungeonRunScreen() {
                 />
               </View>
             ) : null}
+            <CombatStatusRow statuses={battle.snapshot.playerStatuses} />
           </View>
 
           {errorMessage ? (
@@ -396,6 +624,8 @@ export default function DungeonRunScreen() {
             <MaterialCommunityIcons name="exit-run" size={17} color="#C87C96" />
             <Text style={styles.fleeText}>Flee</Text>
           </Pressable>
+            </>
+          )}
         </>
       ) : (
         <View style={styles.resultPanel}>
@@ -425,7 +655,7 @@ export default function DungeonRunScreen() {
               ? completedRun?.rewardName
                 ? `${completedRun.rewardQuantity ?? 1}x ${completedRun.rewardName}, ${completedRun.goldEarned} Gold and ${completedRun.masteryXpEarned} ${completedRun.className} Mastery XP were earned.`
                 : `The final chest and ${completedRun?.masteryXpEarned ?? 0} Class Mastery XP were earned.`
-              : `Your habits, Player EXP, stats and streaks remain unchanged. ${completedRun?.masteryXpEarned ?? 0} ${completedRun?.className ?? 'Class'} Mastery XP was earned for the attempt.`}
+              : `Your habits, Player EXP, stats and streaks remain unchanged.${(completedRun?.goldEarned ?? 0) > 0 ? ` ${completedRun?.goldEarned} found Gold remains in Inventory.` : ''} ${completedRun?.masteryXpEarned ?? 0} ${completedRun?.className ?? 'Class'} Mastery XP was earned for the attempt.`}
           </Text>
           <Pressable
             onPress={() => router.back()}
@@ -477,6 +707,102 @@ const styles = StyleSheet.create({
   },
   turnLabel: { color: '#737B94', fontSize: 7, fontWeight: '900' },
   turnValue: { color: '#E6E9F5', fontSize: 14, fontWeight: '900', fontVariant: ['tabular-nums'] },
+  routeMap: {
+    minHeight: 68,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    paddingHorizontal: 6,
+    paddingTop: 8,
+    borderRadius: 8,
+    backgroundColor: '#0B0E18',
+    borderWidth: 1,
+    borderColor: '#24293A',
+  },
+  routeStepWrap: { flex: 1, flexDirection: 'row', alignItems: 'flex-start' },
+  routeLine: {
+    position: 'absolute',
+    left: -18,
+    right: 28,
+    top: 15,
+    height: 2,
+    backgroundColor: '#292E40',
+  },
+  routeLineComplete: { backgroundColor: '#66D8ED' },
+  routeStep: { flex: 1, alignItems: 'center', gap: 5 },
+  routeNode: {
+    width: 30,
+    height: 30,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 15,
+    backgroundColor: '#151927',
+    borderWidth: 1,
+    borderColor: '#343A4E',
+  },
+  routeNodeComplete: { backgroundColor: '#66D8ED', borderColor: '#8DEAFF' },
+  routeNodeCurrent: { backgroundColor: '#2A2418', borderColor: '#8A7040' },
+  routeLabel: { color: '#626A80', fontSize: 7, fontWeight: '900' },
+  routeLabelCurrent: { color: '#FFD27A' },
+  pathPanel: {
+    flex: 1,
+    minHeight: 520,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 20,
+    borderRadius: 8,
+    backgroundColor: '#0C101B',
+    borderWidth: 1,
+    borderColor: '#2D3144',
+  },
+  interludeIcon: {
+    width: 78,
+    height: 78,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 39,
+    backgroundColor: '#171526',
+    borderWidth: 1,
+    borderColor: '#453B68',
+  },
+  pathOptions: { alignSelf: 'stretch', gap: 9, marginTop: 22 },
+  pathOption: {
+    minHeight: 88,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    padding: 11,
+    borderRadius: 8,
+    backgroundColor: '#111623',
+    borderWidth: 1,
+    borderColor: '#30374A',
+  },
+  pathOptionIcon: {
+    width: 46,
+    height: 46,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  pathOptionIconSafe: { backgroundColor: '#10251E', borderColor: '#285845' },
+  pathOptionIconRisky: { backgroundColor: '#282113', borderColor: '#67552D' },
+  pathOptionBody: { flex: 1, minWidth: 0 },
+  pathOptionEyebrow: { color: '#68E1A8', fontSize: 7, fontWeight: '900', letterSpacing: 1 },
+  pathOptionTitle: { color: '#EDF0FA', fontSize: 12, fontWeight: '900', marginTop: 2 },
+  pathOptionDetail: { color: '#7D859B', fontSize: 8, lineHeight: 12, fontWeight: '700', marginTop: 3 },
+  interludeError: { color: '#F1A7B9', fontSize: 9, fontWeight: '700', marginTop: 12, textAlign: 'center' },
+  interludeFleeButton: {
+    minHeight: 38,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 7,
+    alignSelf: 'stretch',
+    marginTop: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#4E293A',
+  },
   enemyStage: {
     minHeight: 245,
     alignItems: 'center',
@@ -568,6 +894,25 @@ const styles = StyleSheet.create({
   },
   resourceLabel: { color: '#8F96AA', fontSize: 8, fontWeight: '900', letterSpacing: 1.1 },
   resourceValue: { fontSize: 10, fontWeight: '900', fontVariant: ['tabular-nums'] },
+  statusRow: {
+    width: '100%',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 5,
+    marginTop: 8,
+  },
+  statusBadge: {
+    minHeight: 24,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 7,
+    borderRadius: 6,
+    backgroundColor: '#111522',
+    borderWidth: 1,
+  },
+  statusName: { fontSize: 7, fontWeight: '900' },
+  statusValue: { color: '#A4ABBD', fontSize: 7, fontWeight: '900', fontVariant: ['tabular-nums'] },
   errorBanner: {
     minHeight: 40,
     flexDirection: 'row',

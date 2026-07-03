@@ -1,5 +1,14 @@
-import type { PlayerProgress } from '@/src/progression/player-progression';
 import type { ClassCombatProfile } from '@/src/dungeon/class-combat';
+import {
+  advanceCombatStatuses,
+  applyCombatStatus,
+  combatStatusCatalog,
+  consumeBarrier,
+  getCombatStatusPotency,
+  hasCombatStatus,
+  type CombatStatus,
+} from '@/src/dungeon/combat-statuses';
+import type { PlayerProgress } from '@/src/progression/player-progression';
 
 export type CombatAction = 'attack' | 'skill' | 'defend' | 'item';
 export type CombatOutcome = 'active' | 'cleared' | 'failed';
@@ -16,6 +25,8 @@ export type CombatSnapshot = {
   turnNumber: number;
   skillCooldown: number;
   classResource: number;
+  playerStatuses: CombatStatus[];
+  enemyStatuses: CombatStatus[];
   log: CombatLogEntry[];
 };
 
@@ -54,8 +65,8 @@ export type CombatResolution = {
 const ENEMY_INTENT_CYCLE: Omit<EnemyIntent, 'damage'>[] = [
   { type: 'attack', name: 'Ashen Slash', detail: 'A direct blade strike.' },
   { type: 'charge', name: 'Gathering Cinders', detail: 'The Warden prepares a heavy blow.' },
-  { type: 'heavy', name: 'Cinder Breaker', detail: 'A powerful attack is incoming.' },
-  { type: 'attack', name: 'Ember Sweep', detail: 'A fast sweeping strike.' },
+  { type: 'heavy', name: 'Cinder Breaker', detail: 'Heavy damage and Weakened.' },
+  { type: 'attack', name: 'Ember Sweep', detail: 'A fast strike that inflicts Burn.' },
 ];
 
 function getAttributePoints(progress: PlayerProgress, attribute: keyof PlayerProgress['attributeXp']) {
@@ -107,6 +118,8 @@ export function createCombatSnapshot(
     turnNumber: 1,
     skillCooldown: 0,
     classResource: profile?.startingResource ?? 0,
+    playerStatuses: [],
+    enemyStatuses: [],
     log: [
       {
         id: 'system-entry',
@@ -122,7 +135,17 @@ function appendLog(snapshot: CombatSnapshot, entries: Omit<CombatLogEntry, 'id'>
     ...entry,
     id: `${snapshot.turnNumber}-${index}-${entry.tone}`,
   }));
-  return [...snapshot.log, ...nextEntries].slice(-6);
+  return [...snapshot.log, ...nextEntries].slice(-8);
+}
+
+function getModifiedDamage(
+  damage: number,
+  attackerStatuses: CombatStatus[],
+  defenderStatuses: CombatStatus[],
+) {
+  const weakened = getCombatStatusPotency(attackerStatuses, 'weakened');
+  const vulnerable = getCombatStatusPotency(defenderStatuses, 'vulnerable');
+  return Math.max(0, Math.round(damage * (1 - weakened / 100) * (1 + vulnerable / 100)));
 }
 
 export function resolveCombatAction(
@@ -131,6 +154,7 @@ export function resolveCombatAction(
   action: CombatAction,
   profile?: ClassCombatProfile,
   passiveSkillKeys: string[] = [],
+  enemyName = 'Cinder Warden',
 ): CombatResolution {
   if (snapshot.playerHp <= 0 || snapshot.enemyHp <= 0) {
     throw new Error('This battle has already ended.');
@@ -150,6 +174,8 @@ export function resolveCombatAction(
   let healing = 0;
   let skillCooldown = Math.max(0, snapshot.skillCooldown - 1);
   let classResource = snapshot.classResource;
+  let playerStatuses = snapshot.playerStatuses.map((status) => ({ ...status }));
+  let enemyStatuses = snapshot.enemyStatuses.map((status) => ({ ...status }));
   const entries: Omit<CombatLogEntry, 'id'>[] = [];
 
   if (action === 'attack') {
@@ -164,6 +190,7 @@ export function resolveCombatAction(
     } else if (passiveSkillKeys.includes('summoner-bonded-souls')) {
       playerDamage += Math.round(stats.skillDamage * 0.35);
     }
+    playerDamage = getModifiedDamage(playerDamage, playerStatuses, enemyStatuses);
     enemyHp = Math.max(0, enemyHp - playerDamage);
     entries.push({ message: `Basic Attack deals ${playerDamage} damage.`, tone: 'player' });
     if (profile?.resourceName) {
@@ -190,7 +217,25 @@ export function resolveCombatAction(
                   : stats.skillDamage;
       const passivePower = passiveSkillKeys.includes('mage-elemental-insight') ? 1.1 : 1;
       playerDamage = Math.round(baseSkillDamage * (profile?.skillPower ?? 1) * passivePower);
+      playerDamage = getModifiedDamage(playerDamage, playerStatuses, enemyStatuses);
       enemyHp = Math.max(0, enemyHp - playerDamage);
+      if (profile.skillStatus && enemyHp > 0) {
+        enemyStatuses = applyCombatStatus(enemyStatuses, profile.skillStatus);
+        entries.push({
+          message: `${combatStatusCatalog[profile.skillStatus.type].label} affects ${enemyName}.`,
+          tone: 'system',
+        });
+      }
+    } else if (profile?.skillEffect === 'barrier') {
+      const barrierStrength = Math.max(
+        10,
+        Math.round(stats.skillDamage * 0.75 + stats.defense * 2),
+      );
+      playerStatuses = applyCombatStatus(playerStatuses, {
+        type: 'barrier',
+        turns: 3,
+        potency: barrierStrength,
+      });
     } else if (profile?.skillEffect === 'recovery') {
       healing = Math.min(profile.skillHealing, stats.maxPlayerHp - playerHp);
       playerHp += healing;
@@ -230,7 +275,7 @@ export function resolveCombatAction(
   }
 
   if (enemyHp <= 0) {
-    entries.push({ message: 'The Cinder Warden collapses.', tone: 'system' });
+    entries.push({ message: `${enemyName} collapses.`, tone: 'system' });
     return {
       snapshot: {
         ...snapshot,
@@ -238,6 +283,8 @@ export function resolveCombatAction(
         playerHp,
         skillCooldown,
         classResource,
+        playerStatuses,
+        enemyStatuses,
         log: appendLog(snapshot, entries),
       },
       outcome: 'cleared',
@@ -248,22 +295,79 @@ export function resolveCombatAction(
   }
 
   const intent = getEnemyIntent(snapshot.turnNumber, stats.enemyPower);
-  const damageAfterDefense = Math.max(0, intent.damage - stats.defense);
-  let incomingMultiplier = action === 'defend' ? 0.35 : 1;
-  if (passiveSkillKeys.includes('guardian-unbroken')) incomingMultiplier *= 0.85;
-  if (action === 'skill') incomingMultiplier *= profile?.skillDefenseMultiplier ?? 1;
-  enemyDamage = Math.ceil(damageAfterDefense * incomingMultiplier);
-  playerHp = Math.max(0, playerHp - enemyDamage);
+  if (hasCombatStatus(enemyStatuses, 'stun')) {
+    entries.push({ message: `Stun interrupts ${enemyName}'s action.`, tone: 'system' });
+  } else {
+    const modifiedIntentDamage = getModifiedDamage(intent.damage, enemyStatuses, playerStatuses);
+    const damageAfterDefense = Math.max(0, modifiedIntentDamage - stats.defense);
+    let incomingMultiplier = action === 'defend' ? 0.35 : 1;
+    if (passiveSkillKeys.includes('guardian-unbroken')) incomingMultiplier *= 0.85;
+    if (action === 'skill') incomingMultiplier *= profile?.skillDefenseMultiplier ?? 1;
+    const barrierResult = consumeBarrier(
+      playerStatuses,
+      Math.ceil(damageAfterDefense * incomingMultiplier),
+    );
+    playerStatuses = barrierResult.statuses;
+    enemyDamage = barrierResult.damage;
+    playerHp = Math.max(0, playerHp - enemyDamage);
 
-  entries.push({
-    message:
-      intent.type === 'charge'
-        ? 'The Warden gathers cinders and deals no damage.'
-        : `${intent.name} deals ${enemyDamage} damage.`,
-    tone: 'enemy',
-  });
+    if (barrierResult.absorbed > 0) {
+      entries.push({
+        message: `Barrier absorbs ${barrierResult.absorbed} damage.`,
+        tone: 'system',
+      });
+    }
+    entries.push({
+      message:
+        intent.type === 'charge'
+          ? 'The Warden gathers cinders and deals no damage.'
+          : `${intent.name} deals ${enemyDamage} damage.`,
+      tone: 'enemy',
+    });
 
-  if (playerHp <= 0) {
+    if (enemyDamage > 0 && intent.name === 'Cinder Breaker') {
+      playerStatuses = applyCombatStatus(playerStatuses, {
+        type: 'weakened',
+        turns: 3,
+        potency: 25,
+      });
+      entries.push({ message: 'Cinder Breaker leaves you Weakened.', tone: 'enemy' });
+    } else if (enemyDamage > 0 && intent.name === 'Ember Sweep') {
+      playerStatuses = applyCombatStatus(playerStatuses, {
+        type: 'burn',
+        turns: 3,
+        potency: 3,
+      });
+      entries.push({ message: 'Ember Sweep inflicts Burn.', tone: 'enemy' });
+    }
+  }
+
+  const enemyStatusAdvance = advanceCombatStatuses(enemyStatuses);
+  const playerStatusAdvance = advanceCombatStatuses(playerStatuses);
+  enemyStatuses = enemyStatusAdvance.statuses;
+  playerStatuses = playerStatusAdvance.statuses;
+  enemyHp = Math.max(0, enemyHp - enemyStatusAdvance.damage);
+  playerHp = Math.max(0, playerHp - playerStatusAdvance.damage);
+  playerDamage += enemyStatusAdvance.damage;
+  enemyDamage += playerStatusAdvance.damage;
+
+  for (const tick of enemyStatusAdvance.ticks) {
+    entries.push({
+      message: `${combatStatusCatalog[tick.type].label} deals ${tick.damage} damage to ${enemyName}.`,
+      tone: 'system',
+    });
+  }
+  for (const tick of playerStatusAdvance.ticks) {
+    entries.push({
+      message: `${combatStatusCatalog[tick.type].label} deals ${tick.damage} damage to you.`,
+      tone: 'enemy',
+    });
+  }
+
+  const outcome: CombatOutcome = playerHp <= 0 ? 'failed' : enemyHp <= 0 ? 'cleared' : 'active';
+  if (outcome === 'cleared') {
+    entries.push({ message: `${enemyName} collapses.`, tone: 'system' });
+  } else if (outcome === 'failed') {
     entries.push({ message: 'Your gate trial has ended.', tone: 'system' });
   }
 
@@ -274,9 +378,11 @@ export function resolveCombatAction(
       turnNumber: snapshot.turnNumber + 1,
       skillCooldown,
       classResource,
+      playerStatuses,
+      enemyStatuses,
       log: appendLog(snapshot, entries),
     },
-    outcome: playerHp <= 0 ? 'failed' : 'active',
+    outcome,
     playerDamage,
     enemyDamage,
     healing,

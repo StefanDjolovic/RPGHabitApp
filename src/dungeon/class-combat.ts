@@ -1,4 +1,5 @@
 import { getStarterClass, isStarterClassKey } from '@/src/classes/class-catalog';
+import type { CombatStatus } from '@/src/dungeon/combat-statuses';
 
 export type ClassSkillCombatEffect = 'damage' | 'barrier' | 'recovery';
 
@@ -18,6 +19,7 @@ export type ClassCombatProfile = {
   skillDefenseMultiplier: number;
   skillHealing: number;
   skillResourceGain: number;
+  skillStatus: CombatStatus | null;
   accent: string;
 };
 
@@ -30,6 +32,7 @@ type SkillCombatValues = Pick<
   | 'skillDefenseMultiplier'
   | 'skillHealing'
   | 'skillResourceGain'
+  | 'skillStatus'
 >;
 
 const unawakenedProfile: ClassCombatProfile = {
@@ -48,6 +51,7 @@ const unawakenedProfile: ClassCombatProfile = {
   skillDefenseMultiplier: 1,
   skillHealing: 0,
   skillResourceGain: 0,
+  skillStatus: null,
   accent: '#62DFFF',
 };
 
@@ -63,54 +67,61 @@ const skillCombatValues: Record<string, SkillCombatValues> = {
   'warrior-cleave': {
     skillName: 'Cleave', skillCost: 40, skillEffect: 'damage', skillPower: 1.15,
     skillDefenseMultiplier: 1, skillHealing: 0, skillResourceGain: 0,
+    skillStatus: { type: 'vulnerable', turns: 3, potency: 25 },
   },
   'warrior-iron-guard': {
     skillName: 'Iron Guard', skillCost: 35, skillEffect: 'barrier', skillPower: 0,
-    skillDefenseMultiplier: 0.2, skillHealing: 0, skillResourceGain: 0,
+    skillDefenseMultiplier: 1, skillHealing: 0, skillResourceGain: 0, skillStatus: null,
   },
   'mage-arc-bolt': {
     skillName: 'Arc Bolt', skillCost: 30, skillEffect: 'damage', skillPower: 1.15,
     skillDefenseMultiplier: 1, skillHealing: 0, skillResourceGain: 0,
+    skillStatus: { type: 'burn', turns: 3, potency: 4 },
   },
   'mage-mana-ward': {
     skillName: 'Mana Ward', skillCost: 25, skillEffect: 'barrier', skillPower: 0,
-    skillDefenseMultiplier: 0.25, skillHealing: 0, skillResourceGain: 0,
+    skillDefenseMultiplier: 1, skillHealing: 0, skillResourceGain: 0, skillStatus: null,
   },
   'assassin-quick-cut': {
     skillName: 'Quick Cut', skillCost: 2, skillEffect: 'damage', skillPower: 1,
     skillDefenseMultiplier: 1, skillHealing: 0, skillResourceGain: 0,
+    skillStatus: { type: 'bleed', turns: 3, potency: 3 },
   },
   'assassin-venom-edge': {
     skillName: 'Venom Edge', skillCost: 3, skillEffect: 'damage', skillPower: 1.25,
     skillDefenseMultiplier: 1, skillHealing: 0, skillResourceGain: 0,
+    skillStatus: { type: 'poison', turns: 4, potency: 4 },
   },
   'guardian-shield-bash': {
     skillName: 'Shield Bash', skillCost: 20, skillEffect: 'damage', skillPower: 1,
-    skillDefenseMultiplier: 0.55, skillHealing: 0, skillResourceGain: 0,
+    skillDefenseMultiplier: 1, skillHealing: 0, skillResourceGain: 0,
+    skillStatus: { type: 'stun', turns: 1, potency: 1 },
   },
   'guardian-aegis': {
     skillName: 'Aegis', skillCost: 45, skillEffect: 'barrier', skillPower: 0,
-    skillDefenseMultiplier: 0.12, skillHealing: 0, skillResourceGain: 0,
+    skillDefenseMultiplier: 1, skillHealing: 0, skillResourceGain: 0, skillStatus: null,
   },
   'summoner-wolf': {
     skillName: 'Summon Wolf', skillCost: 35, skillEffect: 'damage', skillPower: 1.15,
     skillDefenseMultiplier: 1, skillHealing: 0, skillResourceGain: 0,
+    skillStatus: { type: 'bleed', turns: 3, potency: 4 },
   },
   'summoner-wisp': {
     skillName: 'Summon Wisp', skillCost: 20, skillEffect: 'recovery', skillPower: 0,
-    skillDefenseMultiplier: 1, skillHealing: 18, skillResourceGain: 10,
+    skillDefenseMultiplier: 1, skillHealing: 18, skillResourceGain: 10, skillStatus: null,
   },
   'summoner-spirit-link': {
     skillName: 'Spirit Link', skillCost: 30, skillEffect: 'barrier', skillPower: 0,
-    skillDefenseMultiplier: 0.3, skillHealing: 0, skillResourceGain: 0,
+    skillDefenseMultiplier: 1, skillHealing: 0, skillResourceGain: 0, skillStatus: null,
   },
   'summoner-command-focus': {
     skillName: 'Command: Focus', skillCost: 40, skillEffect: 'damage', skillPower: 1.35,
     skillDefenseMultiplier: 1, skillHealing: 0, skillResourceGain: 0,
+    skillStatus: { type: 'vulnerable', turns: 3, potency: 20 },
   },
   'summoner-reclaim-essence': {
     skillName: 'Reclaim Essence', skillCost: 0, skillEffect: 'recovery', skillPower: 0,
-    skillDefenseMultiplier: 1, skillHealing: 8, skillResourceGain: 30,
+    skillDefenseMultiplier: 1, skillHealing: 8, skillResourceGain: 30, skillStatus: null,
   },
 };
 
@@ -134,4 +145,3 @@ export function getClassCombatProfile(classKey: string, requestedSkillKey?: stri
     ...skillCombatValues[selectedSkill.key],
   };
 }
-

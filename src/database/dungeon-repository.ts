@@ -14,6 +14,11 @@ import {
   type ClassCombatProfile,
 } from '@/src/dungeon/class-combat';
 import {
+  combatStatusCatalog,
+  type CombatStatus,
+  type CombatStatusType,
+} from '@/src/dungeon/combat-statuses';
+import {
   createCombatSnapshot,
   getEnemyIntent,
   getUnawakenedCombatStats,
@@ -27,6 +32,9 @@ import {
 import { getItemDefinition, rollDungeonReward } from '@/src/inventory/item-catalog';
 import { MAX_DUNGEON_ENERGY } from '@/src/progression/dungeon-energy';
 import { getPlayerProgress } from '@/src/progression/player-progression';
+
+export type DungeonPath = 'safe' | 'risky';
+export type DungeonRoomType = 'combat' | 'path_choice' | 'event' | 'elite' | 'boss_ready' | 'boss';
 
 export type DungeonRun = {
   id: number;
@@ -42,6 +50,9 @@ export type DungeonRun = {
   classKey: string;
   className: string;
   masteryXpEarned: number;
+  routeKey: DungeonPath | null;
+  roomsCleared: number;
+  interimGold: number;
   completedAt: string;
 };
 
@@ -59,6 +70,12 @@ export type DungeonBattle = {
   dungeonName: string;
   difficulty: string;
   bossName: string;
+  enemyName: string;
+  roomIndex: number;
+  roomType: DungeonRoomType;
+  routeKey: DungeonPath | null;
+  roomsCleared: number;
+  interimGold: number;
   classKey: string;
   className: string;
   combatProfile: ClassCombatProfile;
@@ -73,7 +90,7 @@ export type DungeonBattle = {
 };
 
 export type DungeonBattleActionResult = {
-  outcome: 'active' | 'cleared' | 'failed' | 'fled';
+  outcome: 'active' | 'path-choice' | 'room-cleared' | 'cleared' | 'failed' | 'fled';
   battle: DungeonBattle | null;
   run: DungeonRun | null;
 };
@@ -102,9 +119,19 @@ type DungeonBattleSessionRow = {
   classResource: number;
   activeSkillKeys: string;
   passiveSkillKeys: string;
+  playerStatuses: string;
+  enemyStatuses: string;
   combatLog: string;
   startedAt: string;
   classKey: string;
+  roomIndex: number;
+  roomType: DungeonRoomType;
+  routeKey: DungeonPath | null;
+  roomsCleared: number;
+  enemyName: string;
+  bossMaxEnemyHp: number;
+  turnsElapsed: number;
+  interimGold: number;
 };
 
 const sessionSelect = `SELECT
@@ -130,7 +157,17 @@ const sessionSelect = `SELECT
   class_key AS classKey,
   class_resource AS classResource,
   active_skill_keys AS activeSkillKeys,
-  passive_skill_keys AS passiveSkillKeys
+  passive_skill_keys AS passiveSkillKeys,
+  player_statuses AS playerStatuses,
+  enemy_statuses AS enemyStatuses,
+  room_index AS roomIndex,
+  room_type AS roomType,
+  route_key AS routeKey,
+  rooms_cleared AS roomsCleared,
+  enemy_name AS enemyName,
+  boss_max_enemy_hp AS bossMaxEnemyHp,
+  turns_elapsed AS turnsElapsed,
+  interim_gold AS interimGold
 FROM dungeon_battle_sessions
 WHERE id = 1`;
 
@@ -138,6 +175,35 @@ function parseCombatLog(value: string): CombatLogEntry[] {
   try {
     const parsed: unknown = JSON.parse(value);
     return Array.isArray(parsed) ? (parsed as CombatLogEntry[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function parseCombatStatuses(value: string): CombatStatus[] {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (!Array.isArray(parsed)) return [];
+
+    return parsed.flatMap((entry) => {
+      if (!entry || typeof entry !== 'object') return [];
+      const candidate = entry as Partial<CombatStatus>;
+      if (
+        typeof candidate.type !== 'string' ||
+        !(candidate.type in combatStatusCatalog) ||
+        typeof candidate.turns !== 'number' ||
+        !Number.isFinite(candidate.turns) ||
+        typeof candidate.potency !== 'number' ||
+        !Number.isFinite(candidate.potency)
+      ) {
+        return [];
+      }
+      return [{
+        type: candidate.type as CombatStatusType,
+        turns: Math.max(1, Math.floor(candidate.turns)),
+        potency: Math.max(0, Math.floor(candidate.potency)),
+      }];
+    });
   } catch {
     return [];
   }
@@ -187,6 +253,8 @@ function getSessionSnapshot(row: DungeonBattleSessionRow): CombatSnapshot {
     turnNumber: row.turnNumber,
     skillCooldown: row.skillCooldown,
     classResource: row.classResource,
+    playerStatuses: parseCombatStatuses(row.playerStatuses),
+    enemyStatuses: parseCombatStatuses(row.enemyStatuses),
     log: parseCombatLog(row.combatLog),
   };
 }
@@ -236,11 +304,13 @@ async function getRunById(db: SQLiteDatabase, runId: number) {
        reward_quantity AS rewardQuantity,
        class_key AS classKey,
        mastery_xp_earned AS masteryXpEarned,
+       route_key AS routeKey,
+       rooms_cleared AS roomsCleared,
+       interim_gold AS interimGold,
        COALESCE((
          SELECT SUM(ge.amount)
          FROM gold_events ge
-         WHERE ge.reason = 'dungeon_clear'
-           AND ge.source_ref = dr.client_run_id
+         WHERE ge.source_ref = dr.client_run_id
        ), 0) AS goldEarned,
        completed_at AS completedAt
      FROM dungeon_runs dr
@@ -280,11 +350,13 @@ export async function getDungeonOverview(db: SQLiteDatabase): Promise<DungeonOve
          reward_quantity AS rewardQuantity,
          class_key AS classKey,
          mastery_xp_earned AS masteryXpEarned,
+         route_key AS routeKey,
+         rooms_cleared AS roomsCleared,
+         interim_gold AS interimGold,
          COALESCE((
            SELECT SUM(ge.amount)
            FROM gold_events ge
-           WHERE ge.reason = 'dungeon_clear'
-             AND ge.source_ref = dr.client_run_id
+           WHERE ge.source_ref = dr.client_run_id
          ), 0) AS goldEarned,
          completed_at AS completedAt
        FROM dungeon_runs dr
@@ -330,6 +402,12 @@ export async function getActiveDungeonBattle(
     dungeonName: row.dungeonName,
     difficulty: row.difficulty,
     bossName: getDungeonDefinition(row.dungeonKey).bossName,
+    enemyName: row.enemyName,
+    roomIndex: row.roomIndex,
+    roomType: row.roomType,
+    routeKey: row.routeKey,
+    roomsCleared: row.roomsCleared,
+    interimGold: row.interimGold,
     classKey: row.classKey,
     className: combatProfile.className,
     combatProfile,
@@ -392,7 +470,17 @@ export async function beginDungeonBattle(
       .map((skill) => skill.skillKey);
     const combatProfile = getClassCombatProfile(classKey);
     const stats = getUnawakenedCombatStats(progress, equipmentBonuses);
-    const snapshot = createCombatSnapshot(stats, combatProfile);
+    const bossMaxEnemyHp = stats.maxEnemyHp;
+    const scoutMaxEnemyHp = Math.max(36, Math.round(bossMaxEnemyHp * 0.62));
+    const snapshot: CombatSnapshot = {
+      ...createCombatSnapshot(stats, combatProfile),
+      enemyHp: scoutMaxEnemyHp,
+      log: [{
+        id: 'system-entry',
+        message: 'An Ashbound Scout guards the first fork.',
+        tone: 'system',
+      }],
+    };
     await txn.runAsync(
       `INSERT INTO dungeon_battle_sessions (
          id,
@@ -416,8 +504,18 @@ export async function beginDungeonBattle(
          class_key,
          class_resource,
          active_skill_keys,
-         passive_skill_keys
-       ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         passive_skill_keys,
+         player_statuses,
+         enemy_statuses,
+         room_index,
+         room_type,
+         route_key,
+         rooms_cleared,
+         enemy_name,
+         boss_max_enemy_hp,
+         turns_elapsed,
+         interim_gold
+       ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       `${dungeon.key}-${eventId}`,
       dungeon.key,
       dungeon.name,
@@ -426,7 +524,7 @@ export async function beginDungeonBattle(
       snapshot.playerHp,
       snapshot.enemyHp,
       stats.maxPlayerHp,
-      stats.maxEnemyHp,
+      scoutMaxEnemyHp,
       stats.basicDamage,
       stats.skillDamage,
       stats.potionHealing,
@@ -439,6 +537,16 @@ export async function beginDungeonBattle(
       snapshot.classResource,
       JSON.stringify(activeSkillKeys),
       JSON.stringify(passiveSkillKeys),
+      JSON.stringify(snapshot.playerStatuses),
+      JSON.stringify(snapshot.enemyStatuses),
+      1,
+      'combat',
+      null,
+      0,
+      'Ashbound Scout',
+      bossMaxEnemyHp,
+      0,
+      0,
     );
   };
 
@@ -453,6 +561,195 @@ export async function beginDungeonBattle(
   return battle;
 }
 
+async function recordDungeonRoomEvent(
+  txn: SQLiteDatabase,
+  row: DungeonBattleSessionRow,
+  roomIndex: number,
+  roomType: string,
+  outcome: 'cleared' | 'resolved',
+  goldEarned = 0,
+  itemKey: string | null = null,
+  itemQuantity = 0,
+) {
+  await txn.runAsync(
+    `INSERT OR IGNORE INTO dungeon_room_events (
+       client_event_id,
+       client_run_id,
+       room_index,
+       room_type,
+       route_key,
+       outcome,
+       gold_earned,
+       item_key,
+       item_quantity
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `room-${row.clientRunId}-${roomIndex}-${roomType}`,
+    row.clientRunId,
+    roomIndex,
+    roomType,
+    row.routeKey,
+    outcome,
+    goldEarned,
+    itemKey,
+    itemQuantity,
+  );
+}
+
+async function prepareDungeonEncounter(
+  txn: SQLiteDatabase,
+  row: DungeonBattleSessionRow,
+  roomType: 'elite' | 'boss',
+  roomsCleared: number,
+) {
+  const enemyName = roomType === 'elite' ? 'Ashen Brute' : getDungeonDefinition(row.dungeonKey).bossName;
+  const maxEnemyHp = roomType === 'elite'
+    ? Math.max(48, Math.round(row.bossMaxEnemyHp * 0.88))
+    : row.bossMaxEnemyHp;
+  const roomIndex = roomType === 'elite' ? 3 : 4;
+  const log: CombatLogEntry[] = [{
+    id: `room-${roomIndex}-entry`,
+    message: roomType === 'elite'
+      ? 'The Ashen Brute blocks the risky passage.'
+      : 'The Cinder Warden descends before the final gate.',
+    tone: 'system',
+  }];
+
+  await txn.runAsync(
+    `UPDATE dungeon_battle_sessions
+     SET room_index = ?,
+         room_type = ?,
+         rooms_cleared = ?,
+         enemy_name = ?,
+         enemy_hp = ?,
+         max_enemy_hp = ?,
+         turn_number = 1,
+         skill_cooldown = 0,
+         player_statuses = '[]',
+         enemy_statuses = '[]',
+         combat_log = ?,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = 1`,
+    roomIndex,
+    roomType,
+    roomsCleared,
+    enemyName,
+    maxEnemyHp,
+    maxEnemyHp,
+    JSON.stringify(log),
+  );
+}
+
+export async function chooseDungeonPath(db: SQLiteDatabase, path: DungeonPath) {
+  const choosePath = async (txn: SQLiteDatabase) => {
+    const row = await txn.getFirstAsync<DungeonBattleSessionRow>(sessionSelect);
+    if (!row || row.roomType !== 'path_choice') {
+      throw new Error('The dungeon path is no longer available.');
+    }
+
+    if (path === 'safe') {
+      const healing = Math.min(
+        Math.ceil(row.maxPlayerHp * 0.35),
+        row.maxPlayerHp - row.playerHp,
+      );
+      await txn.runAsync(
+        `UPDATE dungeon_battle_sessions
+         SET route_key = 'safe',
+             room_index = 3,
+             room_type = 'event',
+             rooms_cleared = 2,
+             enemy_name = 'Whispering Shrine',
+             player_hp = player_hp + ?,
+             player_statuses = '[]',
+             enemy_statuses = '[]',
+             combat_log = ?,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = 1`,
+        healing,
+        JSON.stringify([{
+          id: 'safe-rest',
+          message: `The Rest Room restores ${healing} HP.`,
+          tone: 'system',
+        }]),
+      );
+      await recordDungeonRoomEvent(txn, { ...row, routeKey: 'safe' }, 2, 'rest', 'resolved');
+      return;
+    }
+
+    await grantGold(
+      txn,
+      6,
+      'dungeon_treasure',
+      row.clientRunId,
+      `dungeon-treasure-gold-${row.clientRunId}`,
+    );
+    await grantInventoryItem(
+      txn,
+      'ash-shard',
+      2,
+      'dungeon_treasure',
+      row.clientRunId,
+      `dungeon-treasure-item-${row.clientRunId}`,
+    );
+    await txn.runAsync(
+      `UPDATE dungeon_battle_sessions
+       SET route_key = 'risky',
+           rooms_cleared = 2,
+           interim_gold = interim_gold + 6,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = 1`,
+    );
+    const riskyRow = { ...row, routeKey: 'risky' as const, interimGold: row.interimGold + 6 };
+    await recordDungeonRoomEvent(txn, riskyRow, 2, 'treasure', 'resolved', 6, 'ash-shard', 2);
+    await prepareDungeonEncounter(txn, riskyRow, 'elite', 2);
+  };
+
+  if (process.env.EXPO_OS === 'web') {
+    await db.withTransactionAsync(() => choosePath(db));
+  } else {
+    await db.withExclusiveTransactionAsync(choosePath);
+  }
+  return getActiveDungeonBattle(db);
+}
+
+export async function continueDungeonRoute(db: SQLiteDatabase) {
+  const continueRoute = async (txn: SQLiteDatabase) => {
+    const row = await txn.getFirstAsync<DungeonBattleSessionRow>(sessionSelect);
+    if (!row || (row.roomType !== 'event' && row.roomType !== 'boss_ready')) {
+      throw new Error('There is no dungeon room to continue.');
+    }
+
+    if (row.roomType === 'event') {
+      await grantGold(
+        txn,
+        2,
+        'dungeon_event',
+        row.clientRunId,
+        `dungeon-event-gold-${row.clientRunId}`,
+      );
+      await txn.runAsync(
+        `UPDATE dungeon_battle_sessions
+         SET interim_gold = interim_gold + 2,
+             rooms_cleared = 3,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = 1`,
+      );
+      const eventRow = { ...row, interimGold: row.interimGold + 2 };
+      await recordDungeonRoomEvent(txn, eventRow, 3, 'event', 'resolved', 2);
+      await prepareDungeonEncounter(txn, eventRow, 'boss', 3);
+      return;
+    }
+
+    await prepareDungeonEncounter(txn, row, 'boss', row.roomsCleared);
+  };
+
+  if (process.env.EXPO_OS === 'web') {
+    await db.withTransactionAsync(() => continueRoute(db));
+  } else {
+    await db.withExclusiveTransactionAsync(continueRoute);
+  }
+  return getActiveDungeonBattle(db);
+}
+
 async function finalizeDungeonBattle(
   txn: SQLiteDatabase,
   row: DungeonBattleSessionRow,
@@ -460,6 +757,9 @@ async function finalizeDungeonBattle(
 ) {
   const reward = status === 'cleared' ? rollDungeonReward(row.dungeonKey) : null;
   const masteryXpEarned = isStarterClassKey(row.classKey) ? (status === 'cleared' ? 25 : 8) : 0;
+  const currentRoomTurns = ['combat', 'elite', 'boss'].includes(row.roomType)
+    ? row.turnNumber
+    : 0;
   const result = await txn.runAsync(
     `INSERT INTO dungeon_runs (
        client_run_id,
@@ -473,11 +773,14 @@ async function finalizeDungeonBattle(
          started_at,
          player_hp_remaining,
          max_player_hp,
-         damage_taken,
+       damage_taken,
          turns_taken,
          class_key,
-         mastery_xp_earned
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         mastery_xp_earned,
+         route_key,
+         rooms_cleared,
+         interim_gold
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     row.clientRunId,
     row.dungeonKey,
     row.dungeonName,
@@ -490,9 +793,12 @@ async function finalizeDungeonBattle(
     row.playerHp,
     row.maxPlayerHp,
     row.damageTaken,
-    row.turnNumber,
+    row.turnsElapsed + currentRoomTurns,
     row.classKey,
     masteryXpEarned,
+    row.routeKey,
+    row.roomsCleared,
+    row.interimGold,
   );
 
   await grantClassMastery(
@@ -536,6 +842,9 @@ export async function performDungeonBattleAction(
   const applyAction = async (txn: SQLiteDatabase) => {
     const row = await txn.getFirstAsync<DungeonBattleSessionRow>(sessionSelect);
     if (!row) throw new Error('No active dungeon battle.');
+    if (!['combat', 'elite', 'boss'].includes(row.roomType)) {
+      throw new Error('Resolve the current dungeon room before choosing a combat action.');
+    }
 
     const stats = getSessionStats(row);
     const snapshot = getSessionSnapshot(row);
@@ -562,6 +871,7 @@ export async function performDungeonBattleAction(
       action,
       combatProfile,
       passiveSkillKeys,
+      row.enemyName,
     );
     outcome = resolution.outcome;
 
@@ -573,6 +883,8 @@ export async function performDungeonBattleAction(
              turn_number = ?,
              skill_cooldown = ?,
              class_resource = ?,
+             player_statuses = ?,
+             enemy_statuses = ?,
              damage_taken = damage_taken + ?,
              combat_log = ?,
              updated_at = CURRENT_TIMESTAMP
@@ -582,24 +894,130 @@ export async function performDungeonBattleAction(
         resolution.snapshot.turnNumber,
         resolution.snapshot.skillCooldown,
         resolution.snapshot.classResource,
+        JSON.stringify(resolution.snapshot.playerStatuses),
+        JSON.stringify(resolution.snapshot.enemyStatuses),
         resolution.enemyDamage,
         JSON.stringify(resolution.snapshot.log),
       );
       return;
     }
 
+    const resolvedRow: DungeonBattleSessionRow = {
+      ...row,
+      playerHp: resolution.snapshot.playerHp,
+      enemyHp: resolution.snapshot.enemyHp,
+      turnNumber: resolution.snapshot.turnNumber,
+      skillCooldown: resolution.snapshot.skillCooldown,
+      classResource: resolution.snapshot.classResource,
+      playerStatuses: JSON.stringify(resolution.snapshot.playerStatuses),
+      enemyStatuses: JSON.stringify(resolution.snapshot.enemyStatuses),
+      damageTaken: row.damageTaken + resolution.enemyDamage,
+    };
+
+    if (resolution.outcome === 'failed') {
+      completedRunId = await finalizeDungeonBattle(txn, resolvedRow, 'failed');
+      return;
+    }
+
+    if (row.roomType === 'combat') {
+      await recordDungeonRoomEvent(txn, row, 1, 'combat', 'cleared');
+      await txn.runAsync(
+        `UPDATE dungeon_battle_sessions
+         SET player_hp = ?,
+             enemy_hp = 0,
+             room_index = 2,
+             room_type = 'path_choice',
+             rooms_cleared = 1,
+             enemy_name = 'Forked Hall',
+             turn_number = 1,
+             turns_elapsed = turns_elapsed + ?,
+             skill_cooldown = 0,
+             class_resource = ?,
+             player_statuses = '[]',
+             enemy_statuses = '[]',
+             damage_taken = damage_taken + ?,
+             combat_log = ?,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = 1`,
+        resolvedRow.playerHp,
+        resolvedRow.turnNumber,
+        resolvedRow.classResource,
+        resolution.enemyDamage,
+        JSON.stringify([{
+          id: 'path-choice',
+          message: 'The first guardian falls. Two passages open ahead.',
+          tone: 'system',
+        }]),
+      );
+      outcome = 'path-choice';
+      return;
+    }
+
+    if (row.roomType === 'elite') {
+      await grantGold(
+        txn,
+        4,
+        'dungeon_elite',
+        row.clientRunId,
+        `dungeon-elite-gold-${row.clientRunId}`,
+      );
+      await grantInventoryItem(
+        txn,
+        'focus-crystal',
+        1,
+        'dungeon_elite',
+        row.clientRunId,
+        `dungeon-elite-item-${row.clientRunId}`,
+      );
+      await recordDungeonRoomEvent(
+        txn,
+        row,
+        3,
+        'elite',
+        'cleared',
+        4,
+        'focus-crystal',
+        1,
+      );
+      await txn.runAsync(
+        `UPDATE dungeon_battle_sessions
+         SET player_hp = ?,
+             enemy_hp = 0,
+             room_index = 4,
+             room_type = 'boss_ready',
+             rooms_cleared = 3,
+             enemy_name = 'Final Gate',
+             turn_number = 1,
+             turns_elapsed = turns_elapsed + ?,
+             skill_cooldown = 0,
+             class_resource = ?,
+             player_statuses = '[]',
+             enemy_statuses = '[]',
+             damage_taken = damage_taken + ?,
+             interim_gold = interim_gold + 4,
+             combat_log = ?,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = 1`,
+        resolvedRow.playerHp,
+        resolvedRow.turnNumber,
+        resolvedRow.classResource,
+        resolution.enemyDamage,
+        JSON.stringify([{
+          id: 'elite-clear',
+          message: 'The Elite falls. The final gate is now exposed.',
+          tone: 'system',
+        }]),
+      );
+      outcome = 'room-cleared';
+      return;
+    }
+
+    const clearedRooms = Math.min(4, Math.max(1, row.roomsCleared + 1));
+    await recordDungeonRoomEvent(txn, row, 4, 'boss', 'cleared');
     completedRunId = await finalizeDungeonBattle(
       txn,
-      {
-        ...row,
-        playerHp: resolution.snapshot.playerHp,
-        enemyHp: resolution.snapshot.enemyHp,
-        turnNumber: resolution.snapshot.turnNumber,
-        skillCooldown: resolution.snapshot.skillCooldown,
-        classResource: resolution.snapshot.classResource,
-        damageTaken: row.damageTaken + resolution.enemyDamage,
-      },
-      resolution.outcome === 'cleared' ? 'cleared' : 'failed',
+      { ...resolvedRow, roomsCleared: clearedRooms },
+      'cleared',
     );
   };
 
@@ -612,7 +1030,9 @@ export async function performDungeonBattleAction(
   const run = completedRunId === null ? null : await getRunById(db, completedRunId);
   return {
     outcome,
-    battle: outcome === 'active' ? await getActiveDungeonBattle(db) : null,
+    battle: ['active', 'path-choice', 'room-cleared'].includes(outcome)
+      ? await getActiveDungeonBattle(db)
+      : null,
     run,
   };
 }

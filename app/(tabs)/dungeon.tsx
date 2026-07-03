@@ -239,13 +239,16 @@ export default function DungeonScreen() {
                   <Text style={styles.runMeta}>
                     {run.status === 'cleared' ? 'Cleared' : 'Defeated'} - {run.difficulty} -{' '}
                     {run.energyCost === 0 ? 'Trial entry' : `${run.energyCost} Energy spent`}
+                    {run.routeKey ? ` - ${run.routeKey === 'safe' ? 'Safe' : 'Risky'} route` : ''}
                   </Text>
                   <Text style={styles.runReward}>
                     {run.rewardName
                       ? `${run.rewardQuantity ?? 1}x ${run.rewardName}  |  ${run.goldEarned} Gold`
                       : run.status === 'cleared'
                         ? `Loot stored  |  ${run.goldEarned} Gold`
-                        : 'No final chest'}
+                        : run.goldEarned > 0
+                          ? `${run.goldEarned} Gold secured  |  No final chest`
+                          : 'No final chest'}
                   </Text>
                 </View>
               </View>

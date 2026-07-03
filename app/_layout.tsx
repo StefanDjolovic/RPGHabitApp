@@ -109,6 +109,10 @@ export default function RootLayout() {
             name="rank-trial"
             options={{ animation: 'slide_from_right', headerShown: false }}
           />
+          <Stack.Screen
+            name="stat-recalibration"
+            options={{ animation: 'slide_from_right', headerShown: false }}
+          />
           <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Habit RPG' }} />
         </Stack>
         <StatusBar style="light" />

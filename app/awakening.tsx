@@ -25,6 +25,7 @@ import {
   awakenPlayer,
   AWAKENING_LEVEL,
   changeClassDuringFreeWindow,
+  changeClassThroughReawakening,
   getPlayerClassState,
   INITIAL_PLAYER_CLASS_STATE,
   type PlayerClassState,
@@ -66,20 +67,24 @@ export default function AwakeningScreen() {
     [selectedClassKey],
   );
   const isChangingClass = classState.awakened;
+  const usingReawakening = isChangingClass && !classState.freeChangeAvailable;
   const selectedIsActive = classState.activeClass?.key === selectedClass.key;
   const canConfirm =
     classState.eligible &&
     !saving &&
-    (!isChangingClass || (classState.freeChangeAvailable && !selectedIsActive));
+    (!isChangingClass ||
+      (!selectedIsActive && (classState.freeChangeAvailable || classState.reawakeningReady)));
 
   const saveClass = async () => {
     if (!canConfirm) return;
     setSaving(true);
     try {
       setCompletionWasChange(isChangingClass);
-      const nextState = isChangingClass
-        ? await changeClassDuringFreeWindow(db, selectedClass.key)
-        : await awakenPlayer(db, selectedClass.key);
+      const nextState = !isChangingClass
+        ? await awakenPlayer(db, selectedClass.key)
+        : usingReawakening
+          ? await changeClassThroughReawakening(db, selectedClass.key)
+          : await changeClassDuringFreeWindow(db, selectedClass.key);
       setClassState(nextState);
       await Promise.all([
         notifySkillsUnlocked(
@@ -109,7 +114,9 @@ export default function AwakeningScreen() {
     Alert.alert(
       isChangingClass ? `Change to ${selectedClass.name}?` : `Awaken as ${selectedClass.name}?`,
       isChangingClass
-        ? 'This uses your one free class change. Your previous class, mastery and skills remain saved.'
+        ? usingReawakening
+          ? 'This completes the Reawakening Quest. Previous class mastery and skills remain saved, and one free Stat Recalibration is granted.'
+          : 'This uses your one free class change and grants one free Stat Recalibration. Previous mastery and skills remain saved.'
         : 'Your Player Level, attributes, Inventory and achievements remain unchanged.',
       [
         { text: 'Cancel', style: 'cancel' },
@@ -208,7 +215,9 @@ export default function AwakeningScreen() {
         </Pressable>
         <View style={styles.topBarBody}>
           <Text style={styles.systemLabel}>SYSTEM QUEST</Text>
-          <Text style={styles.heading}>{isChangingClass ? 'Class Resonance' : 'Awakening'}</Text>
+          <Text style={styles.heading}>
+            {usingReawakening ? 'Reawakening' : isChangingClass ? 'Class Resonance' : 'Awakening'}
+          </Text>
         </View>
         <View style={styles.levelBadge}>
           <Text style={styles.levelBadgeLabel}>LEVEL</Text>
@@ -231,20 +240,34 @@ export default function AwakeningScreen() {
       {isChangingClass ? (
         <View style={styles.changeBanner}>
           <MaterialCommunityIcons
-            name={classState.freeChangeAvailable ? 'timer-sand' : 'shield-lock-outline'}
+            name={
+              classState.freeChangeAvailable
+                ? 'timer-sand'
+                : classState.reawakeningReady
+                  ? 'shield-star-outline'
+                  : 'shield-lock-outline'
+            }
             size={22}
-            color={classState.freeChangeAvailable ? '#FFD166' : '#8A91A5'}
+            color={
+              classState.freeChangeAvailable
+                ? '#FFD166'
+                : classState.reawakeningReady
+                  ? '#68E1A8'
+                  : '#8A91A5'
+            }
           />
           <View style={styles.changeBannerBody}>
             <Text style={styles.changeBannerTitle}>
               {classState.freeChangeAvailable
                 ? 'One free class change available'
-                : 'Reawakening Quest required'}
+                : classState.reawakeningReady
+                  ? 'Reawakening Quest ready'
+                  : 'Reawakening Quest in progress'}
             </Text>
             <Text style={styles.changeBannerText}>
               {classState.freeChangeAvailable
                 ? `${classState.freeChangeDaysRemaining} days remaining in the resonance window.`
-                : 'Your active class, mastery and unlocked skills remain saved.'}
+                : `${classState.reawakeningDungeonClears} / ${classState.reawakeningRequiredClears} active-class dungeon clears. Mastery and unlocked skills remain saved.`}
             </Text>
           </View>
         </View>
@@ -377,7 +400,9 @@ export default function AwakeningScreen() {
               : isChangingClass
                 ? classState.freeChangeAvailable
                   ? 'Use Free Class Change'
-                  : 'Reawakening Required'
+                  : classState.reawakeningReady
+                    ? 'Complete Reawakening'
+                    : `Clear ${Math.max(0, classState.reawakeningRequiredClears - classState.reawakeningDungeonClears)} Dungeon`
                 : `Awaken as ${selectedClass.name}`}
         </Text>
       </Pressable>

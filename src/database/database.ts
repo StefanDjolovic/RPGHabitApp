@@ -1,6 +1,6 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 
-const DATABASE_VERSION = 28;
+const DATABASE_VERSION = 29;
 
 export async function migrateDatabase(db: SQLiteDatabase) {
   await db.execAsync('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
@@ -984,6 +984,52 @@ export async function migrateDatabase(db: SQLiteDatabase) {
         event_token TEXT,
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
       );
+    `);
+  }
+
+  if (currentVersion < 29) {
+    await db.execAsync(`
+      CREATE TABLE IF NOT EXISTS player_recalibration_state (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        free_credits INTEGER NOT NULL DEFAULT 0 CHECK (free_credits BETWEEN 0 AND 1),
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      INSERT OR IGNORE INTO player_recalibration_state (id, free_credits)
+      SELECT
+        1,
+        CASE
+          WHEN EXISTS (
+            SELECT 1
+            FROM class_change_events
+            WHERE reason IN ('free_change', 'reawakening')
+          ) THEN 1
+          ELSE 0
+        END;
+
+      CREATE TABLE IF NOT EXISTS stat_recalibration_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        client_event_id TEXT NOT NULL UNIQUE,
+        allocation_cutoff_id INTEGER NOT NULL CHECK (allocation_cutoff_id > 0),
+        returned_points INTEGER NOT NULL CHECK (returned_points > 0),
+        source TEXT NOT NULL CHECK (source IN ('class_change', 'quest')),
+        completed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_stat_recalibration_events_completed
+        ON stat_recalibration_events(completed_at);
+
+      CREATE TABLE IF NOT EXISTS reawakening_quest_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        client_event_id TEXT NOT NULL UNIQUE,
+        previous_class_key TEXT NOT NULL,
+        next_class_key TEXT NOT NULL,
+        dungeon_clears INTEGER NOT NULL CHECK (dungeon_clears > 0),
+        completed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_reawakening_quest_events_completed
+        ON reawakening_quest_events(completed_at);
     `);
   }
 

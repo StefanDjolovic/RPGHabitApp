@@ -37,6 +37,14 @@ export type PlayerProgress = {
   availableStatPoints: number;
 };
 
+export type StatRecalibrationState = {
+  freeCredits: number;
+  allocatedPoints: number;
+  available: boolean;
+  lastReturnedPoints: number;
+  lastCompletedAt: string | null;
+};
+
 type TotalRow = { total: number };
 type AttributeTotalRow = { attribute: HabitAttribute; total: number };
 
@@ -172,10 +180,19 @@ export async function getPlayerProgress(db: SQLiteDatabase): Promise<PlayerProgr
     db.getAllAsync<AttributeTotalRow>(
       `SELECT attribute, COALESCE(SUM(amount), 0) AS total
        FROM stat_point_allocations
+       WHERE id > COALESCE((
+         SELECT MAX(allocation_cutoff_id)
+         FROM stat_recalibration_events
+       ), 0)
        GROUP BY attribute`,
     ),
     db.getFirstAsync<TotalRow>(
-      'SELECT COALESCE(SUM(amount), 0) AS total FROM stat_point_allocations',
+      `SELECT COALESCE(SUM(amount), 0) AS total
+       FROM stat_point_allocations
+       WHERE id > COALESCE((
+         SELECT MAX(allocation_cutoff_id)
+         FROM stat_recalibration_events
+       ), 0)`,
     ),
   ]);
 
@@ -250,4 +267,90 @@ export async function allocateStatPoint(
   }
 
   return getPlayerProgress(db);
+}
+
+export async function getStatRecalibrationState(
+  db: SQLiteDatabase,
+): Promise<StatRecalibrationState> {
+  const [progress, creditRow, lastEvent] = await Promise.all([
+    getPlayerProgress(db),
+    db.getFirstAsync<{ freeCredits: number }>(
+      `SELECT free_credits AS freeCredits
+       FROM player_recalibration_state
+       WHERE id = 1`,
+    ),
+    db.getFirstAsync<{ returnedPoints: number; completedAt: string }>(
+      `SELECT returned_points AS returnedPoints, completed_at AS completedAt
+       FROM stat_recalibration_events
+       ORDER BY id DESC
+       LIMIT 1`,
+    ),
+  ]);
+  const freeCredits = Math.max(0, creditRow?.freeCredits ?? 0);
+  return {
+    freeCredits,
+    allocatedPoints: progress.spentStatPoints,
+    available: freeCredits > 0 && progress.spentStatPoints > 0,
+    lastReturnedPoints: Math.max(0, lastEvent?.returnedPoints ?? 0),
+    lastCompletedAt: lastEvent?.completedAt ?? null,
+  };
+}
+
+export async function recalibrateManualStatPoints(db: SQLiteDatabase) {
+  const recalibrate = async (txn: SQLiteDatabase) => {
+    const [creditRow, allocationRow, eventIdRow] = await Promise.all([
+      txn.getFirstAsync<{ freeCredits: number }>(
+        `SELECT free_credits AS freeCredits
+         FROM player_recalibration_state
+         WHERE id = 1`,
+      ),
+      txn.getFirstAsync<{ cutoffId: number; total: number }>(
+        `SELECT MAX(id) AS cutoffId, COALESCE(SUM(amount), 0) AS total
+         FROM stat_point_allocations
+         WHERE id > COALESCE((
+           SELECT MAX(allocation_cutoff_id)
+           FROM stat_recalibration_events
+         ), 0)`,
+      ),
+      txn.getFirstAsync<{ eventId: string }>(
+        'SELECT lower(hex(randomblob(16))) AS eventId',
+      ),
+    ]);
+    if ((creditRow?.freeCredits ?? 0) <= 0) {
+      throw new Error('A class change is required for a free Stat Recalibration.');
+    }
+    if ((allocationRow?.total ?? 0) <= 0 || !allocationRow?.cutoffId) {
+      throw new Error('There are no manually allocated Stat Points to return.');
+    }
+    if (!eventIdRow?.eventId) throw new Error('Could not create a recalibration event.');
+
+    await txn.runAsync(
+      `INSERT INTO stat_recalibration_events (
+         client_event_id,
+         allocation_cutoff_id,
+         returned_points,
+         source
+       ) VALUES (?, ?, ?, 'class_change')`,
+      `stat-recalibration-${eventIdRow.eventId}`,
+      allocationRow.cutoffId,
+      allocationRow.total,
+    );
+    await txn.runAsync(
+      `UPDATE player_recalibration_state
+       SET free_credits = free_credits - 1,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = 1 AND free_credits > 0`,
+    );
+  };
+
+  if (process.env.EXPO_OS === 'web') {
+    await db.withTransactionAsync(() => recalibrate(db));
+  } else {
+    await db.withExclusiveTransactionAsync(recalibrate);
+  }
+
+  return {
+    progress: await getPlayerProgress(db),
+    state: await getStatRecalibrationState(db),
+  };
 }

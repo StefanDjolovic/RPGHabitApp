@@ -55,6 +55,7 @@ type ClassChangeRow = {
   changedAt: string;
 };
 type RankTrialRow = { id: number; nextRankKey: string; completedAt: string };
+type RecalibrationRow = { id: number; returnedPoints: number; completedAt: string };
 
 function getLevelEvents(rows: XpTimelineRow[]) {
   const events: ChronicleEvent[] = [];
@@ -81,7 +82,7 @@ function getLevelEvents(rows: XpTimelineRow[]) {
 }
 
 export async function getCharacterChronicle(db: SQLiteDatabase): Promise<ChronicleEvent[]> {
-  const [profile, xpRows, recoveryRows, bossRows, dungeonRows, lootRows, classRows, rankRows] =
+  const [profile, xpRows, recoveryRows, bossRows, dungeonRows, lootRows, classRows, rankRows, recalibrationRows] =
     await Promise.all([
     db.getFirstAsync<ProfileCreatedRow>(
       'SELECT created_at AS createdAt FROM player_profile WHERE id = 1',
@@ -149,6 +150,10 @@ export async function getCharacterChronicle(db: SQLiteDatabase): Promise<Chronic
     db.getAllAsync<RankTrialRow>(
       `SELECT id, next_rank_key AS nextRankKey, completed_at AS completedAt
        FROM rank_trial_events`,
+    ),
+    db.getAllAsync<RecalibrationRow>(
+      `SELECT id, returned_points AS returnedPoints, completed_at AS completedAt
+       FROM stat_recalibration_events`,
     ),
   ]);
   const events = getLevelEvents(xpRows);
@@ -246,6 +251,18 @@ export async function getCharacterChronicle(db: SQLiteDatabase): Promise<Chronic
       occurredAt: rankRow.completedAt,
       icon: 'shield-star-outline',
       accent: rank.accent,
+    });
+  }
+
+  for (const recalibration of recalibrationRows) {
+    events.push({
+      id: `recalibration-${recalibration.id}`,
+      type: 'class',
+      title: 'Stat Recalibration completed',
+      detail: `${recalibration.returnedPoints} manual Stat Points returned.`,
+      occurredAt: recalibration.completedAt,
+      icon: 'restore',
+      accent: '#C79CFF',
     });
   }
 

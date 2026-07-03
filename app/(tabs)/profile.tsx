@@ -392,14 +392,12 @@ export default function ProfileScreen() {
                 </View>
               </View>
               <View style={styles.classPanelActions}>
-                {playerClassState.freeChangeAvailable ? (
-                  <Pressable
-                    accessibilityLabel="Change active class"
-                    onPress={() => router.push('/awakening' as Href)}
-                    style={({ pressed }) => [styles.classPanelSecondaryButton, pressed && styles.buttonPressed]}>
-                    <MaterialCommunityIcons name="sync" size={18} color="#9FA8BE" />
-                  </Pressable>
-                ) : null}
+                <Pressable
+                  accessibilityLabel="Change active class"
+                  onPress={() => router.push('/awakening' as Href)}
+                  style={({ pressed }) => [styles.classPanelSecondaryButton, pressed && styles.buttonPressed]}>
+                  <MaterialCommunityIcons name="sync" size={18} color="#9FA8BE" />
+                </Pressable>
                 <Pressable
                   accessibilityLabel="Open skill loadout"
                   onPress={() => router.push('/class-skills' as Href)}
@@ -506,6 +504,16 @@ export default function ProfileScreen() {
           <Text style={styles.statPointHint}>
             {playerProgress.spentStatPoints} spent from {playerProgress.totalStatPointsEarned} earned.
           </Text>
+          {playerClassState.activeClass ? (
+            <Pressable
+              accessibilityLabel="Open Stat Recalibration"
+              onPress={() => router.push('/stat-recalibration' as Href)}
+              style={({ pressed }) => [styles.recalibrationButton, pressed && styles.buttonPressed]}>
+              <MaterialCommunityIcons color="#B9A0E8" name="restore" size={17} />
+              <Text style={styles.recalibrationButtonText}>Stat Recalibration</Text>
+              <MaterialCommunityIcons color="#757E96" name="chevron-right" size={18} />
+            </Pressable>
+          ) : null}
         </View>
 
         <View style={styles.sectionHeader}>
@@ -1224,6 +1232,19 @@ const styles = StyleSheet.create({
   },
   statPointFormulaText: { color: '#83DDF1', fontSize: 10, fontWeight: '900' },
   statPointHint: { color: '#7B849D', fontSize: 10, fontWeight: '700', marginTop: 10 },
+  recalibrationButton: {
+    minHeight: 42,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#3A3152',
+    backgroundColor: '#161226',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 11,
+    marginTop: 12,
+  },
+  recalibrationButtonText: { color: '#CDBCF0', fontSize: 10, fontWeight: '900', flex: 1 },
   achievementCounter: {
     minWidth: 50,
     height: 28,

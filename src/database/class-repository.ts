@@ -12,6 +12,7 @@ import { getPlayerProgress } from '@/src/progression/player-progression';
 export const AWAKENING_LEVEL = 10;
 export const ACTIVE_SKILL_SLOTS = 4;
 export const PASSIVE_SKILL_SLOTS = 3;
+export const REAWAKENING_REQUIRED_CLEARS = 1;
 
 export type UserSkillProgress = ClassSkillDefinition & {
   isEquipped: boolean;
@@ -45,6 +46,9 @@ export type PlayerClassState = {
   freeChangeExpiresAt: string | null;
   freeChangeAvailable: boolean;
   freeChangeDaysRemaining: number;
+  reawakeningDungeonClears: number;
+  reawakeningRequiredClears: number;
+  reawakeningReady: boolean;
   unlockedClasses: UserClassProgress[];
 };
 
@@ -54,6 +58,7 @@ type ClassStateRow = {
   freeChangeExpiresAt: string;
   freeChangeAvailable: number;
   freeChangeDaysRemaining: number;
+  reawakeningDungeonClears: number;
 };
 
 type UserClassRow = {
@@ -79,6 +84,9 @@ export const INITIAL_PLAYER_CLASS_STATE: PlayerClassState = {
   freeChangeExpiresAt: null,
   freeChangeAvailable: false,
   freeChangeDaysRemaining: 0,
+  reawakeningDungeonClears: 0,
+  reawakeningRequiredClears: REAWAKENING_REQUIRED_CLEARS,
+  reawakeningReady: false,
   unlockedClasses: [],
 };
 
@@ -125,6 +133,34 @@ async function unlockStarterSkills(
   }
 }
 
+async function grantFreeRecalibration(db: SQLiteDatabase) {
+  await db.runAsync(
+    `INSERT INTO player_recalibration_state (id, free_credits)
+     VALUES (1, 1)
+     ON CONFLICT(id) DO UPDATE SET
+       free_credits = 1,
+       updated_at = CURRENT_TIMESTAMP`,
+  );
+}
+
+async function activateClass(db: SQLiteDatabase, classKey: StarterClassKey) {
+  await db.runAsync(
+    `INSERT INTO user_classes (class_key)
+     VALUES (?)
+     ON CONFLICT(class_key) DO UPDATE SET last_active_at = CURRENT_TIMESTAMP`,
+    classKey,
+  );
+  await unlockStarterSkills(db, classKey);
+  await db.runAsync(
+    `UPDATE player_class_state
+     SET active_class_key = ?,
+         free_change_used = 1,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = 1`,
+    classKey,
+  );
+}
+
 export async function getPlayerClassState(db: SQLiteDatabase): Promise<PlayerClassState> {
   const [progress, stateRow, classRows] = await Promise.all([
     getPlayerProgress(db),
@@ -140,9 +176,16 @@ export async function getPlayerClassState(db: SQLiteDatabase): Promise<PlayerCla
          MAX(
            0,
            CAST((julianday(free_change_expires_at) - julianday('now')) + 0.999 AS INTEGER)
-         ) AS freeChangeDaysRemaining
-       FROM player_class_state
-       WHERE id = 1`,
+         ) AS freeChangeDaysRemaining,
+         COALESCE((
+           SELECT COUNT(*)
+           FROM dungeon_runs dr
+           WHERE dr.class_key = pcs.active_class_key
+             AND dr.status = 'cleared'
+             AND dr.completed_at >= pcs.updated_at
+         ), 0) AS reawakeningDungeonClears
+       FROM player_class_state pcs
+       WHERE pcs.id = 1`,
     ),
     db.getAllAsync<UserClassRow>(
       `SELECT
@@ -189,6 +232,11 @@ export async function getPlayerClassState(db: SQLiteDatabase): Promise<PlayerCla
     freeChangeExpiresAt: stateRow.freeChangeExpiresAt,
     freeChangeAvailable: stateRow.freeChangeAvailable === 1,
     freeChangeDaysRemaining: stateRow.freeChangeDaysRemaining,
+    reawakeningDungeonClears: Math.max(0, stateRow.reawakeningDungeonClears),
+    reawakeningRequiredClears: REAWAKENING_REQUIRED_CLEARS,
+    reawakeningReady:
+      stateRow.freeChangeAvailable !== 1 &&
+      stateRow.reawakeningDungeonClears >= REAWAKENING_REQUIRED_CLEARS,
     unlockedClasses: classRows
       .filter((row) => isStarterClassKey(row.classKey))
       .map((row) => ({
@@ -296,21 +344,7 @@ export async function changeClassDuringFreeWindow(
     }
 
     const eventId = await createEventId(txn);
-    await txn.runAsync(
-      `INSERT INTO user_classes (class_key)
-       VALUES (?)
-       ON CONFLICT(class_key) DO UPDATE SET last_active_at = CURRENT_TIMESTAMP`,
-      classKey,
-    );
-    await unlockStarterSkills(txn, classKey);
-    await txn.runAsync(
-      `UPDATE player_class_state
-       SET active_class_key = ?,
-           free_change_used = 1,
-           updated_at = CURRENT_TIMESTAMP
-       WHERE id = 1`,
-      classKey,
-    );
+    await activateClass(txn, classKey);
     await txn.runAsync(
       `INSERT INTO class_change_events (
          client_event_id,
@@ -322,6 +356,75 @@ export async function changeClassDuringFreeWindow(
       state.activeClassKey,
       classKey,
     );
+    await grantFreeRecalibration(txn);
+  });
+
+  return getPlayerClassState(db);
+}
+
+export async function changeClassThroughReawakening(
+  db: SQLiteDatabase,
+  classKey: StarterClassKey,
+) {
+  if (!isStarterClassKey(classKey)) throw new Error('Unknown starter class.');
+
+  await runInTransaction(db, async (txn) => {
+    const state = await txn.getFirstAsync<{
+      activeClassKey: string;
+      freeChangeAvailable: number;
+      dungeonClears: number;
+    }>(
+      `SELECT
+         pcs.active_class_key AS activeClassKey,
+         CASE
+           WHEN pcs.free_change_used = 0 AND pcs.free_change_expires_at > CURRENT_TIMESTAMP THEN 1
+           ELSE 0
+         END AS freeChangeAvailable,
+         COALESCE((
+           SELECT COUNT(*)
+           FROM dungeon_runs dr
+           WHERE dr.class_key = pcs.active_class_key
+             AND dr.status = 'cleared'
+             AND dr.completed_at >= pcs.updated_at
+         ), 0) AS dungeonClears
+       FROM player_class_state pcs
+       WHERE pcs.id = 1`,
+    );
+    if (!state) throw new Error('Complete Awakening before starting Reawakening.');
+    if (state.activeClassKey === classKey) throw new Error('This class is already active.');
+    if (state.freeChangeAvailable === 1) {
+      throw new Error('The free class change is still available.');
+    }
+    if (state.dungeonClears < REAWAKENING_REQUIRED_CLEARS) {
+      throw new Error(`Clear ${REAWAKENING_REQUIRED_CLEARS} dungeon with the active class first.`);
+    }
+
+    const eventId = await createEventId(txn);
+    await activateClass(txn, classKey);
+    await txn.runAsync(
+      `INSERT INTO class_change_events (
+         client_event_id,
+         previous_class_key,
+         next_class_key,
+         reason
+       ) VALUES (?, ?, ?, 'reawakening')`,
+      `reawakening-class-${eventId}`,
+      state.activeClassKey,
+      classKey,
+    );
+    await txn.runAsync(
+      `INSERT INTO reawakening_quest_events (
+         client_event_id,
+         previous_class_key,
+         next_class_key,
+         dungeon_clears
+       ) VALUES (?, ?, ?, ?)`,
+      `reawakening-quest-${eventId}`,
+      state.activeClassKey,
+      classKey,
+      state.dungeonClears,
+    );
+    await grantFreeRecalibration(txn);
   });
 
   return getPlayerClassState(db);

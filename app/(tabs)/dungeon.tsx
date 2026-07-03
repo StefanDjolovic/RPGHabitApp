@@ -18,27 +18,32 @@ import {
   getDungeonOverview,
   type DungeonOverview,
 } from '@/src/database/dungeon-repository';
-import { getDungeonDefinition } from '@/src/dungeon/dungeon-catalog';
+import { dungeons } from '@/src/dungeon/dungeon-catalog';
 import { MAX_DUNGEON_ENERGY } from '@/src/progression/dungeon-energy';
-
-const firstDungeon = getDungeonDefinition('ashen-ruins');
 
 const initialOverview: DungeonOverview = {
   energyAvailable: 0,
-  entryCost: firstDungeon.energyCost,
+  entryCost: dungeons[0].energyCost,
   isTrialEntry: false,
   hasActiveBattle: false,
   totalClears: 0,
   recentRuns: [],
+  dungeons: dungeons.map((dungeon) => ({
+    dungeon,
+    unlocked: dungeon.requiredRankKey === 'unawakened',
+    isTrialEntry: false,
+    entryCost: dungeon.energyCost,
+    attempts: 0,
+    active: false,
+  })),
+  activeDungeonKey: null,
 };
 
 export default function DungeonScreen() {
   const db = useSQLiteContext();
   const [overview, setOverview] = useState<DungeonOverview>(initialOverview);
   const [loading, setLoading] = useState(true);
-  const [entering, setEntering] = useState(false);
-  const canEnter =
-    overview.hasActiveBattle || overview.energyAvailable >= overview.entryCost;
+  const [enteringDungeonKey, setEnteringDungeonKey] = useState<string | null>(null);
 
   const loadDungeon = useCallback(async () => {
     try {
@@ -55,15 +60,24 @@ export default function DungeonScreen() {
     }, [loadDungeon]),
   );
 
-  const enterDungeon = async () => {
-    if (!canEnter || entering) return;
+  const enterDungeon = async (dungeonKey: string) => {
+    const availability = overview.dungeons.find((entry) => entry.dungeon.key === dungeonKey);
+    const anotherDungeonIsActive =
+      overview.activeDungeonKey !== null && overview.activeDungeonKey !== dungeonKey;
+    const canEnter = Boolean(
+      availability?.active ||
+        (availability?.unlocked &&
+          !anotherDungeonIsActive &&
+          overview.energyAvailable >= availability.entryCost),
+    );
+    if (!canEnter || enteringDungeonKey) return;
 
-    setEntering(true);
+    setEnteringDungeonKey(dungeonKey);
     try {
-      await beginDungeonBattle(db, firstDungeon.key);
+      await beginDungeonBattle(db, dungeonKey);
       router.push('/dungeon-run' as Href);
     } finally {
-      setEntering(false);
+      setEnteringDungeonKey(null);
     }
   };
 
@@ -120,88 +134,125 @@ export default function DungeonScreen() {
 
         <View style={styles.sectionHeader}>
           <View>
-            <Text style={styles.sectionEyebrow}>FIRST GATE</Text>
-            <Text style={styles.sectionTitle}>Available dungeon</Text>
+            <Text style={styles.sectionEyebrow}>DISCOVERED GATES</Text>
+            <Text style={styles.sectionTitle}>Available regions</Text>
           </View>
         </View>
 
-        <LinearGradient
-          colors={['rgba(27, 24, 52, 0.96)', 'rgba(10, 14, 31, 0.98)']}
-          end={{ x: 1, y: 1 }}
-          start={{ x: 0, y: 0 }}
-          style={styles.gateCard}>
-          <View style={styles.gateTopRow}>
-            <View style={styles.gateIcon}>
-              <MaterialCommunityIcons name="gate" size={30} color="#C8A6FF" />
-            </View>
-            <View style={styles.gateBody}>
-              <Text style={styles.gateRegion}>{firstDungeon.region}</Text>
-              <Text style={styles.gateName}>{firstDungeon.name}</Text>
-              <Text style={styles.gateDescription}>{firstDungeon.description}</Text>
-            </View>
-          </View>
+        <View style={styles.gateList}>
+          {overview.dungeons.map((availability) => {
+            const { dungeon } = availability;
+            const anotherDungeonIsActive =
+              overview.activeDungeonKey !== null && !availability.active;
+            const hasEnergy = overview.energyAvailable >= availability.entryCost;
+            const canEnter =
+              availability.active ||
+              (availability.unlocked && !anotherDungeonIsActive && hasEnergy);
+            const entering = enteringDungeonKey === dungeon.key;
+            const buttonLabel = entering
+              ? 'Entering'
+              : availability.active
+                ? 'Resume Battle'
+                : anotherDungeonIsActive
+                  ? 'Finish Active Gate'
+                  : !availability.unlocked
+                    ? `${dungeon.rank} Required`
+                    : hasEnergy
+                      ? 'Enter Gate'
+                      : 'Need Energy';
 
-          <View style={styles.gateMetaRow}>
-            <View style={styles.gateMetaTile}>
-              <Text style={styles.gateMetaValue}>{firstDungeon.rank}</Text>
-              <Text style={styles.gateMetaLabel}>Rank</Text>
-            </View>
-            <View style={styles.gateMetaTile}>
-              <Text style={styles.gateMetaValue}>{firstDungeon.difficulty}</Text>
-              <Text style={styles.gateMetaLabel}>Mode</Text>
-            </View>
-            <View style={styles.gateMetaTile}>
-              <Text style={styles.gateMetaValue}>
-                {overview.isTrialEntry ? 'Free' : overview.entryCost}
-              </Text>
-              <Text style={styles.gateMetaLabel}>Energy</Text>
-            </View>
-          </View>
+            return (
+              <LinearGradient
+                key={dungeon.key}
+                colors={['rgba(27, 24, 52, 0.96)', 'rgba(10, 14, 31, 0.98)']}
+                end={{ x: 1, y: 1 }}
+                start={{ x: 0, y: 0 }}
+                style={[styles.gateCard, { borderColor: `${dungeon.accent}55` }]}>
+                <View style={styles.gateTopRow}>
+                  <View style={[styles.gateIcon, { borderColor: `${dungeon.accent}77` }]}>
+                    <MaterialCommunityIcons
+                      name={availability.unlocked ? dungeon.icon : 'lock-outline'}
+                      size={30}
+                      color={availability.unlocked ? dungeon.accent : '#777E9C'}
+                    />
+                  </View>
+                  <View style={styles.gateBody}>
+                    <Text style={[styles.gateRegion, { color: dungeon.accent }]}>
+                      {dungeon.region}
+                    </Text>
+                    <Text style={styles.gateName}>{dungeon.name}</Text>
+                    <Text style={styles.gateDescription}>{dungeon.description}</Text>
+                  </View>
+                </View>
 
-          {overview.hasActiveBattle ? (
-            <View style={styles.resultBanner}>
-              <MaterialCommunityIcons name="sword-cross" size={17} color="#FFD27A" />
-              <Text style={styles.resultText}>An unfinished gate battle is waiting.</Text>
-            </View>
-          ) : null}
+                <View style={styles.gateMetaRow}>
+                  <View style={styles.gateMetaTile}>
+                    <Text style={styles.gateMetaValue}>{dungeon.rank}</Text>
+                    <Text style={styles.gateMetaLabel}>Rank</Text>
+                  </View>
+                  <View style={styles.gateMetaTile}>
+                    <Text style={styles.gateMetaValue}>{dungeon.difficulty}</Text>
+                    <Text style={styles.gateMetaLabel}>Mode</Text>
+                  </View>
+                  <View style={styles.gateMetaTile}>
+                    <Text style={styles.gateMetaValue}>
+                      {availability.isTrialEntry ? 'Free' : availability.entryCost}
+                    </Text>
+                    <Text style={styles.gateMetaLabel}>Energy</Text>
+                  </View>
+                </View>
 
-          <Pressable
-            disabled={!canEnter || entering || loading}
-            onPress={() => void enterDungeon()}
-            style={({ pressed }) => [
-              styles.enterButton,
-              !canEnter && styles.enterButtonLocked,
-              pressed && canEnter && styles.enterButtonPressed,
-            ]}>
-            {entering ? (
-              <ActivityIndicator color="#061018" />
-            ) : (
-              <MaterialCommunityIcons
-                name={overview.hasActiveBattle ? 'play' : canEnter ? 'sword-cross' : 'lock-outline'}
-                size={18}
-                color={canEnter ? '#061018' : '#777E9C'}
-              />
-            )}
-            <Text style={[styles.enterButtonText, !canEnter && styles.enterButtonTextLocked]}>
-              {entering
-                ? 'Entering'
-                : overview.hasActiveBattle
-                  ? 'Resume Battle'
-                  : canEnter
-                    ? 'Enter Gate'
-                    : 'Need Energy'}
-            </Text>
-          </Pressable>
+                {availability.active ? (
+                  <View style={styles.resultBanner}>
+                    <MaterialCommunityIcons name="sword-cross" size={17} color="#FFD27A" />
+                    <Text style={styles.resultText}>An unfinished gate battle is waiting.</Text>
+                  </View>
+                ) : null}
 
-          {!canEnter ? (
-            <Pressable
-              onPress={() => router.push('/' as Href)}
-              style={({ pressed }) => [styles.todayLink, pressed && styles.todayLinkPressed]}>
-              <MaterialCommunityIcons name="lightning-bolt" size={16} color="#7EE7FF" />
-              <Text style={styles.todayLinkText}>Earn Energy on Today</Text>
-            </Pressable>
-          ) : null}
-        </LinearGradient>
+                {!availability.unlocked ? (
+                  <View style={styles.lockBanner}>
+                    <MaterialCommunityIcons name="shield-lock-outline" size={17} color="#AAB0C5" />
+                    <Text style={styles.lockText}>
+                      Reach {dungeon.rank} through a Rank-Up Trial to unlock this region.
+                    </Text>
+                  </View>
+                ) : null}
+
+                <Pressable
+                  disabled={!canEnter || Boolean(enteringDungeonKey) || loading}
+                  onPress={() => void enterDungeon(dungeon.key)}
+                  style={({ pressed }) => [
+                    styles.enterButton,
+                    !canEnter && styles.enterButtonLocked,
+                    canEnter && { backgroundColor: dungeon.accent, borderColor: `${dungeon.accent}CC` },
+                    pressed && canEnter && styles.enterButtonPressed,
+                  ]}>
+                  {entering ? (
+                    <ActivityIndicator color="#061018" />
+                  ) : (
+                    <MaterialCommunityIcons
+                      name={availability.active ? 'play' : canEnter ? 'sword-cross' : 'lock-outline'}
+                      size={18}
+                      color={canEnter ? '#061018' : '#777E9C'}
+                    />
+                  )}
+                  <Text style={[styles.enterButtonText, !canEnter && styles.enterButtonTextLocked]}>
+                    {buttonLabel}
+                  </Text>
+                </Pressable>
+
+                {availability.unlocked && !anotherDungeonIsActive && !hasEnergy ? (
+                  <Pressable
+                    onPress={() => router.push('/' as Href)}
+                    style={({ pressed }) => [styles.todayLink, pressed && styles.todayLinkPressed]}>
+                    <MaterialCommunityIcons name="lightning-bolt" size={16} color="#7EE7FF" />
+                    <Text style={styles.todayLinkText}>Earn Energy on Today</Text>
+                  </Pressable>
+                ) : null}
+              </LinearGradient>
+            );
+          })}
+        </View>
 
         <View style={styles.sectionHeaderSecondary}>
           <Text style={styles.sectionEyebrow}>RUN LOG</Text>
@@ -343,6 +394,7 @@ const styles = StyleSheet.create({
   sectionHeaderSecondary: { marginTop: 22, marginBottom: 12 },
   sectionEyebrow: { color: '#9E8EFF', fontSize: 9, fontWeight: '900', letterSpacing: 1.7 },
   sectionTitle: { color: '#F1EFFF', fontSize: 19, fontWeight: '800', marginTop: 4 },
+  gateList: { gap: 12 },
   gateCard: {
     borderRadius: 19,
     padding: 15,
@@ -391,6 +443,19 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255, 210, 122, 0.24)',
   },
   resultText: { color: '#FFDFA3', fontSize: 11, fontWeight: '800', flex: 1 },
+  lockBanner: {
+    minHeight: 42,
+    borderRadius: 13,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 12,
+    marginTop: 14,
+    backgroundColor: 'rgba(115, 122, 151, 0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(155, 163, 192, 0.22)',
+  },
+  lockText: { color: '#AAB0C5', fontSize: 11, fontWeight: '800', flex: 1, lineHeight: 16 },
   enterButton: {
     height: 48,
     borderRadius: 15,

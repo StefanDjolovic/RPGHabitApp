@@ -1,6 +1,6 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 
-const DATABASE_VERSION = 25;
+const DATABASE_VERSION = 26;
 
 export async function migrateDatabase(db: SQLiteDatabase) {
   await db.execAsync('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
@@ -877,6 +877,52 @@ export async function migrateDatabase(db: SQLiteDatabase) {
 
       CREATE INDEX IF NOT EXISTS idx_dungeon_room_events_run
         ON dungeon_room_events(client_run_id, room_index);
+    `);
+  }
+
+  if (currentVersion < 26) {
+    await db.execAsync(`
+      CREATE TABLE IF NOT EXISTS player_rank_state (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        current_rank_key TEXT NOT NULL DEFAULT 'unawakened',
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      INSERT OR IGNORE INTO player_rank_state (id, current_rank_key)
+      SELECT
+        1,
+        CASE
+          WHEN EXISTS (SELECT 1 FROM player_class_state WHERE id = 1) THEN 'e_rank'
+          ELSE 'unawakened'
+        END;
+
+      CREATE TABLE IF NOT EXISTS rank_trial_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        client_event_id TEXT NOT NULL UNIQUE,
+        previous_rank_key TEXT NOT NULL,
+        next_rank_key TEXT NOT NULL,
+        player_level INTEGER NOT NULL CHECK (player_level > 0),
+        dungeon_clears INTEGER NOT NULL CHECK (dungeon_clears >= 0),
+        completed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_rank_trial_events_completed
+        ON rank_trial_events(completed_at);
+
+      INSERT OR IGNORE INTO rank_trial_events (
+        client_event_id,
+        previous_rank_key,
+        next_rank_key,
+        player_level,
+        dungeon_clears
+      )
+      SELECT
+        'legacy-awakening-rank',
+        'unawakened',
+        'e_rank',
+        10,
+        COALESCE((SELECT COUNT(*) FROM dungeon_runs WHERE status = 'cleared'), 0)
+      WHERE EXISTS (SELECT 1 FROM player_class_state WHERE id = 1);
     `);
   }
 

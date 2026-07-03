@@ -64,6 +64,10 @@ export default function RootLayout() {
             name="class-skills"
             options={{ animation: 'slide_from_right', headerShown: false }}
           />
+          <Stack.Screen
+            name="rank-trial"
+            options={{ animation: 'slide_from_right', headerShown: false }}
+          />
           <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Habit RPG' }} />
         </Stack>
         <StatusBar style="light" />

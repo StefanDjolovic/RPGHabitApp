@@ -52,6 +52,7 @@ export type EnemyIntent = {
   name: string;
   detail: string;
   damage: number;
+  status: CombatStatus | null;
 };
 
 export type CombatResolution = {
@@ -62,11 +63,18 @@ export type CombatResolution = {
   healing: number;
 };
 
-const ENEMY_INTENT_CYCLE: Omit<EnemyIntent, 'damage'>[] = [
-  { type: 'attack', name: 'Ashen Slash', detail: 'A direct blade strike.' },
-  { type: 'charge', name: 'Gathering Cinders', detail: 'The Warden prepares a heavy blow.' },
-  { type: 'heavy', name: 'Cinder Breaker', detail: 'Heavy damage and Weakened.' },
-  { type: 'attack', name: 'Ember Sweep', detail: 'A fast strike that inflicts Burn.' },
+const ASHEN_INTENT_CYCLE: Omit<EnemyIntent, 'damage'>[] = [
+  { type: 'attack', name: 'Ashen Slash', detail: 'A direct blade strike.', status: null },
+  { type: 'charge', name: 'Gathering Cinders', detail: 'The enemy prepares a heavy blow.', status: null },
+  { type: 'heavy', name: 'Cinder Breaker', detail: 'Heavy damage and Weakened.', status: { type: 'weakened', turns: 3, potency: 25 } },
+  { type: 'attack', name: 'Ember Sweep', detail: 'A fast strike that inflicts Burn.', status: { type: 'burn', turns: 3, potency: 3 } },
+];
+
+const VERDANT_INTENT_CYCLE: Omit<EnemyIntent, 'damage'>[] = [
+  { type: 'attack', name: 'Root Lash', detail: 'A quick strike through the undergrowth.', status: null },
+  { type: 'charge', name: 'Coiling Growth', detail: 'Roots gather strength for a crushing blow.', status: null },
+  { type: 'heavy', name: 'Thorn Crush', detail: 'Heavy damage and Weakened.', status: { type: 'weakened', turns: 3, potency: 20 } },
+  { type: 'attack', name: 'Toxic Bloom', detail: 'A poisonous cloud follows the strike.', status: { type: 'poison', turns: 3, potency: 4 } },
 ];
 
 function getAttributePoints(progress: PlayerProgress, attribute: keyof PlayerProgress['attributeXp']) {
@@ -97,9 +105,14 @@ export function getUnawakenedCombatStats(
   };
 }
 
-export function getEnemyIntent(turnNumber: number, enemyPower = 0): EnemyIntent {
+export function getEnemyIntent(
+  turnNumber: number,
+  enemyPower = 0,
+  dungeonKey = 'ashen-ruins',
+): EnemyIntent {
   const safeTurn = Math.max(1, Math.floor(turnNumber));
-  const definition = ENEMY_INTENT_CYCLE[(safeTurn - 1) % ENEMY_INTENT_CYCLE.length];
+  const cycle = dungeonKey === 'verdant-wilds' ? VERDANT_INTENT_CYCLE : ASHEN_INTENT_CYCLE;
+  const definition = cycle[(safeTurn - 1) % cycle.length];
   const baseDamage = definition.type === 'heavy' ? 17 : definition.type === 'attack' ? 9 : 0;
 
   return {
@@ -155,6 +168,7 @@ export function resolveCombatAction(
   profile?: ClassCombatProfile,
   passiveSkillKeys: string[] = [],
   enemyName = 'Cinder Warden',
+  dungeonKey = 'ashen-ruins',
 ): CombatResolution {
   if (snapshot.playerHp <= 0 || snapshot.enemyHp <= 0) {
     throw new Error('This battle has already ended.');
@@ -294,7 +308,7 @@ export function resolveCombatAction(
     };
   }
 
-  const intent = getEnemyIntent(snapshot.turnNumber, stats.enemyPower);
+  const intent = getEnemyIntent(snapshot.turnNumber, stats.enemyPower, dungeonKey);
   if (hasCombatStatus(enemyStatuses, 'stun')) {
     entries.push({ message: `Stun interrupts ${enemyName}'s action.`, tone: 'system' });
   } else {
@@ -325,20 +339,12 @@ export function resolveCombatAction(
       tone: 'enemy',
     });
 
-    if (enemyDamage > 0 && intent.name === 'Cinder Breaker') {
-      playerStatuses = applyCombatStatus(playerStatuses, {
-        type: 'weakened',
-        turns: 3,
-        potency: 25,
+    if (enemyDamage > 0 && intent.status) {
+      playerStatuses = applyCombatStatus(playerStatuses, intent.status);
+      entries.push({
+        message: `${intent.name} inflicts ${combatStatusCatalog[intent.status.type].label}.`,
+        tone: 'enemy',
       });
-      entries.push({ message: 'Cinder Breaker leaves you Weakened.', tone: 'enemy' });
-    } else if (enemyDamage > 0 && intent.name === 'Ember Sweep') {
-      playerStatuses = applyCombatStatus(playerStatuses, {
-        type: 'burn',
-        turns: 3,
-        potency: 3,
-      });
-      entries.push({ message: 'Ember Sweep inflicts Burn.', tone: 'enemy' });
     }
   }
 

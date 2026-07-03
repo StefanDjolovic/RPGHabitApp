@@ -239,6 +239,31 @@ export async function awakenPlayer(db: SQLiteDatabase, classKey: StarterClassKey
       `awakening-${eventId}`,
       classKey,
     );
+    await txn.runAsync(
+      `INSERT INTO player_rank_state (id, current_rank_key)
+       VALUES (1, 'e_rank')
+       ON CONFLICT(id) DO UPDATE SET
+         current_rank_key = CASE
+           WHEN current_rank_key = 'unawakened' THEN 'e_rank'
+           ELSE current_rank_key
+         END,
+         updated_at = CURRENT_TIMESTAMP`,
+    );
+    const clearsRow = await txn.getFirstAsync<{ total: number }>(
+      `SELECT COUNT(*) AS total FROM dungeon_runs WHERE status = 'cleared'`,
+    );
+    await txn.runAsync(
+      `INSERT OR IGNORE INTO rank_trial_events (
+         client_event_id,
+         previous_rank_key,
+         next_rank_key,
+         player_level,
+         dungeon_clears
+       ) VALUES (?, 'unawakened', 'e_rank', ?, ?)`,
+      `awakening-rank-${eventId}`,
+      progress.level,
+      clearsRow?.total ?? 0,
+    );
   });
 
   return getPlayerClassState(db);

@@ -13,6 +13,7 @@ import {
   MAX_DAILY_DUNGEON_ENERGY,
   MAX_DUNGEON_ENERGY,
 } from '@/src/progression/dungeon-energy';
+import { getRankDefinition, type RankKey } from '@/src/progression/rank-catalog';
 
 export const MAX_LEVEL = 100;
 export const STAT_POINTS_PER_LEVEL = 2;
@@ -20,6 +21,7 @@ export { MAX_DAILY_DUNGEON_ENERGY, MAX_DUNGEON_ENERGY };
 
 export type PlayerProgress = {
   level: number;
+  rankKey: RankKey;
   rankLabel: string;
   rankShort: string;
   totalXp: number;
@@ -48,6 +50,7 @@ const emptyAttributeXp: Record<HabitAttribute, number> = {
 
 export const INITIAL_PLAYER_PROGRESS: PlayerProgress = {
   level: 1,
+  rankKey: 'unawakened',
   rankLabel: 'Unawakened',
   rankShort: 'U',
   totalXp: 0,
@@ -106,6 +109,7 @@ export async function getPlayerProgress(db: SQLiteDatabase): Promise<PlayerProgr
   const todayKey = getLocalDateKey();
   const [
     xpRow,
+    rankRow,
     energyRow,
     spentEnergyRow,
     todayEnergyRow,
@@ -118,6 +122,9 @@ export async function getPlayerProgress(db: SQLiteDatabase): Promise<PlayerProgr
          COALESCE((SELECT SUM(amount) FROM xp_events), 0) +
          COALESCE((SELECT SUM(xp_amount) FROM boss_quest_reward_events), 0) +
          COALESCE((SELECT SUM(xp_amount) FROM recovery_quest_events), 0) AS total`,
+    ),
+    db.getFirstAsync<{ rankKey: string }>(
+      'SELECT current_rank_key AS rankKey FROM player_rank_state WHERE id = 1',
     ),
     db.getFirstAsync<TotalRow>(
       `SELECT
@@ -184,7 +191,7 @@ export async function getPlayerProgress(db: SQLiteDatabase): Promise<PlayerProgr
     Math.max(0, todayEnergyRow?.total ?? 0),
   );
   const levelProgress = getLevelProgress(totalXp);
-  const rank = getRankForLevel(levelProgress.level);
+  const rank = getRankDefinition(rankRow?.rankKey ?? 'unawakened');
   const attributeXp = { ...emptyAttributeXp };
   const manualStatPoints = { ...emptyAttributeXp };
   const totalStatPointsEarned = levelProgress.level * STAT_POINTS_PER_LEVEL;
@@ -203,7 +210,9 @@ export async function getPlayerProgress(db: SQLiteDatabase): Promise<PlayerProgr
 
   return {
     ...levelProgress,
-    ...rank,
+    rankKey: rank.key,
+    rankLabel: rank.label,
+    rankShort: rank.shortLabel,
     totalXp,
     dungeonEnergy,
     todayDungeonEnergy,

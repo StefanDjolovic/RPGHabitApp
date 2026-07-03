@@ -8,7 +8,11 @@ import {
   grantGold,
   grantInventoryItem,
 } from '@/src/database/inventory-repository';
-import { getDungeonDefinition } from '@/src/dungeon/dungeon-catalog';
+import {
+  dungeons,
+  getDungeonDefinition,
+  type DungeonDefinition,
+} from '@/src/dungeon/dungeon-catalog';
 import {
   getClassCombatProfile,
   type ClassCombatProfile,
@@ -32,6 +36,7 @@ import {
 import { getItemDefinition, rollDungeonReward } from '@/src/inventory/item-catalog';
 import { MAX_DUNGEON_ENERGY } from '@/src/progression/dungeon-energy';
 import { getPlayerProgress } from '@/src/progression/player-progression';
+import { getRankOrder } from '@/src/progression/rank-catalog';
 
 export type DungeonPath = 'safe' | 'risky';
 export type DungeonRoomType = 'combat' | 'path_choice' | 'event' | 'elite' | 'boss_ready' | 'boss';
@@ -63,6 +68,17 @@ export type DungeonOverview = {
   hasActiveBattle: boolean;
   totalClears: number;
   recentRuns: DungeonRun[];
+  dungeons: DungeonAvailability[];
+  activeDungeonKey: string | null;
+};
+
+export type DungeonAvailability = {
+  dungeon: DungeonDefinition;
+  unlocked: boolean;
+  isTrialEntry: boolean;
+  entryCost: number;
+  attempts: number;
+  active: boolean;
 };
 
 export type DungeonBattle = {
@@ -70,6 +86,7 @@ export type DungeonBattle = {
   dungeonName: string;
   difficulty: string;
   bossName: string;
+  dungeon: DungeonDefinition;
   enemyName: string;
   roomIndex: number;
   roomType: DungeonRoomType;
@@ -96,6 +113,7 @@ export type DungeonBattleActionResult = {
 };
 
 type TotalRow = { total: number };
+type DungeonAttemptRow = { dungeonKey: string; total: number };
 type DungeonRunRow = Omit<DungeonRun, 'rewardName' | 'className'>;
 
 type DungeonBattleSessionRow = {
@@ -321,22 +339,22 @@ async function getRunById(db: SQLiteDatabase, runId: number) {
 }
 
 export async function getDungeonOverview(db: SQLiteDatabase): Promise<DungeonOverview> {
-  const dungeon = getDungeonDefinition('ashen-ruins');
-  const [energyAvailable, clearsRow, attemptsRow, activeRow, runRows] = await Promise.all([
+  const firstDungeon = getDungeonDefinition('ashen-ruins');
+  const [energyAvailable, clearsRow, attemptRows, activeRow, runRows, rankRow] = await Promise.all([
     getDungeonEnergyAvailable(db),
     db.getFirstAsync<TotalRow>(
       `SELECT COUNT(*) AS total
        FROM dungeon_runs
        WHERE status = 'cleared'`,
     ),
-    db.getFirstAsync<TotalRow>(
-      `SELECT COUNT(*) AS total
+    db.getAllAsync<DungeonAttemptRow>(
+      `SELECT dungeon_key AS dungeonKey, COUNT(*) AS total
        FROM dungeon_runs
-       WHERE dungeon_key = ?`,
-      dungeon.key,
+       GROUP BY dungeon_key`,
     ),
-    db.getFirstAsync<{ energyCost: number }>(
-      'SELECT energy_cost AS energyCost FROM dungeon_battle_sessions WHERE id = 1',
+    db.getFirstAsync<{ dungeonKey: string; energyCost: number }>(
+      `SELECT dungeon_key AS dungeonKey, energy_cost AS energyCost
+       FROM dungeon_battle_sessions WHERE id = 1`,
     ),
     db.getAllAsync<DungeonRunRow>(
       `SELECT
@@ -361,19 +379,38 @@ export async function getDungeonOverview(db: SQLiteDatabase): Promise<DungeonOve
          completed_at AS completedAt
        FROM dungeon_runs dr
        ORDER BY dr.completed_at DESC, dr.id DESC
-       LIMIT 5`,
+      LIMIT 5`,
+    ),
+    db.getFirstAsync<{ rankKey: string }>(
+      'SELECT current_rank_key AS rankKey FROM player_rank_state WHERE id = 1',
     ),
   ]);
+  const attemptMap = new Map(attemptRows.map((row) => [row.dungeonKey, row.total]));
   const hasActiveBattle = activeRow !== null;
-  const isTrialEntry = !hasActiveBattle && (attemptsRow?.total ?? 0) === 0;
+  const currentRankOrder = getRankOrder(rankRow?.rankKey ?? 'unawakened');
+  const availability = dungeons.map((dungeon) => {
+    const attempts = attemptMap.get(dungeon.key) ?? 0;
+    const active = activeRow?.dungeonKey === dungeon.key;
+    return {
+      dungeon,
+      unlocked: currentRankOrder >= getRankOrder(dungeon.requiredRankKey),
+      isTrialEntry: !active && attempts === 0,
+      entryCost: active ? activeRow.energyCost : attempts === 0 ? 0 : dungeon.energyCost,
+      attempts,
+      active,
+    };
+  });
+  const firstAvailability = availability.find((entry) => entry.dungeon.key === firstDungeon.key);
 
   return {
     energyAvailable,
-    entryCost: activeRow?.energyCost ?? (isTrialEntry ? 0 : dungeon.energyCost),
-    isTrialEntry,
+    entryCost: firstAvailability?.entryCost ?? firstDungeon.energyCost,
+    isTrialEntry: firstAvailability?.isTrialEntry ?? false,
     hasActiveBattle,
     totalClears: clearsRow?.total ?? 0,
     recentRuns: runRows.map(toDungeonRun),
+    dungeons: availability,
+    activeDungeonKey: activeRow?.dungeonKey ?? null,
   };
 }
 
@@ -396,12 +433,14 @@ export async function getActiveDungeonBattle(
     getClassCombatProfile(row.classKey, skillKey),
   );
   const combatProfile = activeSkillProfiles[0] ?? getClassCombatProfile(row.classKey);
+  const dungeon = getDungeonDefinition(row.dungeonKey);
 
   return {
     dungeonKey: row.dungeonKey,
     dungeonName: row.dungeonName,
     difficulty: row.difficulty,
-    bossName: getDungeonDefinition(row.dungeonKey).bossName,
+    bossName: dungeon.bossName,
+    dungeon,
     enemyName: row.enemyName,
     roomIndex: row.roomIndex,
     roomType: row.roomType,
@@ -417,7 +456,7 @@ export async function getActiveDungeonBattle(
     isTrialEntry: row.energyCost === 0,
     snapshot,
     stats,
-    enemyIntent: getEnemyIntent(snapshot.turnNumber, stats.enemyPower),
+    enemyIntent: getEnemyIntent(snapshot.turnNumber, stats.enemyPower, row.dungeonKey),
     potionCount: Math.max(0, potionRow?.quantity ?? 0),
   };
 }
@@ -431,7 +470,7 @@ export async function beginDungeonBattle(
 
   const dungeon = getDungeonDefinition(dungeonKey);
   const createSession = async (txn: SQLiteDatabase) => {
-    const [energyAvailable, attemptsRow, progress, equipmentBonuses, classRow, eventIdRow] =
+    const [energyAvailable, attemptsRow, progress, equipmentBonuses, classRow, rankRow, eventIdRow] =
       await Promise.all([
       getDungeonEnergyAvailable(txn),
       txn.getFirstAsync<TotalRow>(
@@ -443,6 +482,9 @@ export async function beginDungeonBattle(
       txn.getFirstAsync<{ classKey: string }>(
         'SELECT active_class_key AS classKey FROM player_class_state WHERE id = 1',
       ),
+      txn.getFirstAsync<{ rankKey: string }>(
+        'SELECT current_rank_key AS rankKey FROM player_rank_state WHERE id = 1',
+      ),
       txn.getFirstAsync<{ eventId: string }>('SELECT lower(hex(randomblob(16))) AS eventId'),
     ]);
     const isTrialEntry = (attemptsRow?.total ?? 0) === 0;
@@ -451,6 +493,9 @@ export async function beginDungeonBattle(
 
     if (energyAvailable < energyCost) throw new Error('Not enough Dungeon Energy.');
     if (!eventId) throw new Error('Could not create a dungeon battle.');
+    if (getRankOrder(rankRow?.rankKey ?? 'unawakened') < getRankOrder(dungeon.requiredRankKey)) {
+      throw new Error(`${dungeon.rank} is required to enter ${dungeon.name}.`);
+    }
 
     const classKey = classRow?.classKey ?? 'unawakened';
     const equippedSkills = isStarterClassKey(classKey)
@@ -469,7 +514,12 @@ export async function beginDungeonBattle(
       .filter((skill) => skill.skillType === 'passive')
       .map((skill) => skill.skillKey);
     const combatProfile = getClassCombatProfile(classKey);
-    const stats = getUnawakenedCombatStats(progress, equipmentBonuses);
+    const baseStats = getUnawakenedCombatStats(progress, equipmentBonuses);
+    const stats: UnawakenedCombatStats = {
+      ...baseStats,
+      maxEnemyHp: Math.round(baseStats.maxEnemyHp * dungeon.enemyHpMultiplier),
+      enemyPower: baseStats.enemyPower + dungeon.enemyPowerBonus,
+    };
     const bossMaxEnemyHp = stats.maxEnemyHp;
     const scoutMaxEnemyHp = Math.max(36, Math.round(bossMaxEnemyHp * 0.62));
     const snapshot: CombatSnapshot = {
@@ -477,7 +527,7 @@ export async function beginDungeonBattle(
       enemyHp: scoutMaxEnemyHp,
       log: [{
         id: 'system-entry',
-        message: 'An Ashbound Scout guards the first fork.',
+        message: `${dungeon.scoutName} guards the first fork.`,
         tone: 'system',
       }],
     };
@@ -543,7 +593,7 @@ export async function beginDungeonBattle(
       'combat',
       null,
       0,
-      'Ashbound Scout',
+      dungeon.scoutName,
       bossMaxEnemyHp,
       0,
       0,
@@ -601,7 +651,8 @@ async function prepareDungeonEncounter(
   roomType: 'elite' | 'boss',
   roomsCleared: number,
 ) {
-  const enemyName = roomType === 'elite' ? 'Ashen Brute' : getDungeonDefinition(row.dungeonKey).bossName;
+  const dungeon = getDungeonDefinition(row.dungeonKey);
+  const enemyName = roomType === 'elite' ? dungeon.eliteName : dungeon.bossName;
   const maxEnemyHp = roomType === 'elite'
     ? Math.max(48, Math.round(row.bossMaxEnemyHp * 0.88))
     : row.bossMaxEnemyHp;
@@ -609,8 +660,8 @@ async function prepareDungeonEncounter(
   const log: CombatLogEntry[] = [{
     id: `room-${roomIndex}-entry`,
     message: roomType === 'elite'
-      ? 'The Ashen Brute blocks the risky passage.'
-      : 'The Cinder Warden descends before the final gate.',
+      ? `${dungeon.eliteName} blocks the risky passage.`
+      : `${dungeon.bossName} descends before the final gate.`,
     tone: 'system',
   }];
 
@@ -647,6 +698,7 @@ export async function chooseDungeonPath(db: SQLiteDatabase, path: DungeonPath) {
     }
 
     if (path === 'safe') {
+      const dungeon = getDungeonDefinition(row.dungeonKey);
       const healing = Math.min(
         Math.ceil(row.maxPlayerHp * 0.35),
         row.maxPlayerHp - row.playerHp,
@@ -657,13 +709,14 @@ export async function chooseDungeonPath(db: SQLiteDatabase, path: DungeonPath) {
              room_index = 3,
              room_type = 'event',
              rooms_cleared = 2,
-             enemy_name = 'Whispering Shrine',
+             enemy_name = ?,
              player_hp = player_hp + ?,
              player_statuses = '[]',
              enemy_statuses = '[]',
              combat_log = ?,
              updated_at = CURRENT_TIMESTAMP
          WHERE id = 1`,
+        dungeon.eventName,
         healing,
         JSON.stringify([{
           id: 'safe-rest',
@@ -682,10 +735,11 @@ export async function chooseDungeonPath(db: SQLiteDatabase, path: DungeonPath) {
       row.clientRunId,
       `dungeon-treasure-gold-${row.clientRunId}`,
     );
+    const dungeon = getDungeonDefinition(row.dungeonKey);
     await grantInventoryItem(
       txn,
-      'ash-shard',
-      2,
+      dungeon.treasureItemKey,
+      dungeon.treasureItemQuantity,
       'dungeon_treasure',
       row.clientRunId,
       `dungeon-treasure-item-${row.clientRunId}`,
@@ -699,7 +753,16 @@ export async function chooseDungeonPath(db: SQLiteDatabase, path: DungeonPath) {
        WHERE id = 1`,
     );
     const riskyRow = { ...row, routeKey: 'risky' as const, interimGold: row.interimGold + 6 };
-    await recordDungeonRoomEvent(txn, riskyRow, 2, 'treasure', 'resolved', 6, 'ash-shard', 2);
+    await recordDungeonRoomEvent(
+      txn,
+      riskyRow,
+      2,
+      'treasure',
+      'resolved',
+      6,
+      dungeon.treasureItemKey,
+      dungeon.treasureItemQuantity,
+    );
     await prepareDungeonEncounter(txn, riskyRow, 'elite', 2);
   };
 
@@ -872,6 +935,7 @@ export async function performDungeonBattleAction(
       combatProfile,
       passiveSkillKeys,
       row.enemyName,
+      row.dungeonKey,
     );
     outcome = resolution.outcome;
 
@@ -954,6 +1018,7 @@ export async function performDungeonBattleAction(
     }
 
     if (row.roomType === 'elite') {
+      const dungeon = getDungeonDefinition(row.dungeonKey);
       await grantGold(
         txn,
         4,
@@ -963,7 +1028,7 @@ export async function performDungeonBattleAction(
       );
       await grantInventoryItem(
         txn,
-        'focus-crystal',
+        dungeon.eliteItemKey,
         1,
         'dungeon_elite',
         row.clientRunId,
@@ -976,7 +1041,7 @@ export async function performDungeonBattleAction(
         'elite',
         'cleared',
         4,
-        'focus-crystal',
+        dungeon.eliteItemKey,
         1,
       );
       await txn.runAsync(

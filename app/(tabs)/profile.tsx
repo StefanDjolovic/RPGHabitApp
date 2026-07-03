@@ -31,6 +31,11 @@ import {
   type PlayerProfile,
 } from '@/src/database/profile-repository';
 import {
+  getRankTrialState,
+  INITIAL_RANK_TRIAL_STATE,
+  type RankTrialState,
+} from '@/src/database/rank-repository';
+import {
   getPlayerClassState,
   INITIAL_PLAYER_CLASS_STATE,
   type PlayerClassState,
@@ -154,6 +159,8 @@ export default function ProfileScreen() {
   const [playerProfile, setPlayerProfile] = useState<PlayerProfile>(INITIAL_PLAYER_PROFILE);
   const [playerClassState, setPlayerClassState] =
     useState<PlayerClassState>(INITIAL_PLAYER_CLASS_STATE);
+  const [rankTrialState, setRankTrialState] =
+    useState<RankTrialState>(INITIAL_RANK_TRIAL_STATE);
   const [activityStreak, setActivityStreak] = useState(0);
   const [recentActivity, setRecentActivity] = useState<ActivitySummaryDay[]>([]);
   const [activityCalendar, setActivityCalendar] = useState<ActivitySummaryDay[]>([]);
@@ -172,6 +179,7 @@ export default function ProfileScreen() {
         progressSummary,
         profile,
         classState,
+        rankTrial,
         streak,
         activityDays,
         calendarDays,
@@ -183,6 +191,7 @@ export default function ProfileScreen() {
           getPlayerProgress(db),
           getPlayerProfile(db),
           getPlayerClassState(db),
+          getRankTrialState(db),
           getActivityStreak(db),
           getRecentActivityDays(db),
           getActivityCalendarDays(db),
@@ -193,6 +202,7 @@ export default function ProfileScreen() {
       setPlayerProgress(progressSummary);
       setPlayerProfile(profile);
       setPlayerClassState(classState);
+      setRankTrialState(rankTrial);
       setActivityStreak(streak);
       setRecentActivity(activityDays);
       setActivityCalendar(calendarDays);
@@ -420,6 +430,39 @@ export default function ProfileScreen() {
               </Pressable>
             </LinearGradient>
           )
+        ) : null}
+
+        {playerClassState.activeClass && rankTrialState.nextRank ? (
+          <Pressable
+            accessibilityLabel="Open Rank-Up Trial"
+            onPress={() => router.push('/rank-trial' as Href)}
+            style={({ pressed }) => [
+              styles.rankTrialPanel,
+              rankTrialState.ready && { borderColor: `${rankTrialState.nextRank?.accent}77` },
+              pressed && styles.buttonPressed,
+            ]}>
+            <View
+              style={[
+                styles.rankTrialIcon,
+                rankTrialState.ready && { backgroundColor: `${rankTrialState.nextRank.accent}18` },
+              ]}>
+              <MaterialCommunityIcons
+                color={rankTrialState.ready ? rankTrialState.nextRank.accent : '#747D92'}
+                name={rankTrialState.ready ? 'shield-star-outline' : 'shield-lock-outline'}
+                size={25}
+              />
+            </View>
+            <View style={styles.rankTrialBody}>
+              <Text style={styles.rankTrialEyebrow}>
+                {rankTrialState.ready ? 'RANK-UP AVAILABLE' : 'NEXT RANK'}
+              </Text>
+              <Text style={styles.rankTrialTitle}>{rankTrialState.nextRank.trialName}</Text>
+              <Text style={styles.rankTrialMeta}>
+                Level {rankTrialState.nextRank.minimumLevel} - {rankTrialState.nextRank.requiredDungeonClears} dungeon clears
+              </Text>
+            </View>
+            <MaterialCommunityIcons color="#818AA1" name="chevron-right" size={22} />
+          </Pressable>
         ) : null}
 
         <View style={styles.statGrid}>
@@ -1098,6 +1141,30 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     backgroundColor: '#8DEAFF',
   },
+  rankTrialPanel: {
+    minHeight: 78,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 11,
+    padding: 11,
+    borderRadius: 8,
+    backgroundColor: '#0D111D',
+    borderWidth: 1,
+    borderColor: '#2A3043',
+    marginBottom: 14,
+  },
+  rankTrialIcon: {
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 8,
+    backgroundColor: '#151A27',
+  },
+  rankTrialBody: { flex: 1, minWidth: 0 },
+  rankTrialEyebrow: { color: '#FFD166', fontSize: 7, fontWeight: '900', letterSpacing: 1 },
+  rankTrialTitle: { color: '#ECEFF8', fontSize: 12, fontWeight: '900', marginTop: 2 },
+  rankTrialMeta: { color: '#7D859B', fontSize: 8, fontWeight: '700', marginTop: 3 },
   statGrid: { flexDirection: 'row', gap: 10, marginBottom: 24 },
   statCard: {
     flex: 1,

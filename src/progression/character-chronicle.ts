@@ -4,6 +4,7 @@ import type { SQLiteDatabase } from 'expo-sqlite';
 import { getStarterClass } from '@/src/classes/class-catalog';
 import { getItemDefinition, rarityMeta } from '@/src/inventory/item-catalog';
 import { getLevelProgress } from '@/src/progression/player-progression';
+import { getRankDefinition } from '@/src/progression/rank-catalog';
 
 export type ChronicleEventType =
   | 'journey'
@@ -12,6 +13,7 @@ export type ChronicleEventType =
   | 'boss'
   | 'dungeon'
   | 'class'
+  | 'rank'
   | 'loot';
 
 export type ChronicleEvent = {
@@ -52,6 +54,7 @@ type ClassChangeRow = {
   reason: 'initial' | 'free_change' | 'reawakening';
   changedAt: string;
 };
+type RankTrialRow = { id: number; nextRankKey: string; completedAt: string };
 
 function getLevelEvents(rows: XpTimelineRow[]) {
   const events: ChronicleEvent[] = [];
@@ -78,7 +81,7 @@ function getLevelEvents(rows: XpTimelineRow[]) {
 }
 
 export async function getCharacterChronicle(db: SQLiteDatabase): Promise<ChronicleEvent[]> {
-  const [profile, xpRows, recoveryRows, bossRows, dungeonRows, lootRows, classRows] =
+  const [profile, xpRows, recoveryRows, bossRows, dungeonRows, lootRows, classRows, rankRows] =
     await Promise.all([
     db.getFirstAsync<ProfileCreatedRow>(
       'SELECT created_at AS createdAt FROM player_profile WHERE id = 1',
@@ -142,6 +145,10 @@ export async function getCharacterChronicle(db: SQLiteDatabase): Promise<Chronic
          reason,
          changed_at AS changedAt
        FROM class_change_events`,
+    ),
+    db.getAllAsync<RankTrialRow>(
+      `SELECT id, next_rank_key AS nextRankKey, completed_at AS completedAt
+       FROM rank_trial_events`,
     ),
   ]);
   const events = getLevelEvents(xpRows);
@@ -226,6 +233,19 @@ export async function getCharacterChronicle(db: SQLiteDatabase): Promise<Chronic
       occurredAt: classChange.changedAt,
       icon: definition.icon,
       accent: definition.accent,
+    });
+  }
+
+  for (const rankRow of rankRows) {
+    const rank = getRankDefinition(rankRow.nextRankKey);
+    events.push({
+      id: `rank-${rankRow.id}`,
+      type: 'rank',
+      title: `${rank.label} achieved`,
+      detail: rank.trialName,
+      occurredAt: rankRow.completedAt,
+      icon: 'shield-star-outline',
+      accent: rank.accent,
     });
   }
 

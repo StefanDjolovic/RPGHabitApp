@@ -356,7 +356,7 @@ export default function DungeonRunScreen() {
               <Text style={styles.resultEyebrow}>THE FORKED HALL</Text>
               <Text style={styles.resultTitle}>Choose your route</Text>
               <Text style={styles.resultDescription}>
-                The quiet passage offers recovery. The burning passage holds treasure and an Elite guardian.
+                The quiet passage offers recovery. The dangerous passage holds treasure and an Elite guardian.
               </Text>
               <View style={styles.pathOptions}>
                 <Pressable
@@ -407,7 +407,7 @@ export default function DungeonRunScreen() {
                 />
               </View>
               <Text style={styles.resultEyebrow}>
-                {battle.roomType === 'event' ? 'WHISPERING SHRINE' : 'ELITE CLEARED'}
+                {battle.roomType === 'event' ? battle.enemyName.toUpperCase() : 'ELITE CLEARED'}
               </Text>
               <Text style={styles.resultTitle}>
                 {battle.roomType === 'event' ? 'A quiet cache remains' : 'The final gate opens'}
@@ -449,12 +449,16 @@ export default function DungeonRunScreen() {
               source={require('../assets/images/habit-rpg-emblem.png')}
               style={styles.stageEmblem}
             />
-            <View style={styles.enemySigil}>
-              <MaterialCommunityIcons name="fire" size={46} color="#FF8A6A" />
+            <View style={[styles.enemySigil, { borderColor: `${battle.dungeon.accent}66` }]}>
+              <MaterialCommunityIcons
+                name={battle.dungeon.icon}
+                size={46}
+                color={battle.dungeon.accent}
+              />
             </View>
             <Text style={styles.enemyRank}>
               {battle.roomType === 'boss'
-                ? 'E-RANK BOSS'
+                ? `${battle.dungeon.rank.toUpperCase()} BOSS`
                 : battle.roomType === 'elite'
                   ? 'ELITE ENCOUNTER'
                   : 'NORMAL ENCOUNTER'}
@@ -473,7 +477,15 @@ export default function DungeonRunScreen() {
           <View style={styles.intentPanel}>
             <View style={styles.intentIcon}>
               <MaterialCommunityIcons
-                name={battle.enemyIntent.type === 'charge' ? 'fire-alert' : 'sword-cross'}
+                name={
+                  battle.enemyIntent.status?.type === 'poison'
+                    ? 'bottle-tonic-skull-outline'
+                    : battle.enemyIntent.status?.type === 'burn'
+                      ? 'fire-alert'
+                      : battle.enemyIntent.type === 'charge'
+                        ? 'alert-octagram-outline'
+                        : 'sword-cross'
+                }
                 size={22}
                 color="#FFB272"
               />
@@ -645,10 +657,10 @@ export default function DungeonRunScreen() {
           </Text>
           <Text style={styles.resultTitle}>
             {outcome === 'cleared'
-              ? 'Cinder Warden defeated'
+              ? 'Dungeon boss defeated'
               : outcome === 'fled'
                 ? 'You escaped the gate'
-                : 'The Warden prevailed'}
+                : 'The gate guardian prevailed'}
           </Text>
           <Text style={styles.resultDescription}>
             {outcome === 'cleared'

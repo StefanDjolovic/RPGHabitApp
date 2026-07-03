@@ -97,6 +97,32 @@ export const itemCatalog = {
     icon: 'star-four-points',
     description: 'A hot core that hints at stronger dungeon crafting.',
   },
+  'verdant-spore': {
+    name: 'Verdant Spore',
+    rarity: 'common',
+    category: 'material',
+    slot: 'Material',
+    icon: 'leaf',
+    description: 'A living crafting reagent gathered in Verdant Wilds.',
+  },
+  'thornhide-boots': {
+    name: 'Thornhide Boots',
+    rarity: 'uncommon',
+    category: 'equipment',
+    slot: 'Boots',
+    icon: 'shoe-cleat',
+    description: 'Flexible wild hide that softens blows from hostile terrain.',
+    combatBonus: { maxHp: 6, defense: 1 },
+  },
+  'heartwood-charm': {
+    name: 'Heartwood Charm',
+    rarity: 'rare',
+    category: 'equipment',
+    slot: 'Necklace',
+    icon: 'necklace',
+    description: 'A pulsing wooden charm that amplifies awakened abilities.',
+    combatBonus: { maxHp: 5, skillDamage: 2 },
+  },
   'dungeon-key': {
     name: 'Dungeon Key',
     rarity: 'rare',
@@ -163,8 +189,21 @@ const ashenRuinsLootTable: LootTableEntry[] = [
   { itemKey: 'ember-core', quantity: 1, weight: 5 },
 ];
 
+const verdantWildsLootTable: LootTableEntry[] = [
+  { itemKey: 'verdant-spore', quantity: 4, weight: 30 },
+  { itemKey: 'minor-health-potion', quantity: 2, weight: 18 },
+  { itemKey: 'thornhide-boots', quantity: 1, weight: 22 },
+  { itemKey: 'focus-crystal', quantity: 2, weight: 14 },
+  { itemKey: 'heartwood-charm', quantity: 1, weight: 11 },
+  { itemKey: 'ember-core', quantity: 2, weight: 5 },
+];
+
 export function rollDungeonReward(dungeonKey: string): LootReward {
-  const lootTable = dungeonKey === 'ashen-ruins' ? ashenRuinsLootTable : dailyClearLootTable;
+  const lootTable = dungeonKey === 'ashen-ruins'
+    ? ashenRuinsLootTable
+    : dungeonKey === 'verdant-wilds'
+      ? verdantWildsLootTable
+      : dailyClearLootTable;
   const totalWeight = lootTable.reduce((sum, entry) => sum + entry.weight, 0);
   let roll = Math.random() * totalWeight;
 

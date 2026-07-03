@@ -37,6 +37,14 @@ const actionMeta: Record<
   item: { label: 'Potion', detail: 'Restore health', icon: 'flask' },
 };
 
+const classSkillIcons: Record<string, keyof typeof MaterialCommunityIcons.glyphMap> = {
+  warrior: 'axe-battle',
+  mage: 'auto-fix',
+  assassin: 'knife-military',
+  guardian: 'shield-sword-outline',
+  summoner: 'paw-outline',
+};
+
 function HealthBar({
   current,
   maximum,
@@ -81,26 +89,44 @@ export default function DungeonRunScreen() {
     void loadBattle();
   }, [loadBattle]);
 
-  const actionDisabled = useMemo(
-    () => ({
-      attack: acting,
-      defend: acting,
-      skill: acting || !battle || battle.snapshot.skillCooldown > 0,
-      item:
-        acting ||
-        !battle ||
-        battle.potionCount <= 0 ||
-        battle.snapshot.playerHp >= battle.stats.maxPlayerHp,
-    }),
-    [acting, battle],
-  );
+  const battleActions = useMemo(() => {
+    if (!battle) return [];
+    const skillProfiles = battle.combatProfile.resourceName
+      ? battle.activeSkillProfiles
+      : [battle.combatProfile];
 
-  const performAction = async (action: CombatAction) => {
-    if (acting || actionDisabled[action]) return;
+    return [
+      { key: 'attack', action: 'attack' as const, profile: null },
+      ...skillProfiles.map((profile) => ({
+        key: profile.skillKey,
+        action: 'skill' as const,
+        profile,
+      })),
+      { key: 'defend', action: 'defend' as const, profile: null },
+      { key: 'item', action: 'item' as const, profile: null },
+    ];
+  }, [battle]);
+
+  const isActionDisabled = (action: CombatAction, skillKey?: string) => {
+    if (acting || !battle) return true;
+    if (action === 'item') {
+      return battle.potionCount <= 0 || battle.snapshot.playerHp >= battle.stats.maxPlayerHp;
+    }
+    if (action !== 'skill') return false;
+
+    const profile = battle.activeSkillProfiles.find((skill) => skill.skillKey === skillKey)
+      ?? battle.combatProfile;
+    return profile.resourceName
+      ? battle.snapshot.classResource < profile.skillCost
+      : battle.snapshot.skillCooldown > 0;
+  };
+
+  const performAction = async (action: CombatAction, skillKey?: string) => {
+    if (isActionDisabled(action, skillKey)) return;
     setActing(true);
     setErrorMessage('');
     try {
-      const result = await performDungeonBattleAction(db, action);
+      const result = await performDungeonBattleAction(db, action, skillKey);
       if (result.outcome === 'active') {
         setBattle(result.battle);
         if (process.env.EXPO_OS === 'ios') {
@@ -247,6 +273,21 @@ export default function DungeonRunScreen() {
               </Text>
             </View>
             <HealthBar current={battle.snapshot.playerHp} maximum={battle.stats.maxPlayerHp} color="#62DFFF" />
+            {battle.combatProfile.resourceName ? (
+              <View style={styles.resourceBlock}>
+                <View style={styles.resourceHeader}>
+                  <Text style={styles.resourceLabel}>{battle.combatProfile.resourceName.toUpperCase()}</Text>
+                  <Text style={[styles.resourceValue, { color: battle.combatProfile.accent }]}>
+                    {battle.snapshot.classResource} / {battle.combatProfile.maxResource}
+                  </Text>
+                </View>
+                <HealthBar
+                  color={battle.combatProfile.accent}
+                  current={battle.snapshot.classResource}
+                  maximum={battle.combatProfile.maxResource}
+                />
+              </View>
+            ) : null}
           </View>
 
           {errorMessage ? (
@@ -264,12 +305,27 @@ export default function DungeonRunScreen() {
           </View>
 
           <View style={styles.actionGrid}>
-            {(Object.keys(actionMeta) as CombatAction[]).map((action) => {
-              const meta = actionMeta[action];
-              const disabled = actionDisabled[action];
+            {battleActions.map(({ key, action, profile }) => {
+              const baseMeta = actionMeta[action];
+              const meta =
+                action === 'skill'
+                  ? {
+                      ...baseMeta,
+                      label: profile?.skillName ?? battle.combatProfile.skillName,
+                      icon: classSkillIcons[battle.classKey] ?? baseMeta.icon,
+                    }
+                  : baseMeta;
+              const skillProfile = profile ?? battle.combatProfile;
+              const disabled = isActionDisabled(action, profile?.skillKey);
               const statusText =
-                action === 'skill' && battle.snapshot.skillCooldown > 0
-                  ? `${battle.snapshot.skillCooldown} turn cooldown`
+                action === 'skill' && skillProfile.resourceName
+                  ? skillProfile.skillResourceGain > skillProfile.skillCost
+                    ? `+${skillProfile.skillResourceGain - skillProfile.skillCost} ${skillProfile.resourceName}`
+                    : `${skillProfile.skillCost} ${skillProfile.resourceName}`
+                  : action === 'skill' && battle.snapshot.skillCooldown > 0
+                    ? `${battle.snapshot.skillCooldown} turn cooldown`
+                    : action === 'defend' && battle.combatProfile.resourceName
+                      ? `Guard +${battle.combatProfile.defendResourceGain} ${battle.combatProfile.resourceName}`
                   : action === 'item'
                     ? `${battle.potionCount} available`
                     : meta.detail;
@@ -278,8 +334,8 @@ export default function DungeonRunScreen() {
                 <Pressable
                   accessibilityLabel={meta.label}
                   disabled={disabled}
-                  key={action}
-                  onPress={() => void performAction(action)}
+                  key={key}
+                  onPress={() => void performAction(action, profile?.skillKey)}
                   style={({ pressed }) => [
                     styles.actionButton,
                     disabled && styles.actionButtonDisabled,
@@ -289,7 +345,13 @@ export default function DungeonRunScreen() {
                     <MaterialCommunityIcons
                       name={meta.icon}
                       size={22}
-                      color={disabled ? '#555C73' : '#8DEAFF'}
+                      color={
+                        disabled
+                          ? '#555C73'
+                          : action === 'skill'
+                            ? battle.combatProfile.accent
+                            : '#8DEAFF'
+                      }
                     />
                   </View>
                   <View style={styles.actionTextBlock}>
@@ -361,9 +423,9 @@ export default function DungeonRunScreen() {
           <Text style={styles.resultDescription}>
             {outcome === 'cleared'
               ? completedRun?.rewardName
-                ? `${completedRun.rewardQuantity ?? 1}x ${completedRun.rewardName} and ${completedRun.goldEarned} Gold were added to Inventory.`
-                : 'The final chest was added to Inventory.'
-              : 'Your habits, Player EXP, stats and streaks remain unchanged.'}
+                ? `${completedRun.rewardQuantity ?? 1}x ${completedRun.rewardName}, ${completedRun.goldEarned} Gold and ${completedRun.masteryXpEarned} ${completedRun.className} Mastery XP were earned.`
+                : `The final chest and ${completedRun?.masteryXpEarned ?? 0} Class Mastery XP were earned.`
+              : `Your habits, Player EXP, stats and streaks remain unchanged. ${completedRun?.masteryXpEarned ?? 0} ${completedRun?.className ?? 'Class'} Mastery XP was earned for the attempt.`}
           </Text>
           <Pressable
             onPress={() => router.back()}
@@ -497,6 +559,15 @@ const styles = StyleSheet.create({
   },
   playerPanelHpHeader: { marginTop: 0 },
   playerState: { color: '#71DDF5', fontSize: 11, fontWeight: '800', marginTop: 2 },
+  resourceBlock: { marginTop: 10 },
+  resourceHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  resourceLabel: { color: '#8F96AA', fontSize: 8, fontWeight: '900', letterSpacing: 1.1 },
+  resourceValue: { fontSize: 10, fontWeight: '900', fontVariant: ['tabular-nums'] },
   errorBanner: {
     minHeight: 40,
     flexDirection: 'row',

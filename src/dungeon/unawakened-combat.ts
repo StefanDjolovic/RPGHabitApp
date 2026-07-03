@@ -1,4 +1,5 @@
 import type { PlayerProgress } from '@/src/progression/player-progression';
+import type { ClassCombatProfile } from '@/src/dungeon/class-combat';
 
 export type CombatAction = 'attack' | 'skill' | 'defend' | 'item';
 export type CombatOutcome = 'active' | 'cleared' | 'failed';
@@ -14,6 +15,7 @@ export type CombatSnapshot = {
   enemyHp: number;
   turnNumber: number;
   skillCooldown: number;
+  classResource: number;
   log: CombatLogEntry[];
 };
 
@@ -95,12 +97,16 @@ export function getEnemyIntent(turnNumber: number, enemyPower = 0): EnemyIntent 
   };
 }
 
-export function createCombatSnapshot(stats: UnawakenedCombatStats): CombatSnapshot {
+export function createCombatSnapshot(
+  stats: UnawakenedCombatStats,
+  profile?: ClassCombatProfile,
+): CombatSnapshot {
   return {
     playerHp: stats.maxPlayerHp,
     enemyHp: stats.maxEnemyHp,
     turnNumber: 1,
     skillCooldown: 0,
+    classResource: profile?.startingResource ?? 0,
     log: [
       {
         id: 'system-entry',
@@ -123,12 +129,18 @@ export function resolveCombatAction(
   snapshot: CombatSnapshot,
   stats: UnawakenedCombatStats,
   action: CombatAction,
+  profile?: ClassCombatProfile,
+  passiveSkillKeys: string[] = [],
 ): CombatResolution {
   if (snapshot.playerHp <= 0 || snapshot.enemyHp <= 0) {
     throw new Error('This battle has already ended.');
   }
-  if (action === 'skill' && snapshot.skillCooldown > 0) {
+  const usesClassResource = Boolean(profile?.resourceName);
+  if (action === 'skill' && !usesClassResource && snapshot.skillCooldown > 0) {
     throw new Error('System Break is still on cooldown.');
+  }
+  if (action === 'skill' && usesClassResource && snapshot.classResource < (profile?.skillCost ?? 0)) {
+    throw new Error(`Not enough ${profile?.resourceName}.`);
   }
 
   let enemyHp = snapshot.enemyHp;
@@ -137,19 +149,80 @@ export function resolveCombatAction(
   let enemyDamage = 0;
   let healing = 0;
   let skillCooldown = Math.max(0, snapshot.skillCooldown - 1);
+  let classResource = snapshot.classResource;
   const entries: Omit<CombatLogEntry, 'id'>[] = [];
 
   if (action === 'attack') {
     playerDamage = stats.basicDamage;
+    if (passiveSkillKeys.includes('warrior-battle-rhythm')) {
+      playerDamage = Math.round(playerDamage * (1 + Math.min(0.3, (snapshot.turnNumber - 1) * 0.05)));
+    } else if (
+      passiveSkillKeys.includes('assassin-predators-focus') &&
+      enemyHp * 2 <= stats.maxEnemyHp
+    ) {
+      playerDamage = Math.round(playerDamage * 1.25);
+    } else if (passiveSkillKeys.includes('summoner-bonded-souls')) {
+      playerDamage += Math.round(stats.skillDamage * 0.35);
+    }
     enemyHp = Math.max(0, enemyHp - playerDamage);
     entries.push({ message: `Basic Attack deals ${playerDamage} damage.`, tone: 'player' });
+    if (profile?.resourceName) {
+      const gained = Math.min(profile.attackResourceGain, profile.maxResource - classResource);
+      classResource += gained;
+      if (gained > 0) {
+        entries.push({ message: `You gain ${gained} ${profile.resourceName}.`, tone: 'system' });
+      }
+    }
   } else if (action === 'skill') {
-    playerDamage = stats.skillDamage;
-    enemyHp = Math.max(0, enemyHp - playerDamage);
-    skillCooldown = 3;
-    entries.push({ message: `System Break deals ${playerDamage} damage.`, tone: 'player' });
+    const classKey = profile?.classKey;
+    if (profile?.skillEffect === 'damage') {
+      const baseSkillDamage =
+        classKey === 'warrior'
+          ? stats.basicDamage * 1.65
+          : classKey === 'mage'
+            ? stats.skillDamage * 1.8 + 4
+            : classKey === 'assassin'
+              ? stats.basicDamage * 1.45 + stats.skillDamage * 0.35
+              : classKey === 'guardian'
+                ? stats.basicDamage * 1.1 + stats.defense * 2 + 4
+                : classKey === 'summoner'
+                  ? stats.skillDamage * 1.2 + stats.basicDamage * 0.65
+                  : stats.skillDamage;
+      const passivePower = passiveSkillKeys.includes('mage-elemental-insight') ? 1.1 : 1;
+      playerDamage = Math.round(baseSkillDamage * (profile?.skillPower ?? 1) * passivePower);
+      enemyHp = Math.max(0, enemyHp - playerDamage);
+    } else if (profile?.skillEffect === 'recovery') {
+      healing = Math.min(profile.skillHealing, stats.maxPlayerHp - playerHp);
+      playerHp += healing;
+    }
+    if (usesClassResource && profile) {
+      classResource = Math.min(
+        profile.maxResource,
+        classResource - profile.skillCost + profile.skillResourceGain,
+      );
+    } else {
+      skillCooldown = 3;
+    }
+    const skillName = profile?.skillName ?? 'System Break';
+    entries.push(
+      profile?.skillEffect === 'barrier'
+        ? { message: `${skillName} forms a barrier against the next strike.`, tone: 'player' }
+        : profile?.skillEffect === 'recovery'
+          ? {
+              message: `${skillName} restores ${healing} HP and ${profile.skillResourceGain} ${profile.resourceName}.`,
+              tone: 'player',
+            }
+          : { message: `${skillName} deals ${playerDamage} damage.`, tone: 'player' },
+    );
   } else if (action === 'defend') {
     entries.push({ message: 'You brace behind a System barrier.', tone: 'player' });
+    if (profile?.resourceName) {
+      const gained = Math.min(profile.defendResourceGain, profile.maxResource - classResource);
+      classResource += gained;
+      if (gained > 0) {
+        entries.push({ message: `You gain ${gained} ${profile.resourceName}.`, tone: 'system' });
+      }
+    }
   } else {
     healing = Math.min(stats.potionHealing, stats.maxPlayerHp - playerHp);
     playerHp += healing;
@@ -164,6 +237,7 @@ export function resolveCombatAction(
         enemyHp,
         playerHp,
         skillCooldown,
+        classResource,
         log: appendLog(snapshot, entries),
       },
       outcome: 'cleared',
@@ -175,7 +249,10 @@ export function resolveCombatAction(
 
   const intent = getEnemyIntent(snapshot.turnNumber, stats.enemyPower);
   const damageAfterDefense = Math.max(0, intent.damage - stats.defense);
-  enemyDamage = action === 'defend' ? Math.ceil(damageAfterDefense * 0.35) : damageAfterDefense;
+  let incomingMultiplier = action === 'defend' ? 0.35 : 1;
+  if (passiveSkillKeys.includes('guardian-unbroken')) incomingMultiplier *= 0.85;
+  if (action === 'skill') incomingMultiplier *= profile?.skillDefenseMultiplier ?? 1;
+  enemyDamage = Math.ceil(damageAfterDefense * incomingMultiplier);
   playerHp = Math.max(0, playerHp - enemyDamage);
 
   entries.push({
@@ -196,6 +273,7 @@ export function resolveCombatAction(
       enemyHp,
       turnNumber: snapshot.turnNumber + 1,
       skillCooldown,
+      classResource,
       log: appendLog(snapshot, entries),
     },
     outcome: playerHp <= 0 ? 'failed' : 'active',

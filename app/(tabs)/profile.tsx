@@ -381,18 +381,22 @@ export default function ProfileScreen() {
                   ))}
                 </View>
               </View>
-              <Pressable
-                accessibilityLabel={
-                  playerClassState.freeChangeAvailable ? 'Change active class' : 'View active class'
-                }
-                onPress={() => router.push('/awakening' as Href)}
-                style={({ pressed }) => [styles.classPanelButton, pressed && styles.buttonPressed]}>
-                <MaterialCommunityIcons
-                  name={playerClassState.freeChangeAvailable ? 'sync' : 'chevron-right'}
-                  size={19}
-                  color="#071018"
-                />
-              </Pressable>
+              <View style={styles.classPanelActions}>
+                {playerClassState.freeChangeAvailable ? (
+                  <Pressable
+                    accessibilityLabel="Change active class"
+                    onPress={() => router.push('/awakening' as Href)}
+                    style={({ pressed }) => [styles.classPanelSecondaryButton, pressed && styles.buttonPressed]}>
+                    <MaterialCommunityIcons name="sync" size={18} color="#9FA8BE" />
+                  </Pressable>
+                ) : null}
+                <Pressable
+                  accessibilityLabel="Open skill loadout"
+                  onPress={() => router.push('/class-skills' as Href)}
+                  style={({ pressed }) => [styles.classPanelButton, pressed && styles.buttonPressed]}>
+                  <MaterialCommunityIcons name="sword-cross" size={19} color="#071018" />
+                </Pressable>
+              </View>
             </View>
           ) : (
             <LinearGradient
@@ -1075,6 +1079,17 @@ const styles = StyleSheet.create({
   classSkillRow: { flexDirection: 'row', gap: 5, marginTop: 7, overflow: 'hidden' },
   classSkillBadge: { maxWidth: 92, height: 20, justifyContent: 'center', paddingHorizontal: 6, borderRadius: 5, backgroundColor: '#151B2A' },
   classSkillText: { color: '#99A3B8', fontSize: 7, fontWeight: '800' },
+  classPanelActions: { gap: 6 },
+  classPanelSecondaryButton: {
+    width: 40,
+    height: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 8,
+    backgroundColor: '#171C2A',
+    borderWidth: 1,
+    borderColor: '#343B50',
+  },
   classPanelButton: {
     width: 40,
     height: 40,

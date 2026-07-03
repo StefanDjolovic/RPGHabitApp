@@ -15,6 +15,7 @@ export type AchievementMetric =
   | 'equippedSlots'
   | 'uniqueRarities'
   | 'classesUnlocked'
+  | 'classMasteryXp'
   | 'recoveryCompletions'
   | 'playerLevel';
 
@@ -275,5 +276,25 @@ export const achievementCatalog = [
     target: 2,
     icon: 'source-branch',
     accent: '#B493FF',
+  },
+  {
+    key: 'first-mastery',
+    title: 'First Mastery',
+    category: 'Class Mastery',
+    description: 'Earn your first 25 Class Mastery XP.',
+    metric: 'classMasteryXp',
+    target: 25,
+    icon: 'shield-star-outline',
+    accent: '#FFD166',
+  },
+  {
+    key: 'proven-specialist',
+    title: 'Proven Specialist',
+    category: 'Class Mastery',
+    description: 'Earn 250 Class Mastery XP across all classes.',
+    metric: 'classMasteryXp',
+    target: 250,
+    icon: 'medal-outline',
+    accent: '#68E1A8',
   },
 ] as const satisfies AchievementDefinition[];

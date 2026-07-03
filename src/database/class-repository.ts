@@ -10,6 +10,21 @@ import {
 import { getPlayerProgress } from '@/src/progression/player-progression';
 
 export const AWAKENING_LEVEL = 10;
+export const ACTIVE_SKILL_SLOTS = 4;
+export const PASSIVE_SKILL_SLOTS = 3;
+
+export type UserSkillProgress = ClassSkillDefinition & {
+  isEquipped: boolean;
+  equippedSlot: number | null;
+};
+
+export type ClassSkillLoadout = {
+  class: StarterClassDefinition;
+  activeSlots: (UserSkillProgress | null)[];
+  passiveSlots: (UserSkillProgress | null)[];
+  activeSkills: UserSkillProgress[];
+  passiveSkills: UserSkillProgress[];
+};
 
 export type UserClassProgress = {
   class: StarterClassDefinition;
@@ -47,7 +62,11 @@ type UserClassRow = {
   unlockedAt: string;
 };
 
-type UserSkillRow = { skillKey: string };
+type UserSkillRow = {
+  skillKey: string;
+  isEquipped: number;
+  slotOrder: number | null;
+};
 
 export const INITIAL_PLAYER_CLASS_STATE: PlayerClassState = {
   eligible: false,
@@ -145,20 +164,25 @@ export async function getPlayerClassState(db: SQLiteDatabase): Promise<PlayerCla
   const activeClass = getStarterClass(stateRow.activeClassKey);
   const activeClassRow = classRows.find((row) => row.classKey === activeClass.key);
   const skillRows = await db.getAllAsync<UserSkillRow>(
-    `SELECT skill_key AS skillKey
+    `SELECT
+       skill_key AS skillKey,
+       is_equipped AS isEquipped,
+       slot_order AS slotOrder
      FROM user_skills
      WHERE class_key = ?
-     ORDER BY skill_type ASC, slot_order ASC, unlocked_at ASC`,
+     ORDER BY skill_type ASC, is_equipped DESC, slot_order ASC, unlocked_at ASC`,
     activeClass.key,
   );
-  const unlockedSkillKeys = new Set(skillRows.map((row) => row.skillKey));
+  const equippedSkillKeys = new Set(
+    skillRows.filter((row) => row.isEquipped === 1).map((row) => row.skillKey),
+  );
   const masteryXp = Math.max(0, activeClassRow?.masteryXp ?? 0);
 
   return {
     eligible: true,
     awakened: true,
     activeClass,
-    activeSkills: activeClass.starterSkills.filter((skill) => unlockedSkillKeys.has(skill.key)),
+    activeSkills: activeClass.starterSkills.filter((skill) => equippedSkillKeys.has(skill.key)),
     masteryXp,
     masteryLevel: getMasteryLevel(masteryXp),
     awakenedAt: stateRow.awakenedAt,
@@ -276,4 +300,195 @@ export async function changeClassDuringFreeWindow(
   });
 
   return getPlayerClassState(db);
+}
+
+export async function grantClassMastery(
+  db: SQLiteDatabase,
+  classKey: string,
+  amount: number,
+  dungeonRunId: number,
+  clientEventId: string,
+) {
+  if (!isStarterClassKey(classKey) || amount <= 0) return 0;
+
+  const result = await db.runAsync(
+    `INSERT OR IGNORE INTO class_mastery_events (
+       client_event_id,
+       class_key,
+       amount,
+       dungeon_run_id,
+       reason
+     ) VALUES (?, ?, ?, ?, ?)`,
+    clientEventId,
+    classKey,
+    amount,
+    dungeonRunId,
+    amount >= 25 ? 'clear' : 'attempt',
+  );
+  if (result.changes === 0) return 0;
+
+  await db.runAsync(
+    `UPDATE user_classes
+     SET mastery_xp = mastery_xp + ?,
+         last_active_at = CURRENT_TIMESTAMP
+     WHERE class_key = ?`,
+    amount,
+    classKey,
+  );
+  return amount;
+}
+
+function toSkillProgress(
+  definition: ClassSkillDefinition,
+  row: UserSkillRow,
+): UserSkillProgress {
+  return {
+    ...definition,
+    isEquipped: row.isEquipped === 1,
+    equippedSlot: row.isEquipped === 1 ? row.slotOrder : null,
+  };
+}
+
+export async function getActiveClassSkillLoadout(
+  db: SQLiteDatabase,
+): Promise<ClassSkillLoadout | null> {
+  const state = await db.getFirstAsync<{ classKey: string }>(
+    'SELECT active_class_key AS classKey FROM player_class_state WHERE id = 1',
+  );
+  if (!state || !isStarterClassKey(state.classKey)) return null;
+
+  const definition = getStarterClass(state.classKey);
+  const rows = await db.getAllAsync<UserSkillRow>(
+    `SELECT
+       skill_key AS skillKey,
+       is_equipped AS isEquipped,
+       slot_order AS slotOrder
+     FROM user_skills
+     WHERE class_key = ?
+     ORDER BY skill_type ASC, is_equipped DESC, slot_order ASC, unlocked_at ASC`,
+    state.classKey,
+  );
+  const rowByKey = new Map(rows.map((row) => [row.skillKey, row]));
+  const skills = definition.starterSkills.flatMap((skill) => {
+    const row = rowByKey.get(skill.key);
+    return row ? [toSkillProgress(skill, row)] : [];
+  });
+  const activeSkills = skills.filter((skill) => skill.type === 'active');
+  const passiveSkills = skills.filter((skill) => skill.type === 'passive');
+  const activeSlots = Array<UserSkillProgress | null>(ACTIVE_SKILL_SLOTS).fill(null);
+  const passiveSlots = Array<UserSkillProgress | null>(PASSIVE_SKILL_SLOTS).fill(null);
+
+  for (const skill of skills) {
+    if (!skill.isEquipped || skill.equippedSlot === null) continue;
+    const slots = skill.type === 'active' ? activeSlots : passiveSlots;
+    if (skill.equippedSlot >= 1 && skill.equippedSlot <= slots.length) {
+      slots[skill.equippedSlot - 1] = skill;
+    }
+  }
+
+  return { class: definition, activeSlots, passiveSlots, activeSkills, passiveSkills };
+}
+
+export async function equipClassSkill(
+  db: SQLiteDatabase,
+  skillKey: string,
+  slotOrder: number,
+) {
+  await runInTransaction(db, async (txn) => {
+    const row = await txn.getFirstAsync<{
+      classKey: string;
+      skillType: 'active' | 'passive';
+      isEquipped: number;
+      previousSlot: number | null;
+    }>(
+      `SELECT
+         us.class_key AS classKey,
+         us.skill_type AS skillType,
+         us.is_equipped AS isEquipped,
+         us.slot_order AS previousSlot
+       FROM user_skills us
+       INNER JOIN player_class_state pcs ON pcs.active_class_key = us.class_key
+       WHERE pcs.id = 1 AND us.skill_key = ?`,
+      skillKey,
+    );
+    if (!row) throw new Error('This skill is not unlocked for the active class.');
+
+    const maximum = row.skillType === 'active' ? ACTIVE_SKILL_SLOTS : PASSIVE_SKILL_SLOTS;
+    if (!Number.isInteger(slotOrder) || slotOrder < 1 || slotOrder > maximum) {
+      throw new Error('Invalid skill slot.');
+    }
+
+    await txn.runAsync(
+      `UPDATE user_skills
+       SET is_equipped = 0, slot_order = NULL
+       WHERE class_key = ?
+         AND skill_type = ?
+         AND is_equipped = 1
+         AND slot_order = ?
+         AND skill_key != ?`,
+      row.classKey,
+      row.skillType,
+      slotOrder,
+      skillKey,
+    );
+    await txn.runAsync(
+      `UPDATE user_skills
+       SET is_equipped = 1, slot_order = ?
+       WHERE skill_key = ?`,
+      slotOrder,
+      skillKey,
+    );
+    const eventId = await createEventId(txn);
+    await txn.runAsync(
+      `INSERT INTO skill_loadout_events (
+         client_event_id, class_key, skill_key, skill_type, previous_slot, next_slot
+       ) VALUES (?, ?, ?, ?, ?, ?)`,
+      `skill-equip-${eventId}`,
+      row.classKey,
+      skillKey,
+      row.skillType,
+      row.isEquipped === 1 ? row.previousSlot : null,
+      slotOrder,
+    );
+  });
+
+  return getActiveClassSkillLoadout(db);
+}
+
+export async function unequipClassSkill(db: SQLiteDatabase, skillKey: string) {
+  await runInTransaction(db, async (txn) => {
+    const row = await txn.getFirstAsync<{
+      classKey: string;
+      skillType: 'active' | 'passive';
+      previousSlot: number | null;
+    }>(
+      `SELECT
+         us.class_key AS classKey,
+         us.skill_type AS skillType,
+         us.slot_order AS previousSlot
+       FROM user_skills us
+       INNER JOIN player_class_state pcs ON pcs.active_class_key = us.class_key
+       WHERE pcs.id = 1 AND us.skill_key = ? AND us.is_equipped = 1`,
+      skillKey,
+    );
+    if (!row) return;
+
+    await txn.runAsync(
+      'UPDATE user_skills SET is_equipped = 0, slot_order = NULL WHERE skill_key = ?',
+      skillKey,
+    );
+    const eventId = await createEventId(txn);
+    await txn.runAsync(
+      `INSERT INTO skill_loadout_events (
+         client_event_id, class_key, skill_key, skill_type, previous_slot, next_slot
+       ) VALUES (?, ?, ?, ?, ?, NULL)`,
+      `skill-unequip-${eventId}`,
+      row.classKey,
+      skillKey,
+      row.skillType,
+      row.previousSlot,
+    );
+  });
+
+  return getActiveClassSkillLoadout(db);
 }

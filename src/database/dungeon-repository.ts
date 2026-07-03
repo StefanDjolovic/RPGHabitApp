@@ -1,6 +1,7 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 
 import { getStarterClass, isStarterClassKey } from '@/src/classes/class-catalog';
+import { grantClassMastery } from '@/src/database/class-repository';
 import {
   consumeInventoryItem,
   getEquippedCombatBonuses,
@@ -8,6 +9,10 @@ import {
   grantInventoryItem,
 } from '@/src/database/inventory-repository';
 import { getDungeonDefinition } from '@/src/dungeon/dungeon-catalog';
+import {
+  getClassCombatProfile,
+  type ClassCombatProfile,
+} from '@/src/dungeon/class-combat';
 import {
   createCombatSnapshot,
   getEnemyIntent,
@@ -34,6 +39,9 @@ export type DungeonRun = {
   rewardQuantity: number | null;
   rewardName: string | null;
   goldEarned: number;
+  classKey: string;
+  className: string;
+  masteryXpEarned: number;
   completedAt: string;
 };
 
@@ -53,6 +61,9 @@ export type DungeonBattle = {
   bossName: string;
   classKey: string;
   className: string;
+  combatProfile: ClassCombatProfile;
+  activeSkillProfiles: ClassCombatProfile[];
+  passiveSkillKeys: string[];
   energyCost: number;
   isTrialEntry: boolean;
   snapshot: CombatSnapshot;
@@ -68,7 +79,7 @@ export type DungeonBattleActionResult = {
 };
 
 type TotalRow = { total: number };
-type DungeonRunRow = Omit<DungeonRun, 'rewardName'>;
+type DungeonRunRow = Omit<DungeonRun, 'rewardName' | 'className'>;
 
 type DungeonBattleSessionRow = {
   clientRunId: string;
@@ -88,6 +99,9 @@ type DungeonBattleSessionRow = {
   damageTaken: number;
   turnNumber: number;
   skillCooldown: number;
+  classResource: number;
+  activeSkillKeys: string;
+  passiveSkillKeys: string;
   combatLog: string;
   startedAt: string;
   classKey: string;
@@ -113,7 +127,10 @@ const sessionSelect = `SELECT
   skill_cooldown AS skillCooldown,
   combat_log AS combatLog,
   started_at AS startedAt,
-  class_key AS classKey
+  class_key AS classKey,
+  class_resource AS classResource,
+  active_skill_keys AS activeSkillKeys,
+  passive_skill_keys AS passiveSkillKeys
 FROM dungeon_battle_sessions
 WHERE id = 1`;
 
@@ -124,6 +141,31 @@ function parseCombatLog(value: string): CombatLogEntry[] {
   } catch {
     return [];
   }
+}
+
+function parseSkillKeys(value: string) {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return Array.isArray(parsed)
+      ? parsed.filter((entry): entry is string => typeof entry === 'string')
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function getSessionSkillKeys(
+  value: string,
+  classKey: string,
+  type: 'active' | 'passive',
+) {
+  const storedKeys = parseSkillKeys(value);
+  if (value !== '' || !isStarterClassKey(classKey)) return storedKeys;
+
+  return getStarterClass(classKey).starterSkills
+    .filter((skill) => skill.type === type && skill.equippedByDefault)
+    .sort((first, second) => (first.slotOrder ?? 99) - (second.slotOrder ?? 99))
+    .map((skill) => skill.key);
 }
 
 function getSessionStats(row: DungeonBattleSessionRow): UnawakenedCombatStats {
@@ -144,6 +186,7 @@ function getSessionSnapshot(row: DungeonBattleSessionRow): CombatSnapshot {
     enemyHp: row.enemyHp,
     turnNumber: row.turnNumber,
     skillCooldown: row.skillCooldown,
+    classResource: row.classResource,
     log: parseCombatLog(row.combatLog),
   };
 }
@@ -172,9 +215,11 @@ async function getDungeonEnergyAvailable(db: SQLiteDatabase) {
 }
 
 function toDungeonRun(row: DungeonRunRow): DungeonRun {
+  const profile = getClassCombatProfile(row.classKey);
   return {
     ...row,
     rewardName: row.rewardItemKey ? getItemDefinition(row.rewardItemKey).name : null,
+    className: profile.className,
   };
 }
 
@@ -189,6 +234,8 @@ async function getRunById(db: SQLiteDatabase, runId: number) {
        energy_cost AS energyCost,
        reward_item_key AS rewardItemKey,
        reward_quantity AS rewardQuantity,
+       class_key AS classKey,
+       mastery_xp_earned AS masteryXpEarned,
        COALESCE((
          SELECT SUM(ge.amount)
          FROM gold_events ge
@@ -231,6 +278,8 @@ export async function getDungeonOverview(db: SQLiteDatabase): Promise<DungeonOve
          energy_cost AS energyCost,
          reward_item_key AS rewardItemKey,
          reward_quantity AS rewardQuantity,
+         class_key AS classKey,
+         mastery_xp_earned AS masteryXpEarned,
          COALESCE((
            SELECT SUM(ge.amount)
            FROM gold_events ge
@@ -269,6 +318,12 @@ export async function getActiveDungeonBattle(
   );
   const stats = getSessionStats(row);
   const snapshot = getSessionSnapshot(row);
+  const activeSkillKeys = getSessionSkillKeys(row.activeSkillKeys, row.classKey, 'active');
+  const passiveSkillKeys = getSessionSkillKeys(row.passiveSkillKeys, row.classKey, 'passive');
+  const activeSkillProfiles = activeSkillKeys.map((skillKey) =>
+    getClassCombatProfile(row.classKey, skillKey),
+  );
+  const combatProfile = activeSkillProfiles[0] ?? getClassCombatProfile(row.classKey);
 
   return {
     dungeonKey: row.dungeonKey,
@@ -276,9 +331,10 @@ export async function getActiveDungeonBattle(
     difficulty: row.difficulty,
     bossName: getDungeonDefinition(row.dungeonKey).bossName,
     classKey: row.classKey,
-    className: isStarterClassKey(row.classKey)
-      ? getStarterClass(row.classKey).name
-      : 'Unawakened',
+    className: combatProfile.className,
+    combatProfile,
+    activeSkillProfiles,
+    passiveSkillKeys,
     energyCost: row.energyCost,
     isTrialEntry: row.energyCost === 0,
     snapshot,
@@ -318,8 +374,25 @@ export async function beginDungeonBattle(
     if (energyAvailable < energyCost) throw new Error('Not enough Dungeon Energy.');
     if (!eventId) throw new Error('Could not create a dungeon battle.');
 
+    const classKey = classRow?.classKey ?? 'unawakened';
+    const equippedSkills = isStarterClassKey(classKey)
+      ? await txn.getAllAsync<{ skillKey: string; skillType: 'active' | 'passive' }>(
+          `SELECT skill_key AS skillKey, skill_type AS skillType
+           FROM user_skills
+           WHERE class_key = ? AND is_equipped = 1
+           ORDER BY skill_type ASC, slot_order ASC`,
+          classKey,
+        )
+      : [];
+    const activeSkillKeys = equippedSkills
+      .filter((skill) => skill.skillType === 'active')
+      .map((skill) => skill.skillKey);
+    const passiveSkillKeys = equippedSkills
+      .filter((skill) => skill.skillType === 'passive')
+      .map((skill) => skill.skillKey);
+    const combatProfile = getClassCombatProfile(classKey);
     const stats = getUnawakenedCombatStats(progress, equipmentBonuses);
-    const snapshot = createCombatSnapshot(stats);
+    const snapshot = createCombatSnapshot(stats, combatProfile);
     await txn.runAsync(
       `INSERT INTO dungeon_battle_sessions (
          id,
@@ -340,8 +413,11 @@ export async function beginDungeonBattle(
          turn_number,
          skill_cooldown,
          combat_log,
-         class_key
-       ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         class_key,
+         class_resource,
+         active_skill_keys,
+         passive_skill_keys
+       ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       `${dungeon.key}-${eventId}`,
       dungeon.key,
       dungeon.name,
@@ -359,7 +435,10 @@ export async function beginDungeonBattle(
       snapshot.turnNumber,
       snapshot.skillCooldown,
       JSON.stringify(snapshot.log),
-      classRow?.classKey ?? 'unawakened',
+      classKey,
+      snapshot.classResource,
+      JSON.stringify(activeSkillKeys),
+      JSON.stringify(passiveSkillKeys),
     );
   };
 
@@ -380,6 +459,7 @@ async function finalizeDungeonBattle(
   status: DungeonRun['status'],
 ) {
   const reward = status === 'cleared' ? rollDungeonReward(row.dungeonKey) : null;
+  const masteryXpEarned = isStarterClassKey(row.classKey) ? (status === 'cleared' ? 25 : 8) : 0;
   const result = await txn.runAsync(
     `INSERT INTO dungeon_runs (
        client_run_id,
@@ -394,8 +474,10 @@ async function finalizeDungeonBattle(
          player_hp_remaining,
          max_player_hp,
          damage_taken,
-         turns_taken
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         turns_taken,
+         class_key,
+         mastery_xp_earned
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     row.clientRunId,
     row.dungeonKey,
     row.dungeonName,
@@ -409,6 +491,16 @@ async function finalizeDungeonBattle(
     row.maxPlayerHp,
     row.damageTaken,
     row.turnNumber,
+    row.classKey,
+    masteryXpEarned,
+  );
+
+  await grantClassMastery(
+    txn,
+    row.classKey,
+    masteryXpEarned,
+    result.lastInsertRowId,
+    `class-mastery-${row.clientRunId}`,
   );
 
   if (reward) {
@@ -436,6 +528,7 @@ async function finalizeDungeonBattle(
 export async function performDungeonBattleAction(
   db: SQLiteDatabase,
   action: CombatAction,
+  skillKey?: string,
 ): Promise<DungeonBattleActionResult> {
   let outcome: DungeonBattleActionResult['outcome'] = 'active';
   let completedRunId: number | null = null;
@@ -451,7 +544,25 @@ export async function performDungeonBattleAction(
       await consumeInventoryItem(txn, 'minor-health-potion');
     }
 
-    const resolution = resolveCombatAction(snapshot, stats, action);
+    const activeSkillKeys = getSessionSkillKeys(row.activeSkillKeys, row.classKey, 'active');
+    const passiveSkillKeys = getSessionSkillKeys(row.passiveSkillKeys, row.classKey, 'passive');
+    if (action === 'skill' && activeSkillKeys.length > 0 && skillKey && !activeSkillKeys.includes(skillKey)) {
+      throw new Error('This skill is not equipped for the current run.');
+    }
+    if (action === 'skill' && isStarterClassKey(row.classKey) && activeSkillKeys.length === 0) {
+      throw new Error('No active skill is equipped.');
+    }
+    const combatProfile = getClassCombatProfile(
+      row.classKey,
+      action === 'skill' ? skillKey ?? activeSkillKeys[0] : activeSkillKeys[0],
+    );
+    const resolution = resolveCombatAction(
+      snapshot,
+      stats,
+      action,
+      combatProfile,
+      passiveSkillKeys,
+    );
     outcome = resolution.outcome;
 
     if (resolution.outcome === 'active') {
@@ -461,6 +572,7 @@ export async function performDungeonBattleAction(
              enemy_hp = ?,
              turn_number = ?,
              skill_cooldown = ?,
+             class_resource = ?,
              damage_taken = damage_taken + ?,
              combat_log = ?,
              updated_at = CURRENT_TIMESTAMP
@@ -469,6 +581,7 @@ export async function performDungeonBattleAction(
         resolution.snapshot.enemyHp,
         resolution.snapshot.turnNumber,
         resolution.snapshot.skillCooldown,
+        resolution.snapshot.classResource,
         resolution.enemyDamage,
         JSON.stringify(resolution.snapshot.log),
       );
@@ -483,6 +596,7 @@ export async function performDungeonBattleAction(
         enemyHp: resolution.snapshot.enemyHp,
         turnNumber: resolution.snapshot.turnNumber,
         skillCooldown: resolution.snapshot.skillCooldown,
+        classResource: resolution.snapshot.classResource,
         damageTaken: row.damageTaken + resolution.enemyDamage,
       },
       resolution.outcome === 'cleared' ? 'cleared' : 'failed',

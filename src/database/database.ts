@@ -1,6 +1,6 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 
-const DATABASE_VERSION = 21;
+const DATABASE_VERSION = 23;
 
 export async function migrateDatabase(db: SQLiteDatabase) {
   await db.execAsync('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
@@ -755,6 +755,63 @@ export async function migrateDatabase(db: SQLiteDatabase) {
 
       CREATE INDEX IF NOT EXISTS idx_class_change_events_changed_at
         ON class_change_events(changed_at);
+    `);
+  }
+
+  if (currentVersion < 22) {
+    await db.execAsync(`
+      ALTER TABLE dungeon_battle_sessions
+        ADD COLUMN class_resource INTEGER NOT NULL DEFAULT 0
+        CHECK (class_resource >= 0);
+
+      ALTER TABLE dungeon_runs
+        ADD COLUMN class_key TEXT NOT NULL DEFAULT 'unawakened';
+
+      ALTER TABLE dungeon_runs
+        ADD COLUMN mastery_xp_earned INTEGER NOT NULL DEFAULT 0
+        CHECK (mastery_xp_earned >= 0);
+
+      CREATE TABLE IF NOT EXISTS class_mastery_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        client_event_id TEXT NOT NULL UNIQUE,
+        class_key TEXT NOT NULL,
+        amount INTEGER NOT NULL CHECK (amount > 0),
+        dungeon_run_id INTEGER NOT NULL,
+        reason TEXT NOT NULL CHECK (reason IN ('clear', 'attempt')),
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (class_key) REFERENCES user_classes(class_key) ON DELETE CASCADE,
+        FOREIGN KEY (dungeon_run_id) REFERENCES dungeon_runs(id) ON DELETE CASCADE
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_class_mastery_events_class
+        ON class_mastery_events(class_key, created_at);
+
+    `);
+  }
+
+  if (currentVersion < 23) {
+    await db.execAsync(`
+      ALTER TABLE dungeon_battle_sessions
+        ADD COLUMN active_skill_keys TEXT NOT NULL DEFAULT '';
+
+      ALTER TABLE dungeon_battle_sessions
+        ADD COLUMN passive_skill_keys TEXT NOT NULL DEFAULT '';
+
+      CREATE TABLE IF NOT EXISTS skill_loadout_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        client_event_id TEXT NOT NULL UNIQUE,
+        class_key TEXT NOT NULL,
+        skill_key TEXT NOT NULL,
+        skill_type TEXT NOT NULL CHECK (skill_type IN ('active', 'passive')),
+        previous_slot INTEGER,
+        next_slot INTEGER,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (class_key) REFERENCES user_classes(class_key) ON DELETE CASCADE,
+        FOREIGN KEY (skill_key) REFERENCES user_skills(skill_key) ON DELETE CASCADE
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_skill_loadout_events_class
+        ON skill_loadout_events(class_key, created_at);
     `);
   }
 

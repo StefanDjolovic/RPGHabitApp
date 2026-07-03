@@ -1,4 +1,5 @@
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
+import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, type Href, useFocusEffect } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
@@ -603,7 +604,13 @@ export default function TodayScreen() {
             accessibilityLabel="Open profile"
             onPress={() => router.push('/profile')}
             style={styles.avatarButton}>
-            {playerProfile.avatarMode === 'initials' ? (
+            {playerProfile.avatarMode === 'custom' && playerProfile.customAvatarUri ? (
+              <Image
+                contentFit="cover"
+                source={{ uri: playerProfile.customAvatarUri }}
+                style={styles.avatarImage}
+              />
+            ) : playerProfile.avatarMode === 'initials' ? (
               <Text style={styles.avatarInitials}>{getProfileInitials(playerProfile.nickname)}</Text>
             ) : (
               <MaterialCommunityIcons name="account" size={26} color="#9BE8FF" />
@@ -1157,7 +1164,9 @@ const styles = StyleSheet.create({
     backgroundColor: '#11162A',
     borderWidth: 1,
     borderColor: '#293252',
+    overflow: 'hidden',
   },
+  avatarImage: { width: '100%', height: '100%' },
   avatarInitials: { color: '#FF9BCB', fontSize: 13, fontWeight: '900' },
   playerCard: {
     borderRadius: 22,

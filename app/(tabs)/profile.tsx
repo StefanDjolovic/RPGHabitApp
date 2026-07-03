@@ -1,4 +1,5 @@
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
+import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, type Href, useFocusEffect } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
@@ -289,6 +290,12 @@ export default function ProfileScreen() {
 
           <View style={styles.headerActions}>
             <Pressable
+              accessibilityLabel="Edit profile"
+              onPress={() => router.push('/edit-profile' as Href)}
+              style={({ pressed }) => [styles.settingsButton, pressed && styles.buttonPressed]}>
+              <MaterialCommunityIcons name="account-edit-outline" size={22} color="#FF9BCB" />
+            </Pressable>
+            <Pressable
               accessibilityLabel="Open settings"
               onPress={() => router.push('/settings' as Href)}
               style={({ pressed }) => [styles.settingsButton, pressed && styles.buttonPressed]}>
@@ -308,7 +315,13 @@ export default function ProfileScreen() {
           <View style={styles.cardAccent} />
           <View style={styles.identityRow}>
             <View style={styles.avatarFrame}>
-              {playerProfile.avatarMode === 'initials' ? (
+              {playerProfile.avatarMode === 'custom' && playerProfile.customAvatarUri ? (
+                <Image
+                  contentFit="cover"
+                  source={{ uri: playerProfile.customAvatarUri }}
+                  style={styles.avatarImage}
+                />
+              ) : playerProfile.avatarMode === 'initials' ? (
                 <Text style={styles.avatarInitials}>
                   {getProfileInitials(playerProfile.nickname)}
                 </Text>
@@ -1070,7 +1083,9 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(7, 9, 22, 0.76)',
     borderWidth: 1,
     borderColor: '#774163',
+    overflow: 'hidden',
   },
+  avatarImage: { width: '100%', height: '100%' },
   avatarInitials: { color: '#FF9BCB', fontSize: 20, fontWeight: '900' },
   identityText: { flex: 1, paddingLeft: 13 },
   playerName: { color: '#F1EEFF', fontSize: 17, fontWeight: '900', marginBottom: 5 },

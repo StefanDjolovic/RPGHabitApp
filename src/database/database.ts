@@ -1,6 +1,6 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 
-const DATABASE_VERSION = 29;
+const DATABASE_VERSION = 30;
 
 export async function migrateDatabase(db: SQLiteDatabase) {
   await db.execAsync('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
@@ -1030,6 +1030,13 @@ export async function migrateDatabase(db: SQLiteDatabase) {
 
       CREATE INDEX IF NOT EXISTS idx_reawakening_quest_events_completed
         ON reawakening_quest_events(completed_at);
+    `);
+  }
+
+  if (currentVersion < 30) {
+    await db.execAsync(`
+      ALTER TABLE player_profile
+        ADD COLUMN custom_avatar_uri TEXT;
     `);
   }
 

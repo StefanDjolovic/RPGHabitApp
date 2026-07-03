@@ -126,7 +126,7 @@ export default function OnboardingScreen() {
       setSaving(true);
       await completeOnboarding(
         db,
-        { nickname, avatarMode, lifeAreas },
+        { nickname, avatarMode, customAvatarUri: null, lifeAreas },
         selectedHabits,
       );
       router.replace('/');

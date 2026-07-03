@@ -36,6 +36,13 @@
     "plugins": [
       "expo-router",
       [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow Habit RPG to access your photos so you can choose a Custom Avatar.",
+          "microphonePermission": false
+        }
+      ],
+      [
         "expo-splash-screen",
         {
           "image": "./assets/images/habit-rpg-splash.png",

@@ -90,6 +90,10 @@ export default function RootLayout() {
             options={{ animation: 'slide_from_bottom', headerShown: false, presentation: 'modal' }}
           />
           <Stack.Screen
+            name="edit-profile"
+            options={{ animation: 'slide_from_bottom', headerShown: false, presentation: 'modal' }}
+          />
+          <Stack.Screen
             name="weekly-review"
             options={{ animation: 'slide_from_right', headerShown: false }}
           />

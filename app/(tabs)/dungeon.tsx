@@ -19,6 +19,7 @@ import {
   type DungeonOverview,
 } from '@/src/database/dungeon-repository';
 import { dungeons } from '@/src/dungeon/dungeon-catalog';
+import { syncProgressNotifications } from '@/src/notifications/system-notifications';
 import { MAX_DUNGEON_ENERGY } from '@/src/progression/dungeon-energy';
 
 const initialOverview: DungeonOverview = {
@@ -75,6 +76,7 @@ export default function DungeonScreen() {
     setEnteringDungeonKey(dungeonKey);
     try {
       await beginDungeonBattle(db, dungeonKey);
+      await syncProgressNotifications(db).catch(() => 0);
       router.push('/dungeon-run' as Href);
     } finally {
       setEnteringDungeonKey(null);

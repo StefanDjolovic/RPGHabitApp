@@ -62,6 +62,10 @@ import {
 } from '@/src/progression/recovery-quest';
 import { getItemDefinition } from '@/src/inventory/item-catalog';
 import { syncHabitReminderFromDatabase } from '@/src/notifications/habit-reminders';
+import {
+  syncProgressNotifications,
+  syncSystemNotifications,
+} from '@/src/notifications/system-notifications';
 
 const difficultyColors = {
   easy: '#68E1A8',
@@ -139,6 +143,9 @@ export default function TodayScreen() {
   const [updatingBossQuest, setUpdatingBossQuest] = useState(false);
   const [clockEpoch, setClockEpoch] = useState(() => Math.floor(Date.now() / 1000));
   const [loading, setLoading] = useState(true);
+  const syncProgressAlerts = useCallback(() => {
+    void syncProgressNotifications(db).catch(() => 0);
+  }, [db]);
   const requiredProgress =
     dailyClearStatus.required > 0
       ? dailyClearStatus.completed / dailyClearStatus.required
@@ -214,10 +221,11 @@ export default function TodayScreen() {
       setActivityStreak(streak);
       setRecoveryStatus(recovery);
       setDailyClearStatus(dailyClear);
+      syncProgressAlerts();
     } finally {
       setLoading(false);
     }
-  }, [db]);
+  }, [db, syncProgressAlerts]);
 
   useFocusEffect(
     useCallback(() => {
@@ -257,6 +265,7 @@ export default function TodayScreen() {
       setActivityStreak(streak);
       setRecoveryStatus(recovery);
       setDailyClearStatus(dailyClear);
+      syncProgressAlerts();
     } catch {
       setHabits((current) =>
         current.map((item) => (item.id === id ? { ...item, complete: habit.complete } : item)),
@@ -305,6 +314,7 @@ export default function TodayScreen() {
       setActivityStreak(streak);
       setRecoveryStatus(recovery);
       setDailyClearStatus(dailyClear);
+      syncProgressAlerts();
     } catch {
       setHabits((current) =>
         current.map((item) => (item.id === habit.id ? habit : item)),
@@ -359,6 +369,7 @@ export default function TodayScreen() {
       setActivityStreak(streak);
       setRecoveryStatus(recovery);
       setDailyClearStatus(dailyClear);
+      syncProgressAlerts();
     } catch {
       setHabits((current) =>
         current.map((item) => (item.id === habit.id ? habit : item)),
@@ -412,6 +423,7 @@ export default function TodayScreen() {
         setActivityStreak(streak);
         setRecoveryStatus(recovery);
         setDailyClearStatus(dailyClear);
+        syncProgressAlerts();
       } catch {
         setHabits((current) =>
           current.map((item) => (item.id === habit.id ? habit : item)),
@@ -420,7 +432,7 @@ export default function TodayScreen() {
         setUpdatingHabitId(null);
       }
     },
-    [db, updatingHabitId],
+    [db, syncProgressAlerts, updatingHabitId],
   );
 
   const resetTimedHabit = async (habit: Habit) => {
@@ -452,6 +464,7 @@ export default function TodayScreen() {
       setActivityStreak(streak);
       setRecoveryStatus(recovery);
       setDailyClearStatus(dailyClear);
+      syncProgressAlerts();
     } catch {
       setHabits((current) =>
         current.map((item) => (item.id === habit.id ? habit : item)),
@@ -500,6 +513,7 @@ export default function TodayScreen() {
       setPlayerProgress(progressSummary);
       setActivityStreak(streak);
       setRecoveryStatus(recovery);
+      syncProgressAlerts();
 
       if (!nextBoss) {
         Alert.alert(
@@ -553,6 +567,10 @@ export default function TodayScreen() {
       setRecoveryStatus(recoveryResult.status);
       setPlayerProgress(progressSummary);
       setActivityStreak(streak);
+      await syncSystemNotifications(db).catch(() => ({
+        permissionGranted: false,
+        scheduledCount: 0,
+      }));
       Alert.alert(
         recoveryResult.unlockedSecondWind ? 'Second Wind unlocked' : 'Recovery complete',
         recoveryResult.unlockedSecondWind

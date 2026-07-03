@@ -20,6 +20,7 @@ import {
   INITIAL_RANK_TRIAL_STATE,
   type RankTrialState,
 } from '@/src/database/rank-repository';
+import { syncProgressNotifications } from '@/src/notifications/system-notifications';
 
 function RequirementRow({
   accent,
@@ -89,6 +90,7 @@ export default function RankTrialScreen() {
     try {
       const rankLabel = state.nextRank.label;
       setState(await completeRankTrial(db));
+      await syncProgressNotifications(db).catch(() => 0);
       setCompletedRank(rankLabel);
       if (process.env.EXPO_OS === 'ios') {
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -288,4 +290,3 @@ const styles = StyleSheet.create({
   resultDescription: { color: '#858DA4', fontSize: 11, lineHeight: 17, fontWeight: '700', textAlign: 'center', marginTop: 8, marginBottom: 24 },
   pressed: { opacity: 0.74 },
 });
-

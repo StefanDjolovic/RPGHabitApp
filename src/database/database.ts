@@ -1,6 +1,6 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 
-const DATABASE_VERSION = 26;
+const DATABASE_VERSION = 28;
 
 export async function migrateDatabase(db: SQLiteDatabase) {
   await db.execAsync('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
@@ -923,6 +923,67 @@ export async function migrateDatabase(db: SQLiteDatabase) {
         10,
         COALESCE((SELECT COUNT(*) FROM dungeon_runs WHERE status = 'cleared'), 0)
       WHERE EXISTS (SELECT 1 FROM player_class_state WHERE id = 1);
+    `);
+  }
+
+  if (currentVersion < 27) {
+    await db.execAsync(`
+      ALTER TABLE user_settings
+        ADD COLUMN notification_tone TEXT NOT NULL DEFAULT 'gentle'
+        CHECK (notification_tone IN ('gentle', 'system', 'strict'));
+
+      ALTER TABLE user_settings
+        ADD COLUMN morning_briefing_enabled INTEGER NOT NULL DEFAULT 0
+        CHECK (morning_briefing_enabled IN (0, 1));
+
+      ALTER TABLE user_settings
+        ADD COLUMN morning_briefing_time TEXT NOT NULL DEFAULT '08:00';
+
+      ALTER TABLE user_settings
+        ADD COLUMN evening_checkin_enabled INTEGER NOT NULL DEFAULT 0
+        CHECK (evening_checkin_enabled IN (0, 1));
+
+      ALTER TABLE user_settings
+        ADD COLUMN evening_checkin_time TEXT NOT NULL DEFAULT '20:00';
+
+      ALTER TABLE user_settings
+        ADD COLUMN weekly_review_enabled INTEGER NOT NULL DEFAULT 0
+        CHECK (weekly_review_enabled IN (0, 1));
+
+      ALTER TABLE user_settings
+        ADD COLUMN weekly_review_day INTEGER NOT NULL DEFAULT 0
+        CHECK (weekly_review_day BETWEEN 0 AND 6);
+
+      ALTER TABLE user_settings
+        ADD COLUMN weekly_review_time TEXT NOT NULL DEFAULT '18:00';
+
+      ALTER TABLE user_settings
+        ADD COLUMN recovery_reminder_enabled INTEGER NOT NULL DEFAULT 0
+        CHECK (recovery_reminder_enabled IN (0, 1));
+
+      ALTER TABLE user_settings
+        ADD COLUMN recovery_reminder_time TEXT NOT NULL DEFAULT '10:00';
+
+      CREATE TABLE IF NOT EXISTS system_notification_schedules (
+        notification_key TEXT PRIMARY KEY,
+        notification_id TEXT NOT NULL UNIQUE,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+  }
+
+  if (currentVersion < 28) {
+    await db.execAsync(`
+      ALTER TABLE user_settings
+        ADD COLUMN progress_alerts_enabled INTEGER NOT NULL DEFAULT 0
+        CHECK (progress_alerts_enabled IN (0, 1));
+
+      CREATE TABLE IF NOT EXISTS progress_notification_state (
+        notification_key TEXT PRIMARY KEY,
+        is_active INTEGER NOT NULL DEFAULT 0 CHECK (is_active IN (0, 1)),
+        event_token TEXT,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
     `);
   }
 

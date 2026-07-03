@@ -5,15 +5,16 @@ import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
-  SafeAreaView,
   ScrollView,
   StyleSheet,
   Switch,
   Text,
   View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { syncAllHabitReminders } from '@/src/notifications/habit-reminders';
+import { syncSystemNotifications } from '@/src/notifications/system-notifications';
 import {
   getDeviceTimeZone,
   getRuntimeUserSettings,
@@ -35,6 +36,9 @@ type TimeStepperProps = {
   value: string;
   onChange: (value: string) => void;
 };
+
+const notificationTones: UserSettings['notificationTone'][] = ['gentle', 'system', 'strict'];
+const weekdayLabels = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
 function TimeStepper({ label, value, onChange }: TimeStepperProps) {
   return (
@@ -99,6 +103,20 @@ export default function SettingsScreen() {
       setError('');
       await saveUserSettings(db, settings);
       await syncAllHabitReminders(db);
+      const notificationResult = await syncSystemNotifications(db, {
+        requestPermission: true,
+      });
+      const systemNotificationsEnabled =
+        settings.morningBriefingEnabled ||
+        settings.eveningCheckinEnabled ||
+        settings.weeklyReviewEnabled ||
+        settings.recoveryReminderEnabled ||
+        settings.progressAlertsEnabled;
+      if (systemNotificationsEnabled && !notificationResult.permissionGranted) {
+        setError('Settings saved. Allow notifications in phone settings to receive briefings.');
+        setSaving(false);
+        return;
+      }
       router.back();
     } catch {
       setError('Settings could not be saved.');
@@ -141,6 +159,178 @@ export default function SettingsScreen() {
               <MaterialCommunityIcons name="check" size={22} color="#061019" />
             )}
           </Pressable>
+        </View>
+
+        <View style={styles.sectionHeader}>
+          <MaterialCommunityIcons name="bell-outline" size={18} color="#FFD166" />
+          <Text style={styles.sectionTitle}>BRIEFINGS & REMINDERS</Text>
+        </View>
+
+        <View style={styles.panel}>
+          <View style={styles.toneBlock}>
+            <Text style={styles.settingLabel}>MESSAGE TONE</Text>
+            <View style={styles.segmentedControl}>
+              {notificationTones.map((tone) => {
+                const selected = settings.notificationTone === tone;
+                return (
+                  <Pressable
+                    accessibilityLabel={`${tone} notification tone`}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected }}
+                    key={tone}
+                    onPress={() => updateSettings({ notificationTone: tone })}
+                    style={({ pressed }) => [
+                      styles.segmentButton,
+                      selected && styles.segmentButtonSelected,
+                      pressed && styles.buttonPressed,
+                    ]}>
+                    <Text style={[styles.segmentText, selected && styles.segmentTextSelected]}>
+                      {tone.charAt(0).toUpperCase() + tone.slice(1)}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </View>
+
+          <View style={styles.divider} />
+
+          <View style={styles.notificationRow}>
+            <View style={styles.notificationIdentity}>
+              <MaterialCommunityIcons name="weather-sunset-up" size={20} color="#7EE7FF" />
+              <Text style={styles.notificationLabel}>Morning Briefing</Text>
+            </View>
+            <Switch
+              accessibilityLabel="Morning Briefing"
+              onValueChange={(morningBriefingEnabled) =>
+                updateSettings({ morningBriefingEnabled })
+              }
+              thumbColor={settings.morningBriefingEnabled ? '#F5F2FF' : '#8A91A8'}
+              trackColor={{ false: '#282D40', true: '#2D7486' }}
+              value={settings.morningBriefingEnabled}
+            />
+          </View>
+          {settings.morningBriefingEnabled ? (
+            <TimeStepper
+              label="DELIVERY"
+              onChange={(morningBriefingTime) => updateSettings({ morningBriefingTime })}
+              value={settings.morningBriefingTime}
+            />
+          ) : null}
+
+          <View style={styles.divider} />
+
+          <View style={styles.notificationRow}>
+            <View style={styles.notificationIdentity}>
+              <MaterialCommunityIcons name="weather-sunset-down" size={20} color="#C79CFF" />
+              <Text style={styles.notificationLabel}>Evening Check-in</Text>
+            </View>
+            <Switch
+              accessibilityLabel="Evening Check-in"
+              onValueChange={(eveningCheckinEnabled) =>
+                updateSettings({ eveningCheckinEnabled })
+              }
+              thumbColor={settings.eveningCheckinEnabled ? '#F5F2FF' : '#8A91A8'}
+              trackColor={{ false: '#282D40', true: '#7652A8' }}
+              value={settings.eveningCheckinEnabled}
+            />
+          </View>
+          {settings.eveningCheckinEnabled ? (
+            <TimeStepper
+              label="DELIVERY"
+              onChange={(eveningCheckinTime) => updateSettings({ eveningCheckinTime })}
+              value={settings.eveningCheckinTime}
+            />
+          ) : null}
+
+          <View style={styles.divider} />
+
+          <View style={styles.notificationRow}>
+            <View style={styles.notificationIdentity}>
+              <MaterialCommunityIcons name="calendar-week" size={20} color="#68E1A8" />
+              <Text style={styles.notificationLabel}>Weekly Review</Text>
+            </View>
+            <Switch
+              accessibilityLabel="Weekly Review reminder"
+              onValueChange={(weeklyReviewEnabled) => updateSettings({ weeklyReviewEnabled })}
+              thumbColor={settings.weeklyReviewEnabled ? '#F5F2FF' : '#8A91A8'}
+              trackColor={{ false: '#282D40', true: '#34745B' }}
+              value={settings.weeklyReviewEnabled}
+            />
+          </View>
+          {settings.weeklyReviewEnabled ? (
+            <View style={styles.weeklyControls}>
+              <View style={styles.weekdaySelector}>
+                {weekdayLabels.map((label, day) => {
+                  const selected = settings.weeklyReviewDay === day;
+                  return (
+                    <Pressable
+                      accessibilityLabel={`Weekly Review day ${day + 1}`}
+                      accessibilityState={{ selected }}
+                      key={`${label}-${day}`}
+                      onPress={() => updateSettings({ weeklyReviewDay: day })}
+                      style={({ pressed }) => [
+                        styles.weekdayButton,
+                        selected && styles.weekdayButtonSelected,
+                        pressed && styles.buttonPressed,
+                      ]}>
+                      <Text style={[styles.weekdayText, selected && styles.weekdayTextSelected]}>
+                        {label}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+              <TimeStepper
+                label="DELIVERY"
+                onChange={(weeklyReviewTime) => updateSettings({ weeklyReviewTime })}
+                value={settings.weeklyReviewTime}
+              />
+            </View>
+          ) : null}
+
+          <View style={styles.divider} />
+
+          <View style={styles.notificationRow}>
+            <View style={styles.notificationIdentity}>
+              <MaterialCommunityIcons name="heart-pulse" size={20} color="#FF9BCB" />
+              <Text style={styles.notificationLabel}>Recovery Quest</Text>
+            </View>
+            <Switch
+              accessibilityLabel="Recovery Quest reminder"
+              onValueChange={(recoveryReminderEnabled) =>
+                updateSettings({ recoveryReminderEnabled })
+              }
+              thumbColor={settings.recoveryReminderEnabled ? '#F5F2FF' : '#8A91A8'}
+              trackColor={{ false: '#282D40', true: '#8B466F' }}
+              value={settings.recoveryReminderEnabled}
+            />
+          </View>
+          {settings.recoveryReminderEnabled ? (
+            <TimeStepper
+              label="DELIVERY"
+              onChange={(recoveryReminderTime) => updateSettings({ recoveryReminderTime })}
+              value={settings.recoveryReminderTime}
+            />
+          ) : null}
+
+          <View style={styles.divider} />
+
+          <View style={styles.notificationRow}>
+            <View style={styles.notificationIdentity}>
+              <MaterialCommunityIcons name="star-four-points-outline" size={20} color="#FFD166" />
+              <Text style={styles.notificationLabel}>Dungeon & Progress</Text>
+            </View>
+            <Switch
+              accessibilityLabel="Dungeon and progress alerts"
+              onValueChange={(progressAlertsEnabled) =>
+                updateSettings({ progressAlertsEnabled })
+              }
+              thumbColor={settings.progressAlertsEnabled ? '#F5F2FF' : '#8A91A8'}
+              trackColor={{ false: '#282D40', true: '#8A6A2D' }}
+              value={settings.progressAlertsEnabled}
+            />
+          </View>
         </View>
 
         <View style={styles.sectionHeader}>
@@ -310,6 +500,56 @@ const styles = StyleSheet.create({
     borderColor: '#244557',
   },
   divider: { height: StyleSheet.hairlineWidth, backgroundColor: '#252B42' },
+  toneBlock: { minHeight: 76, justifyContent: 'center', gap: 10 },
+  segmentedControl: {
+    height: 38,
+    flexDirection: 'row',
+    borderRadius: 8,
+    padding: 3,
+    gap: 3,
+    backgroundColor: '#080B14',
+    borderWidth: 1,
+    borderColor: '#292F45',
+  },
+  segmentButton: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 6,
+  },
+  segmentButtonSelected: { backgroundColor: '#233846' },
+  segmentText: { color: '#78819B', fontSize: 10, fontWeight: '800' },
+  segmentTextSelected: { color: '#DDF8FF' },
+  notificationRow: {
+    minHeight: 66,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  notificationIdentity: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 10 },
+  notificationLabel: { color: '#E5E8F3', fontSize: 13, fontWeight: '800' },
+  weeklyControls: { paddingBottom: 4 },
+  weekdaySelector: {
+    height: 38,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 4,
+  },
+  weekdayButton: {
+    flex: 1,
+    height: 30,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 6,
+    backgroundColor: '#111625',
+    borderWidth: 1,
+    borderColor: '#292F45',
+  },
+  weekdayButtonSelected: { backgroundColor: '#254D40', borderColor: '#3E8E70' },
+  weekdayText: { color: '#7D86A1', fontSize: 10, fontWeight: '900' },
+  weekdayTextSelected: { color: '#A8F0CF' },
   stepper: {
     flexDirection: 'row',
     alignItems: 'center',

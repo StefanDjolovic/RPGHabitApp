@@ -30,6 +30,10 @@ import {
   type PlayerClassState,
 } from '@/src/database/class-repository';
 import {
+  notifySkillsUnlocked,
+  syncProgressNotifications,
+} from '@/src/notifications/system-notifications';
+import {
   getPlayerProgress,
   INITIAL_PLAYER_PROGRESS,
   type PlayerProgress,
@@ -77,6 +81,15 @@ export default function AwakeningScreen() {
         ? await changeClassDuringFreeWindow(db, selectedClass.key)
         : await awakenPlayer(db, selectedClass.key);
       setClassState(nextState);
+      await Promise.all([
+        notifySkillsUnlocked(
+          db,
+          selectedClass.key,
+          selectedClass.name,
+          selectedClass.starterSkills.length,
+        ).catch(() => false),
+        syncProgressNotifications(db).catch(() => 0),
+      ]);
       setCompleted(true);
       if (process.env.EXPO_OS === 'ios') {
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);

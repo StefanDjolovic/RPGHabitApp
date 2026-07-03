@@ -1,11 +1,14 @@
 import { DarkTheme, ThemeProvider } from '@react-navigation/native';
-import { Stack } from 'expo-router';
+import * as Notifications from 'expo-notifications';
+import { router, Stack, type Href } from 'expo-router';
 import { SQLiteProvider, type SQLiteDatabase } from 'expo-sqlite';
 import { StatusBar } from 'expo-status-bar';
+import { useEffect } from 'react';
 import 'react-native-reanimated';
 import '@/src/notifications/habit-reminders';
 
 import { migrateDatabase } from '@/src/database/database';
+import { syncSystemNotifications } from '@/src/notifications/system-notifications';
 import { loadUserSettings } from '@/src/settings/user-settings';
 
 const habitRpgTheme = {
@@ -27,9 +30,47 @@ export const unstable_settings = {
 async function initializeDatabase(db: SQLiteDatabase) {
   await migrateDatabase(db);
   await loadUserSettings(db);
+  await syncSystemNotifications(db).catch(() => ({
+    permissionGranted: false,
+    scheduledCount: 0,
+  }));
+}
+
+function useNotificationNavigation() {
+  useEffect(() => {
+    if (process.env.EXPO_OS === 'web') return;
+
+    const openNotification = (notification: Notifications.Notification) => {
+      const url = notification.request.content.data?.url;
+      if (
+        url === '/' ||
+        url === '/weekly-review' ||
+        url === '/dungeon' ||
+        url === '/rank-trial' ||
+        url === '/class-skills'
+      ) {
+        router.push(url as Href);
+      }
+    };
+
+    void Notifications.getLastNotificationResponseAsync().then((response) => {
+      if (!response?.notification) return;
+      openNotification(response.notification);
+      return Notifications.clearLastNotificationResponseAsync();
+    }).catch(() => undefined);
+
+    const subscription = Notifications.addNotificationResponseReceivedListener((response) => {
+      openNotification(response.notification);
+      void Notifications.clearLastNotificationResponseAsync().catch(() => undefined);
+    });
+
+    return () => subscription.remove();
+  }, []);
 }
 
 export default function RootLayout() {
+  useNotificationNavigation();
+
   return (
     <SQLiteProvider databaseName="habit-rpg.db" onInit={initializeDatabase}>
       <ThemeProvider value={habitRpgTheme}>

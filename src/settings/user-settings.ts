@@ -6,10 +6,36 @@ export type UserSettings = {
   quietHoursEnabled: boolean;
   quietStart: string;
   quietEnd: string;
+  notificationTone: NotificationTone;
+  morningBriefingEnabled: boolean;
+  morningBriefingTime: string;
+  eveningCheckinEnabled: boolean;
+  eveningCheckinTime: string;
+  weeklyReviewEnabled: boolean;
+  weeklyReviewDay: number;
+  weeklyReviewTime: string;
+  recoveryReminderEnabled: boolean;
+  recoveryReminderTime: string;
+  progressAlertsEnabled: boolean;
 };
 
-type UserSettingsRow = Omit<UserSettings, 'quietHoursEnabled'> & {
+export type NotificationTone = 'gentle' | 'system' | 'strict';
+
+type UserSettingsRow = Omit<
+  UserSettings,
+  | 'quietHoursEnabled'
+  | 'morningBriefingEnabled'
+  | 'eveningCheckinEnabled'
+  | 'weeklyReviewEnabled'
+  | 'recoveryReminderEnabled'
+  | 'progressAlertsEnabled'
+> & {
   quietHoursEnabled: number;
+  morningBriefingEnabled: number;
+  eveningCheckinEnabled: number;
+  weeklyReviewEnabled: number;
+  recoveryReminderEnabled: number;
+  progressAlertsEnabled: number;
 };
 
 const defaultSettings: UserSettings = {
@@ -18,6 +44,17 @@ const defaultSettings: UserSettings = {
   quietHoursEnabled: false,
   quietStart: '22:00',
   quietEnd: '07:00',
+  notificationTone: 'gentle',
+  morningBriefingEnabled: false,
+  morningBriefingTime: '08:00',
+  eveningCheckinEnabled: false,
+  eveningCheckinTime: '20:00',
+  weeklyReviewEnabled: false,
+  weeklyReviewDay: 0,
+  weeklyReviewTime: '18:00',
+  recoveryReminderEnabled: false,
+  recoveryReminderTime: '10:00',
+  progressAlertsEnabled: false,
 };
 
 let runtimeSettings = { ...defaultSettings };
@@ -40,12 +77,38 @@ function normalizeTime(value: string, fallback: string) {
 }
 
 function normalizeSettings(settings: UserSettings): UserSettings {
+  const notificationTone = ['gentle', 'system', 'strict'].includes(settings.notificationTone)
+    ? settings.notificationTone
+    : defaultSettings.notificationTone;
   return {
     timezone: settings.timezone || getDeviceTimeZone(),
     dayCutoffHour: Math.min(12, Math.max(0, Math.floor(settings.dayCutoffHour))),
     quietHoursEnabled: Boolean(settings.quietHoursEnabled),
     quietStart: normalizeTime(settings.quietStart, defaultSettings.quietStart),
     quietEnd: normalizeTime(settings.quietEnd, defaultSettings.quietEnd),
+    notificationTone,
+    morningBriefingEnabled: Boolean(settings.morningBriefingEnabled),
+    morningBriefingTime: normalizeTime(
+      settings.morningBriefingTime,
+      defaultSettings.morningBriefingTime,
+    ),
+    eveningCheckinEnabled: Boolean(settings.eveningCheckinEnabled),
+    eveningCheckinTime: normalizeTime(
+      settings.eveningCheckinTime,
+      defaultSettings.eveningCheckinTime,
+    ),
+    weeklyReviewEnabled: Boolean(settings.weeklyReviewEnabled),
+    weeklyReviewDay: Math.min(6, Math.max(0, Math.floor(settings.weeklyReviewDay))),
+    weeklyReviewTime: normalizeTime(
+      settings.weeklyReviewTime,
+      defaultSettings.weeklyReviewTime,
+    ),
+    recoveryReminderEnabled: Boolean(settings.recoveryReminderEnabled),
+    recoveryReminderTime: normalizeTime(
+      settings.recoveryReminderTime,
+      defaultSettings.recoveryReminderTime,
+    ),
+    progressAlertsEnabled: Boolean(settings.progressAlertsEnabled),
   };
 }
 
@@ -60,7 +123,18 @@ export async function loadUserSettings(db: SQLiteDatabase) {
        day_cutoff_hour AS dayCutoffHour,
        quiet_hours_enabled AS quietHoursEnabled,
        quiet_start AS quietStart,
-       quiet_end AS quietEnd
+       quiet_end AS quietEnd,
+       notification_tone AS notificationTone,
+       morning_briefing_enabled AS morningBriefingEnabled,
+       morning_briefing_time AS morningBriefingTime,
+       evening_checkin_enabled AS eveningCheckinEnabled,
+       evening_checkin_time AS eveningCheckinTime,
+       weekly_review_enabled AS weeklyReviewEnabled,
+       weekly_review_day AS weeklyReviewDay,
+       weekly_review_time AS weeklyReviewTime,
+       recovery_reminder_enabled AS recoveryReminderEnabled,
+       recovery_reminder_time AS recoveryReminderTime,
+       progress_alerts_enabled AS progressAlertsEnabled
      FROM user_settings
      WHERE id = 1`,
   );
@@ -71,6 +145,17 @@ export async function loadUserSettings(db: SQLiteDatabase) {
     quietHoursEnabled: row?.quietHoursEnabled === 1,
     quietStart: row?.quietStart ?? defaultSettings.quietStart,
     quietEnd: row?.quietEnd ?? defaultSettings.quietEnd,
+    notificationTone: row?.notificationTone ?? defaultSettings.notificationTone,
+    morningBriefingEnabled: row?.morningBriefingEnabled === 1,
+    morningBriefingTime: row?.morningBriefingTime ?? defaultSettings.morningBriefingTime,
+    eveningCheckinEnabled: row?.eveningCheckinEnabled === 1,
+    eveningCheckinTime: row?.eveningCheckinTime ?? defaultSettings.eveningCheckinTime,
+    weeklyReviewEnabled: row?.weeklyReviewEnabled === 1,
+    weeklyReviewDay: row?.weeklyReviewDay ?? defaultSettings.weeklyReviewDay,
+    weeklyReviewTime: row?.weeklyReviewTime ?? defaultSettings.weeklyReviewTime,
+    recoveryReminderEnabled: row?.recoveryReminderEnabled === 1,
+    recoveryReminderTime: row?.recoveryReminderTime ?? defaultSettings.recoveryReminderTime,
+    progressAlertsEnabled: row?.progressAlertsEnabled === 1,
   });
 
   if (!row || row.timezone === 'system') {
@@ -96,20 +181,46 @@ export async function saveUserSettings(db: SQLiteDatabase, settings: UserSetting
   runtimeSettings = normalizeSettings(settings);
   await db.runAsync(
     `INSERT INTO user_settings (
-       id, timezone, day_cutoff_hour, quiet_hours_enabled, quiet_start, quiet_end
-     ) VALUES (1, ?, ?, ?, ?, ?)
+       id, timezone, day_cutoff_hour, quiet_hours_enabled, quiet_start, quiet_end,
+       notification_tone, morning_briefing_enabled, morning_briefing_time,
+       evening_checkin_enabled, evening_checkin_time, weekly_review_enabled,
+       weekly_review_day, weekly_review_time, recovery_reminder_enabled,
+       recovery_reminder_time, progress_alerts_enabled
+     ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET
        timezone = excluded.timezone,
        day_cutoff_hour = excluded.day_cutoff_hour,
        quiet_hours_enabled = excluded.quiet_hours_enabled,
        quiet_start = excluded.quiet_start,
        quiet_end = excluded.quiet_end,
+       notification_tone = excluded.notification_tone,
+       morning_briefing_enabled = excluded.morning_briefing_enabled,
+       morning_briefing_time = excluded.morning_briefing_time,
+       evening_checkin_enabled = excluded.evening_checkin_enabled,
+       evening_checkin_time = excluded.evening_checkin_time,
+       weekly_review_enabled = excluded.weekly_review_enabled,
+       weekly_review_day = excluded.weekly_review_day,
+       weekly_review_time = excluded.weekly_review_time,
+       recovery_reminder_enabled = excluded.recovery_reminder_enabled,
+       recovery_reminder_time = excluded.recovery_reminder_time,
+       progress_alerts_enabled = excluded.progress_alerts_enabled,
        updated_at = CURRENT_TIMESTAMP`,
     runtimeSettings.timezone,
     runtimeSettings.dayCutoffHour,
     runtimeSettings.quietHoursEnabled ? 1 : 0,
     runtimeSettings.quietStart,
     runtimeSettings.quietEnd,
+    runtimeSettings.notificationTone,
+    runtimeSettings.morningBriefingEnabled ? 1 : 0,
+    runtimeSettings.morningBriefingTime,
+    runtimeSettings.eveningCheckinEnabled ? 1 : 0,
+    runtimeSettings.eveningCheckinTime,
+    runtimeSettings.weeklyReviewEnabled ? 1 : 0,
+    runtimeSettings.weeklyReviewDay,
+    runtimeSettings.weeklyReviewTime,
+    runtimeSettings.recoveryReminderEnabled ? 1 : 0,
+    runtimeSettings.recoveryReminderTime,
+    runtimeSettings.progressAlertsEnabled ? 1 : 0,
   );
   return runtimeSettings;
 }

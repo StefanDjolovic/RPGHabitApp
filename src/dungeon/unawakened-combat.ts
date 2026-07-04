@@ -16,6 +16,14 @@ import type { PlayerProgress } from '@/src/progression/player-progression';
 
 export type CombatAction = 'attack' | 'skill' | 'defend' | 'item';
 export type CombatOutcome = 'active' | 'cleared' | 'failed';
+export type SummonKey = 'wolf' | 'wisp';
+
+export type SummonUnit = {
+  key: SummonKey;
+  name: string;
+  hp: number;
+  maxHp: number;
+};
 
 export type CombatLogEntry = {
   id: string;
@@ -31,6 +39,7 @@ export type CombatSnapshot = {
   classResource: number;
   playerStatuses: CombatStatus[];
   enemyStatuses: CombatStatus[];
+  summons: SummonUnit[];
   log: CombatLogEntry[];
 };
 
@@ -198,6 +207,7 @@ export function createCombatSnapshot(
     classResource: profile?.startingResource ?? 0,
     playerStatuses: [],
     enemyStatuses: [],
+    summons: [],
     log: [
       {
         id: 'system-entry',
@@ -255,7 +265,31 @@ export function resolveCombatAction(
   let classResource = snapshot.classResource;
   let playerStatuses = snapshot.playerStatuses.map((status) => ({ ...status }));
   let enemyStatuses = snapshot.enemyStatuses.map((status) => ({ ...status }));
+  let summons = snapshot.summons.map((summon) => ({ ...summon }));
   const entries: Omit<CombatLogEntry, 'id'>[] = [];
+
+  if (action === 'skill' && profile?.classKey === 'summoner') {
+    const summonKey = profile.skillKey === 'summoner-wolf'
+      ? 'wolf'
+      : profile.skillKey === 'summoner-wisp'
+        ? 'wisp'
+        : null;
+    if (summonKey && summons.some((summon) => summon.key === summonKey)) {
+      throw new Error(`${summonKey === 'wolf' ? 'Wolf' : 'Wisp'} is already active.`);
+    }
+    if (summonKey && summons.length >= 2) {
+      throw new Error('Only two summons can be active at once.');
+    }
+    if (
+      ['summoner-command-focus', 'summoner-spirit-link'].includes(profile.skillKey) &&
+      summons.length === 0
+    ) {
+      throw new Error('An active summon is required for this command.');
+    }
+    if (profile.skillKey === 'summoner-reclaim-essence' && summons.length === 0) {
+      throw new Error('There is no summon to reclaim.');
+    }
+  }
 
   if (action === 'attack') {
     playerDamage = stats.basicDamage;
@@ -319,6 +353,26 @@ export function resolveCombatAction(
       healing = Math.min(profile.skillHealing, stats.maxPlayerHp - playerHp);
       playerHp += healing;
     }
+    if (profile?.skillKey === 'summoner-wolf') {
+      const maxHp = Math.max(18, Math.round(stats.maxPlayerHp * 0.38));
+      summons.push({ key: 'wolf', name: 'Spirit Wolf', hp: maxHp, maxHp });
+      entries.push({ message: 'Spirit Wolf joins the battle.', tone: 'system' });
+    } else if (profile?.skillKey === 'summoner-wisp') {
+      const maxHp = Math.max(14, Math.round(stats.maxPlayerHp * 0.28));
+      summons.push({ key: 'wisp', name: 'Astral Wisp', hp: maxHp, maxHp });
+      entries.push({ message: 'Astral Wisp joins the battle.', tone: 'system' });
+    } else if (profile?.skillKey === 'summoner-command-focus') {
+      playerDamage = Math.round(playerDamage * (1 + summons.length * 0.22));
+      enemyHp = Math.max(0, snapshot.enemyHp - playerDamage);
+      entries.push({
+        message: `${summons.length} summon${summons.length === 1 ? '' : 's'} focus the target.`,
+        tone: 'system',
+      });
+    } else if (profile?.skillKey === 'summoner-reclaim-essence') {
+      const reclaimed = [...summons].sort((first, second) => first.hp - second.hp)[0];
+      summons = summons.filter((summon) => summon.key !== reclaimed.key);
+      entries.push({ message: `${reclaimed.name} returns to Essence.`, tone: 'system' });
+    }
     if (usesClassResource && profile) {
       classResource = Math.min(
         profile.maxResource,
@@ -353,6 +407,37 @@ export function resolveCombatAction(
     entries.push({ message: `Potion restores ${healing} HP.`, tone: 'player' });
   }
 
+  if (profile?.classKey === 'summoner' && profile.skillKey !== 'summoner-command-focus') {
+    const wolf = summons.find((summon) => summon.key === 'wolf');
+    if (wolf && enemyHp > 0) {
+      const bondedMultiplier = passiveSkillKeys.includes('summoner-bonded-souls') ? 0.45 : 0.35;
+      const wolfDamage = getModifiedDamage(
+        Math.max(1, Math.round(stats.skillDamage * bondedMultiplier)),
+        playerStatuses,
+        enemyStatuses,
+      );
+      enemyHp = Math.max(0, enemyHp - wolfDamage);
+      playerDamage += wolfDamage;
+      entries.push({ message: `${wolf.name} deals ${wolfDamage} damage.`, tone: 'player' });
+    }
+
+    const wisp = summons.find((summon) => summon.key === 'wisp');
+    if (wisp) {
+      const wispHealing = Math.min(
+        Math.max(3, Math.round(stats.skillDamage * 0.12)),
+        stats.maxPlayerHp - playerHp,
+      );
+      const essenceGain = Math.min(6, Math.max(0, (profile.maxResource ?? 0) - classResource));
+      playerHp += wispHealing;
+      healing += wispHealing;
+      classResource += essenceGain;
+      entries.push({
+        message: `${wisp.name} restores ${wispHealing} HP and ${essenceGain} Essence.`,
+        tone: 'player',
+      });
+    }
+  }
+
   if (enemyHp <= 0) {
     entries.push({ message: `${enemyName} collapses.`, tone: 'system' });
     return {
@@ -364,6 +449,7 @@ export function resolveCombatAction(
         classResource,
         playerStatuses,
         enemyStatuses,
+        summons,
         log: appendLog(snapshot, entries),
       },
       outcome: 'cleared',
@@ -382,9 +468,32 @@ export function resolveCombatAction(
     let incomingMultiplier = action === 'defend' ? 0.35 : 1;
     if (passiveSkillKeys.includes('guardian-unbroken')) incomingMultiplier *= 0.85;
     if (action === 'skill') incomingMultiplier *= profile?.skillDefenseMultiplier ?? 1;
+    let playerIncomingDamage = Math.ceil(damageAfterDefense * incomingMultiplier);
+    if (
+      action === 'skill' &&
+      profile?.skillKey === 'summoner-spirit-link' &&
+      summons.length > 0
+    ) {
+      const sharedDamage = Math.floor(playerIncomingDamage * 0.5);
+      playerIncomingDamage -= sharedDamage;
+      if (sharedDamage > 0) {
+        const perSummonDamage = Math.ceil(sharedDamage / summons.length);
+        summons = summons
+          .map((summon) => ({ ...summon, hp: Math.max(0, summon.hp - perSummonDamage) }))
+          .filter((summon) => {
+            if (summon.hp > 0) return true;
+            entries.push({ message: `${summon.name} is dispersed.`, tone: 'enemy' });
+            return false;
+          });
+        entries.push({
+          message: `Spirit Link redirects ${sharedDamage} damage to the summons.`,
+          tone: 'system',
+        });
+      }
+    }
     const barrierResult = consumeBarrier(
       playerStatuses,
-      Math.ceil(damageAfterDefense * incomingMultiplier),
+      playerIncomingDamage,
     );
     playerStatuses = barrierResult.statuses;
     enemyDamage = barrierResult.damage;
@@ -451,6 +560,7 @@ export function resolveCombatAction(
       classResource,
       playerStatuses,
       enemyStatuses,
+      summons,
       log: appendLog(snapshot, entries),
     },
     outcome,

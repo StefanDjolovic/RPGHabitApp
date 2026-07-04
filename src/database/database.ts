@@ -1,6 +1,6 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 
-const DATABASE_VERSION = 35;
+const DATABASE_VERSION = 36;
 
 export async function migrateDatabase(db: SQLiteDatabase) {
   await db.execAsync('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
@@ -1106,6 +1106,13 @@ export async function migrateDatabase(db: SQLiteDatabase) {
       UPDATE rank_trial_events
       SET next_rank_key = 'sss_rank'
       WHERE next_rank_key = 'ascendant';
+    `);
+  }
+
+  if (currentVersion < 36) {
+    await db.execAsync(`
+      ALTER TABLE dungeon_battle_sessions
+        ADD COLUMN summons TEXT NOT NULL DEFAULT '[]';
     `);
   }
 

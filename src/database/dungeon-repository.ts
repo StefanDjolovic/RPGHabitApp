@@ -31,6 +31,7 @@ import {
   type CombatLogEntry,
   type CombatSnapshot,
   type EnemyIntent,
+  type SummonUnit,
   type UnawakenedCombatStats,
 } from '@/src/dungeon/unawakened-combat';
 import { getItemDefinition, rollDungeonReward } from '@/src/inventory/item-catalog';
@@ -110,6 +111,11 @@ export type DungeonBattleActionResult = {
   outcome: 'active' | 'path-choice' | 'room-cleared' | 'cleared' | 'failed' | 'fled';
   battle: DungeonBattle | null;
   run: DungeonRun | null;
+  feedback: {
+    playerDamage: number;
+    enemyDamage: number;
+    healing: number;
+  } | null;
 };
 
 type TotalRow = { total: number };
@@ -139,6 +145,7 @@ type DungeonBattleSessionRow = {
   passiveSkillKeys: string;
   playerStatuses: string;
   enemyStatuses: string;
+  summons: string;
   combatLog: string;
   startedAt: string;
   classKey: string;
@@ -178,6 +185,7 @@ const sessionSelect = `SELECT
   passive_skill_keys AS passiveSkillKeys,
   player_statuses AS playerStatuses,
   enemy_statuses AS enemyStatuses,
+  summons,
   room_index AS roomIndex,
   room_type AS roomType,
   route_key AS routeKey,
@@ -222,6 +230,35 @@ function parseCombatStatuses(value: string): CombatStatus[] {
         potency: Math.max(0, Math.floor(candidate.potency)),
       }];
     });
+  } catch {
+    return [];
+  }
+}
+
+function parseSummons(value: string): SummonUnit[] {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (!Array.isArray(parsed)) return [];
+
+    return parsed.flatMap((entry) => {
+      if (!entry || typeof entry !== 'object') return [];
+      const candidate = entry as Partial<SummonUnit>;
+      if (
+        (candidate.key !== 'wolf' && candidate.key !== 'wisp') ||
+        typeof candidate.name !== 'string' ||
+        typeof candidate.hp !== 'number' ||
+        typeof candidate.maxHp !== 'number' ||
+        candidate.maxHp <= 0
+      ) {
+        return [];
+      }
+      return [{
+        key: candidate.key,
+        name: candidate.name,
+        hp: Math.min(candidate.maxHp, Math.max(0, Math.floor(candidate.hp))),
+        maxHp: Math.max(1, Math.floor(candidate.maxHp)),
+      }];
+    }).slice(0, 2);
   } catch {
     return [];
   }
@@ -273,6 +310,7 @@ function getSessionSnapshot(row: DungeonBattleSessionRow): CombatSnapshot {
     classResource: row.classResource,
     playerStatuses: parseCombatStatuses(row.playerStatuses),
     enemyStatuses: parseCombatStatuses(row.enemyStatuses),
+    summons: parseSummons(row.summons),
     log: parseCombatLog(row.combatLog),
   };
 }
@@ -557,6 +595,7 @@ export async function beginDungeonBattle(
          passive_skill_keys,
          player_statuses,
          enemy_statuses,
+         summons,
          room_index,
          room_type,
          route_key,
@@ -565,7 +604,7 @@ export async function beginDungeonBattle(
          boss_max_enemy_hp,
          turns_elapsed,
          interim_gold
-       ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       `${dungeon.key}-${eventId}`,
       dungeon.key,
       dungeon.name,
@@ -589,6 +628,7 @@ export async function beginDungeonBattle(
       JSON.stringify(passiveSkillKeys),
       JSON.stringify(snapshot.playerStatuses),
       JSON.stringify(snapshot.enemyStatuses),
+      JSON.stringify(snapshot.summons),
       1,
       'combat',
       null,
@@ -901,6 +941,7 @@ export async function performDungeonBattleAction(
 ): Promise<DungeonBattleActionResult> {
   let outcome: DungeonBattleActionResult['outcome'] = 'active';
   let completedRunId: number | null = null;
+  let feedback: DungeonBattleActionResult['feedback'] = null;
 
   const applyAction = async (txn: SQLiteDatabase) => {
     const row = await txn.getFirstAsync<DungeonBattleSessionRow>(sessionSelect);
@@ -937,6 +978,11 @@ export async function performDungeonBattleAction(
       row.enemyName,
       row.dungeonKey,
     );
+    feedback = {
+      playerDamage: resolution.playerDamage,
+      enemyDamage: resolution.enemyDamage,
+      healing: resolution.healing,
+    };
     outcome = resolution.outcome;
 
     if (resolution.outcome === 'active') {
@@ -949,6 +995,7 @@ export async function performDungeonBattleAction(
              class_resource = ?,
              player_statuses = ?,
              enemy_statuses = ?,
+             summons = ?,
              damage_taken = damage_taken + ?,
              combat_log = ?,
              updated_at = CURRENT_TIMESTAMP
@@ -960,6 +1007,7 @@ export async function performDungeonBattleAction(
         resolution.snapshot.classResource,
         JSON.stringify(resolution.snapshot.playerStatuses),
         JSON.stringify(resolution.snapshot.enemyStatuses),
+        JSON.stringify(resolution.snapshot.summons),
         resolution.enemyDamage,
         JSON.stringify(resolution.snapshot.log),
       );
@@ -975,6 +1023,7 @@ export async function performDungeonBattleAction(
       classResource: resolution.snapshot.classResource,
       playerStatuses: JSON.stringify(resolution.snapshot.playerStatuses),
       enemyStatuses: JSON.stringify(resolution.snapshot.enemyStatuses),
+      summons: JSON.stringify(resolution.snapshot.summons),
       damageTaken: row.damageTaken + resolution.enemyDamage,
     };
 
@@ -1099,6 +1148,7 @@ export async function performDungeonBattleAction(
       ? await getActiveDungeonBattle(db)
       : null,
     run,
+    feedback,
   };
 }
 
@@ -1120,5 +1170,6 @@ export async function fleeDungeonBattle(db: SQLiteDatabase): Promise<DungeonBatt
     outcome: 'fled',
     battle: null,
     run: completedRunId === null ? null : await getRunById(db, completedRunId),
+    feedback: null,
   };
 }

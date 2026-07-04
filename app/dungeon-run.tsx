@@ -1,9 +1,8 @@
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
-import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, type Href } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -14,6 +13,11 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import Animated, {
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+} from 'react-native-reanimated';
 
 import {
   chooseDungeonPath,
@@ -26,11 +30,19 @@ import {
   type DungeonRun,
 } from '@/src/database/dungeon-repository';
 import {
+  BattleScene,
+  type BattleAnimationEvent,
+} from '@/src/dungeon/battle-scene';
+import {
   combatStatusCatalog,
   type CombatStatus,
 } from '@/src/dungeon/combat-statuses';
 import type { CombatAction } from '@/src/dungeon/unawakened-combat';
 import { playImpactHaptic, playNotificationHaptic } from '@/src/settings/haptic-feedback';
+import {
+  getRuntimeUserSettings,
+  subscribeUserSettings,
+} from '@/src/settings/user-settings';
 
 type BattleOutcome = 'cleared' | 'failed' | 'fled' | null;
 
@@ -56,15 +68,30 @@ function HealthBar({
   current,
   maximum,
   color,
+  reduceMotion = false,
 }: {
   current: number;
   maximum: number;
   color: string;
+  reduceMotion?: boolean;
 }) {
   const ratio = maximum > 0 ? Math.max(0, Math.min(1, current / maximum)) : 0;
+  const progress = useSharedValue(ratio);
+  useEffect(() => {
+    progress.value = reduceMotion ? ratio : withTiming(ratio, { duration: 260 });
+  }, [progress, ratio, reduceMotion]);
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [{ scaleX: progress.value }],
+  }));
   return (
     <View style={styles.healthTrack}>
-      <View style={[styles.healthFill, { width: `${ratio * 100}%`, backgroundColor: color }]} />
+      <Animated.View
+        style={[
+          styles.healthFill,
+          { backgroundColor: color, transformOrigin: 'left center' },
+          animatedStyle,
+        ]}
+      />
     </View>
   );
 }
@@ -150,12 +177,45 @@ function DungeonRouteProgress({ battle }: { battle: DungeonBattle }) {
 export default function DungeonRunScreen() {
   const db = useSQLiteContext();
   const insets = useSafeAreaInsets();
+  const settings = useSyncExternalStore(
+    subscribeUserSettings,
+    getRuntimeUserSettings,
+    getRuntimeUserSettings,
+  );
+  const reduceMotion = settings.reduceMotionEnabled;
   const [battle, setBattle] = useState<DungeonBattle | null>(null);
   const [outcome, setOutcome] = useState<BattleOutcome>(null);
   const [completedRun, setCompletedRun] = useState<DungeonRun | null>(null);
   const [loading, setLoading] = useState(true);
   const [acting, setActing] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
+  const [animationEvent, setAnimationEvent] = useState<BattleAnimationEvent | null>(null);
+  const animationSequence = useRef(0);
+  const animationTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => () => {
+    if (animationTimeout.current) clearTimeout(animationTimeout.current);
+  }, []);
+
+  const showCombatFeedback = useCallback((
+    action: CombatAction,
+    skillKey: string | undefined,
+    feedback: Pick<BattleAnimationEvent, 'playerDamage' | 'enemyDamage' | 'healing'> | null,
+  ) => {
+    if (!feedback) return;
+    const event = {
+      ...feedback,
+      id: ++animationSequence.current,
+      action,
+      skillKey,
+    };
+    setAnimationEvent(event);
+    if (animationTimeout.current) clearTimeout(animationTimeout.current);
+    animationTimeout.current = setTimeout(
+      () => setAnimationEvent((current) => current?.id === event.id ? null : current),
+      reduceMotion ? 50 : 850,
+    );
+  }, [reduceMotion]);
 
   const loadBattle = useCallback(async () => {
     try {
@@ -201,6 +261,24 @@ export default function DungeonRunScreen() {
 
     const profile = battle.activeSkillProfiles.find((skill) => skill.skillKey === skillKey)
       ?? battle.combatProfile;
+    if (profile.classKey === 'summoner') {
+      const summonKey = profile.skillKey === 'summoner-wolf'
+        ? 'wolf'
+        : profile.skillKey === 'summoner-wisp'
+          ? 'wisp'
+          : null;
+      if (summonKey && battle.snapshot.summons.some((summon) => summon.key === summonKey)) {
+        return true;
+      }
+      if (summonKey && battle.snapshot.summons.length >= 2) return true;
+      if (
+        ['summoner-command-focus', 'summoner-spirit-link', 'summoner-reclaim-essence']
+          .includes(profile.skillKey) &&
+        battle.snapshot.summons.length === 0
+      ) {
+        return true;
+      }
+    }
     return profile.resourceName
       ? battle.snapshot.classResource < profile.skillCost
       : battle.snapshot.skillCooldown > 0;
@@ -212,14 +290,17 @@ export default function DungeonRunScreen() {
     setErrorMessage('');
     try {
       const result = await performDungeonBattleAction(db, action, skillKey);
-      if (
-        result.outcome === 'active' ||
-        result.outcome === 'path-choice' ||
-        result.outcome === 'room-cleared'
-      ) {
+      showCombatFeedback(action, skillKey, result.feedback);
+      if (result.outcome === 'active') {
         setBattle(result.battle);
         void playImpactHaptic('light');
+        if (!reduceMotion) await new Promise((resolve) => setTimeout(resolve, 620));
+      } else if (result.outcome === 'path-choice' || result.outcome === 'room-cleared') {
+        void playImpactHaptic('light');
+        if (!reduceMotion) await new Promise((resolve) => setTimeout(resolve, 500));
+        setBattle(result.battle);
       } else {
+        if (!reduceMotion) await new Promise((resolve) => setTimeout(resolve, 540));
         setBattle(null);
         setOutcome(result.outcome);
         setCompletedRun(result.run);
@@ -434,18 +515,11 @@ export default function DungeonRunScreen() {
             end={{ x: 1, y: 1 }}
             start={{ x: 0, y: 0 }}
             style={styles.enemyStage}>
-            <Image
-              contentFit="contain"
-              source={require('../assets/images/habit-rpg-emblem.png')}
-              style={styles.stageEmblem}
+            <BattleScene
+              battle={battle}
+              event={animationEvent}
+              reduceMotion={reduceMotion}
             />
-            <View style={[styles.enemySigil, { borderColor: `${battle.dungeon.accent}66` }]}>
-              <MaterialCommunityIcons
-                name={battle.dungeon.icon}
-                size={46}
-                color={battle.dungeon.accent}
-              />
-            </View>
             <Text style={styles.enemyRank}>
               {battle.roomType === 'boss'
                 ? `${battle.dungeon.rank.toUpperCase()} BOSS`
@@ -460,7 +534,12 @@ export default function DungeonRunScreen() {
                 {battle.snapshot.enemyHp} / {battle.stats.maxEnemyHp}
               </Text>
             </View>
-            <HealthBar current={battle.snapshot.enemyHp} maximum={battle.stats.maxEnemyHp} color="#FF786D" />
+            <HealthBar
+              color="#FF786D"
+              current={battle.snapshot.enemyHp}
+              maximum={battle.stats.maxEnemyHp}
+              reduceMotion={reduceMotion}
+            />
             <CombatStatusRow statuses={battle.snapshot.enemyStatuses} />
           </LinearGradient>
 
@@ -501,7 +580,12 @@ export default function DungeonRunScreen() {
                 {battle.snapshot.playerHp} / {battle.stats.maxPlayerHp}
               </Text>
             </View>
-            <HealthBar current={battle.snapshot.playerHp} maximum={battle.stats.maxPlayerHp} color="#62DFFF" />
+            <HealthBar
+              color="#62DFFF"
+              current={battle.snapshot.playerHp}
+              maximum={battle.stats.maxPlayerHp}
+              reduceMotion={reduceMotion}
+            />
             {battle.combatProfile.resourceName ? (
               <View style={styles.resourceBlock}>
                 <View style={styles.resourceHeader}>
@@ -514,6 +598,7 @@ export default function DungeonRunScreen() {
                   color={battle.combatProfile.accent}
                   current={battle.snapshot.classResource}
                   maximum={battle.combatProfile.maxResource}
+                  reduceMotion={reduceMotion}
                 />
               </View>
             ) : null}
@@ -547,8 +632,21 @@ export default function DungeonRunScreen() {
                   : baseMeta;
               const skillProfile = profile ?? battle.combatProfile;
               const disabled = isActionDisabled(action, profile?.skillKey);
+              const summonKey = skillProfile.skillKey === 'summoner-wolf'
+                ? 'wolf'
+                : skillProfile.skillKey === 'summoner-wisp'
+                  ? 'wisp'
+                  : null;
+              const summonStatusText = action === 'skill' && skillProfile.classKey === 'summoner'
+                ? summonKey && battle.snapshot.summons.some((summon) => summon.key === summonKey)
+                  ? 'Active for this run'
+                  : ['summoner-command-focus', 'summoner-spirit-link', 'summoner-reclaim-essence']
+                      .includes(skillProfile.skillKey) && battle.snapshot.summons.length === 0
+                    ? 'Summon required'
+                    : null
+                : null;
               const statusText =
-                action === 'skill' && skillProfile.resourceName
+                summonStatusText ?? (action === 'skill' && skillProfile.resourceName
                   ? skillProfile.skillResourceGain > skillProfile.skillCost
                     ? `+${skillProfile.skillResourceGain - skillProfile.skillCost} ${skillProfile.resourceName}`
                     : `${skillProfile.skillCost} ${skillProfile.resourceName}`
@@ -558,7 +656,7 @@ export default function DungeonRunScreen() {
                       ? `Guard +${battle.combatProfile.defendResourceGain} ${battle.combatProfile.resourceName}`
                   : action === 'item'
                     ? `${battle.potionCount} available`
-                    : meta.detail;
+                    : meta.detail);
 
               return (
                 <Pressable
@@ -851,7 +949,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#191D2B',
     marginTop: 7,
   },
-  healthFill: { height: '100%', borderRadius: 5 },
+  healthFill: { width: '100%', height: '100%', borderRadius: 5 },
   intentPanel: {
     minHeight: 82,
     flexDirection: 'row',

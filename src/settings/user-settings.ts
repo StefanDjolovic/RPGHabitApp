@@ -3,6 +3,9 @@ import type { SQLiteDatabase } from 'expo-sqlite';
 export type UserSettings = {
   timezone: string;
   dayCutoffHour: number;
+  reduceMotionEnabled: boolean;
+  soundEnabled: boolean;
+  hapticsEnabled: boolean;
   quietHoursEnabled: boolean;
   quietStart: string;
   quietEnd: string;
@@ -23,6 +26,9 @@ export type NotificationTone = 'gentle' | 'system' | 'strict';
 
 type UserSettingsRow = Omit<
   UserSettings,
+  | 'reduceMotionEnabled'
+  | 'soundEnabled'
+  | 'hapticsEnabled'
   | 'quietHoursEnabled'
   | 'morningBriefingEnabled'
   | 'eveningCheckinEnabled'
@@ -30,6 +36,9 @@ type UserSettingsRow = Omit<
   | 'recoveryReminderEnabled'
   | 'progressAlertsEnabled'
 > & {
+  reduceMotionEnabled: number;
+  soundEnabled: number;
+  hapticsEnabled: number;
   quietHoursEnabled: number;
   morningBriefingEnabled: number;
   eveningCheckinEnabled: number;
@@ -41,6 +50,9 @@ type UserSettingsRow = Omit<
 const defaultSettings: UserSettings = {
   timezone: 'UTC',
   dayCutoffHour: 4,
+  reduceMotionEnabled: false,
+  soundEnabled: true,
+  hapticsEnabled: true,
   quietHoursEnabled: false,
   quietStart: '22:00',
   quietEnd: '07:00',
@@ -58,6 +70,12 @@ const defaultSettings: UserSettings = {
 };
 
 let runtimeSettings = { ...defaultSettings };
+const runtimeListeners = new Set<() => void>();
+
+function updateRuntimeSettings(settings: UserSettings) {
+  runtimeSettings = settings;
+  runtimeListeners.forEach((listener) => listener());
+}
 
 export function getDeviceTimeZone() {
   try {
@@ -83,6 +101,9 @@ function normalizeSettings(settings: UserSettings): UserSettings {
   return {
     timezone: settings.timezone || getDeviceTimeZone(),
     dayCutoffHour: Math.min(12, Math.max(0, Math.floor(settings.dayCutoffHour))),
+    reduceMotionEnabled: Boolean(settings.reduceMotionEnabled),
+    soundEnabled: Boolean(settings.soundEnabled),
+    hapticsEnabled: Boolean(settings.hapticsEnabled),
     quietHoursEnabled: Boolean(settings.quietHoursEnabled),
     quietStart: normalizeTime(settings.quietStart, defaultSettings.quietStart),
     quietEnd: normalizeTime(settings.quietEnd, defaultSettings.quietEnd),
@@ -116,11 +137,21 @@ export function getRuntimeUserSettings() {
   return runtimeSettings;
 }
 
+export function subscribeUserSettings(listener: () => void) {
+  runtimeListeners.add(listener);
+  return () => {
+    runtimeListeners.delete(listener);
+  };
+}
+
 export async function loadUserSettings(db: SQLiteDatabase) {
   const row = await db.getFirstAsync<UserSettingsRow>(
     `SELECT
        timezone,
        day_cutoff_hour AS dayCutoffHour,
+       reduce_motion_enabled AS reduceMotionEnabled,
+       sound_enabled AS soundEnabled,
+       haptics_enabled AS hapticsEnabled,
        quiet_hours_enabled AS quietHoursEnabled,
        quiet_start AS quietStart,
        quiet_end AS quietEnd,
@@ -139,9 +170,12 @@ export async function loadUserSettings(db: SQLiteDatabase) {
      WHERE id = 1`,
   );
   const detectedTimezone = getDeviceTimeZone();
-  runtimeSettings = normalizeSettings({
+  updateRuntimeSettings(normalizeSettings({
     timezone: row?.timezone === 'system' ? detectedTimezone : row?.timezone ?? detectedTimezone,
     dayCutoffHour: row?.dayCutoffHour ?? defaultSettings.dayCutoffHour,
+    reduceMotionEnabled: row?.reduceMotionEnabled === 1,
+    soundEnabled: row ? row.soundEnabled === 1 : defaultSettings.soundEnabled,
+    hapticsEnabled: row ? row.hapticsEnabled === 1 : defaultSettings.hapticsEnabled,
     quietHoursEnabled: row?.quietHoursEnabled === 1,
     quietStart: row?.quietStart ?? defaultSettings.quietStart,
     quietEnd: row?.quietEnd ?? defaultSettings.quietEnd,
@@ -156,7 +190,7 @@ export async function loadUserSettings(db: SQLiteDatabase) {
     recoveryReminderEnabled: row?.recoveryReminderEnabled === 1,
     recoveryReminderTime: row?.recoveryReminderTime ?? defaultSettings.recoveryReminderTime,
     progressAlertsEnabled: row?.progressAlertsEnabled === 1,
-  });
+  }));
 
   if (!row || row.timezone === 'system') {
     await db.runAsync(
@@ -178,18 +212,22 @@ export async function loadUserSettings(db: SQLiteDatabase) {
 }
 
 export async function saveUserSettings(db: SQLiteDatabase, settings: UserSettings) {
-  runtimeSettings = normalizeSettings(settings);
+  const normalizedSettings = normalizeSettings(settings);
   await db.runAsync(
     `INSERT INTO user_settings (
-       id, timezone, day_cutoff_hour, quiet_hours_enabled, quiet_start, quiet_end,
+       id, timezone, day_cutoff_hour, reduce_motion_enabled, sound_enabled,
+       haptics_enabled, quiet_hours_enabled, quiet_start, quiet_end,
        notification_tone, morning_briefing_enabled, morning_briefing_time,
        evening_checkin_enabled, evening_checkin_time, weekly_review_enabled,
        weekly_review_day, weekly_review_time, recovery_reminder_enabled,
        recovery_reminder_time, progress_alerts_enabled
-     ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET
        timezone = excluded.timezone,
        day_cutoff_hour = excluded.day_cutoff_hour,
+       reduce_motion_enabled = excluded.reduce_motion_enabled,
+       sound_enabled = excluded.sound_enabled,
+       haptics_enabled = excluded.haptics_enabled,
        quiet_hours_enabled = excluded.quiet_hours_enabled,
        quiet_start = excluded.quiet_start,
        quiet_end = excluded.quiet_end,
@@ -205,23 +243,27 @@ export async function saveUserSettings(db: SQLiteDatabase, settings: UserSetting
        recovery_reminder_time = excluded.recovery_reminder_time,
        progress_alerts_enabled = excluded.progress_alerts_enabled,
        updated_at = CURRENT_TIMESTAMP`,
-    runtimeSettings.timezone,
-    runtimeSettings.dayCutoffHour,
-    runtimeSettings.quietHoursEnabled ? 1 : 0,
-    runtimeSettings.quietStart,
-    runtimeSettings.quietEnd,
-    runtimeSettings.notificationTone,
-    runtimeSettings.morningBriefingEnabled ? 1 : 0,
-    runtimeSettings.morningBriefingTime,
-    runtimeSettings.eveningCheckinEnabled ? 1 : 0,
-    runtimeSettings.eveningCheckinTime,
-    runtimeSettings.weeklyReviewEnabled ? 1 : 0,
-    runtimeSettings.weeklyReviewDay,
-    runtimeSettings.weeklyReviewTime,
-    runtimeSettings.recoveryReminderEnabled ? 1 : 0,
-    runtimeSettings.recoveryReminderTime,
-    runtimeSettings.progressAlertsEnabled ? 1 : 0,
+    normalizedSettings.timezone,
+    normalizedSettings.dayCutoffHour,
+    normalizedSettings.reduceMotionEnabled ? 1 : 0,
+    normalizedSettings.soundEnabled ? 1 : 0,
+    normalizedSettings.hapticsEnabled ? 1 : 0,
+    normalizedSettings.quietHoursEnabled ? 1 : 0,
+    normalizedSettings.quietStart,
+    normalizedSettings.quietEnd,
+    normalizedSettings.notificationTone,
+    normalizedSettings.morningBriefingEnabled ? 1 : 0,
+    normalizedSettings.morningBriefingTime,
+    normalizedSettings.eveningCheckinEnabled ? 1 : 0,
+    normalizedSettings.eveningCheckinTime,
+    normalizedSettings.weeklyReviewEnabled ? 1 : 0,
+    normalizedSettings.weeklyReviewDay,
+    normalizedSettings.weeklyReviewTime,
+    normalizedSettings.recoveryReminderEnabled ? 1 : 0,
+    normalizedSettings.recoveryReminderTime,
+    normalizedSettings.progressAlertsEnabled ? 1 : 0,
   );
+  updateRuntimeSettings(normalizedSettings);
   return runtimeSettings;
 }
 

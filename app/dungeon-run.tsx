@@ -1,5 +1,4 @@
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
-import * as Haptics from 'expo-haptics';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, type Href } from 'expo-router';
@@ -31,6 +30,7 @@ import {
   type CombatStatus,
 } from '@/src/dungeon/combat-statuses';
 import type { CombatAction } from '@/src/dungeon/unawakened-combat';
+import { playImpactHaptic, playNotificationHaptic } from '@/src/settings/haptic-feedback';
 
 type BattleOutcome = 'cleared' | 'failed' | 'fled' | null;
 
@@ -218,20 +218,12 @@ export default function DungeonRunScreen() {
         result.outcome === 'room-cleared'
       ) {
         setBattle(result.battle);
-        if (process.env.EXPO_OS === 'ios') {
-          void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-        }
+        void playImpactHaptic('light');
       } else {
         setBattle(null);
         setOutcome(result.outcome);
         setCompletedRun(result.run);
-        if (process.env.EXPO_OS === 'ios') {
-          void Haptics.notificationAsync(
-            result.outcome === 'cleared'
-              ? Haptics.NotificationFeedbackType.Success
-              : Haptics.NotificationFeedbackType.Error,
-          );
-        }
+        void playNotificationHaptic(result.outcome === 'cleared' ? 'success' : 'error');
       }
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'The action could not be completed.');
@@ -246,9 +238,7 @@ export default function DungeonRunScreen() {
     setErrorMessage('');
     try {
       setBattle(await chooseDungeonPath(db, path));
-      if (process.env.EXPO_OS === 'ios') {
-        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      }
+      void playNotificationHaptic('success');
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'The path could not be opened.');
     } finally {

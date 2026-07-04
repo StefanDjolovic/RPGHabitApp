@@ -1,5 +1,4 @@
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
-import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
@@ -17,9 +16,13 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { PlayerAvatar } from '@/components/player-avatar';
+import {
+  getPlayerClassState,
+  INITIAL_PLAYER_CLASS_STATE,
+} from '@/src/database/class-repository';
 import {
   getPlayerProfile,
-  getProfileInitials,
   INITIAL_PLAYER_PROFILE,
   updatePlayerProfile,
   type AvatarMode,
@@ -28,6 +31,10 @@ import {
   deleteStoredProfileAvatar,
   persistProfileAvatar,
 } from '@/src/profile/avatar-storage';
+import {
+  getPlayerProgress,
+  INITIAL_PLAYER_PROGRESS,
+} from '@/src/progression/player-progression';
 
 const avatarModes: {
   key: AvatarMode;
@@ -43,14 +50,22 @@ export default function EditProfileScreen() {
   const db = useSQLiteContext();
   const insets = useSafeAreaInsets();
   const [profile, setProfile] = useState(INITIAL_PLAYER_PROFILE);
+  const [playerProgress, setPlayerProgress] = useState(INITIAL_PLAYER_PROGRESS);
+  const [playerClassState, setPlayerClassState] = useState(INITIAL_PLAYER_CLASS_STATE);
   const [originalAvatarUri, setOriginalAvatarUri] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    void getPlayerProfile(db)
-      .then((nextProfile) => {
+    void Promise.all([
+      getPlayerProfile(db),
+      getPlayerProgress(db),
+      getPlayerClassState(db),
+    ])
+      .then(([nextProfile, nextProgress, nextClassState]) => {
         setProfile(nextProfile);
+        setPlayerProgress(nextProgress);
+        setPlayerClassState(nextClassState);
         setOriginalAvatarUri(nextProfile.customAvatarUri);
       })
       .finally(() => setLoading(false));
@@ -173,15 +188,12 @@ export default function EditProfileScreen() {
         end={{ x: 1, y: 1 }}
         start={{ x: 0, y: 0 }}
         style={styles.previewPanel}>
-        <View style={styles.avatarFrame}>
-          {profile.avatarMode === 'custom' && profile.customAvatarUri ? (
-            <Image contentFit="cover" source={{ uri: profile.customAvatarUri }} style={styles.avatarImage} />
-          ) : profile.avatarMode === 'initials' ? (
-            <Text style={styles.avatarInitials}>{getProfileInitials(profile.nickname)}</Text>
-          ) : (
-            <MaterialCommunityIcons color="#FF9BCB" name="account" size={54} />
-          )}
-        </View>
+        <PlayerAvatar
+          activeClass={playerClassState.activeClass}
+          profile={profile}
+          rankKey={playerProgress.rankKey}
+          size={112}
+        />
         <Text numberOfLines={1} style={styles.previewName}>
           {profile.nickname.trim() || 'Shadow Candidate'}
         </Text>
@@ -272,9 +284,6 @@ const styles = StyleSheet.create({
   eyebrow: { color: '#FF9BCB', fontSize: 8, fontWeight: '900', letterSpacing: 1.3 },
   heading: { color: '#F3F1FA', fontSize: 23, fontWeight: '900', marginTop: 2 },
   previewPanel: { minHeight: 218, borderRadius: 8, borderWidth: 1, borderColor: '#563B6A', alignItems: 'center', justifyContent: 'center', padding: 18 },
-  avatarFrame: { width: 104, height: 104, borderRadius: 52, borderWidth: 2, borderColor: '#FF9BCB', backgroundColor: '#171124', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
-  avatarImage: { width: '100%', height: '100%' },
-  avatarInitials: { color: '#FF9BCB', fontSize: 30, fontWeight: '900' },
   previewName: { color: '#F4F0FA', fontSize: 18, fontWeight: '900', marginTop: 14, maxWidth: '100%' },
   previewMeta: { color: '#8E789B', fontSize: 8, fontWeight: '900', letterSpacing: 1.3, marginTop: 4 },
   fieldBlock: { gap: 9 },

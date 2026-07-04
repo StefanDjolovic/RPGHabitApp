@@ -1,5 +1,4 @@
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
-import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
@@ -16,6 +15,7 @@ import {
   type PlayerProgress,
   type StatRecalibrationState,
 } from '@/src/progression/player-progression';
+import { playNotificationHaptic } from '@/src/settings/haptic-feedback';
 
 const attributes: { key: HabitAttribute; label: string; icon: keyof typeof MaterialCommunityIcons.glyphMap; color: string }[] = [
   { key: 'strength', label: 'Strength', icon: 'arm-flex', color: '#FF7B72' },
@@ -58,9 +58,7 @@ export default function StatRecalibrationScreen() {
       setReturnedPoints(state.allocatedPoints);
       setProgress(result.progress);
       setState(result.state);
-      if (process.env.EXPO_OS === 'ios') {
-        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      }
+      void playNotificationHaptic('success');
     } catch (error) {
       Alert.alert('Recalibration not completed', error instanceof Error ? error.message : 'Please try again.');
     } finally {

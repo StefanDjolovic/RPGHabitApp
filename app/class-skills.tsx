@@ -1,5 +1,4 @@
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
-import * as Haptics from 'expo-haptics';
 import { router } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
 import { useCallback, useEffect, useState } from 'react';
@@ -23,6 +22,7 @@ import {
   type ClassSkillLoadout,
   type UserSkillProgress,
 } from '@/src/database/class-repository';
+import { playSelectionHaptic } from '@/src/settings/haptic-feedback';
 
 type SelectedSlot = { type: ClassSkillType; slot: number };
 
@@ -156,9 +156,7 @@ export default function ClassSkillsScreen() {
       const nextLoadout = await equipClassSkill(db, skill.key, targetSlot.slot);
       setLoadout(nextLoadout);
       setSelectedSlot(targetSlot);
-      if (process.env.EXPO_OS === 'ios') {
-        void Haptics.selectionAsync();
-      }
+      void playSelectionHaptic();
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'The skill could not be equipped.');
     } finally {
@@ -472,4 +470,3 @@ const styles = StyleSheet.create({
   skillDescription: { color: '#747D92', fontSize: 8, lineHeight: 12, fontWeight: '700', marginTop: 4 },
   pressed: { opacity: 0.72 },
 });
-

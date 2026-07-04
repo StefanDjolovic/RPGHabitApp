@@ -1,5 +1,4 @@
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
-import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, type Href, useFocusEffect } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
@@ -32,6 +31,7 @@ import {
   type EquipmentSlotKey,
 } from '@/src/inventory/equipment';
 import { getItemDefinition, rarityMeta, type ItemRarity } from '@/src/inventory/item-catalog';
+import { playImpactHaptic } from '@/src/settings/haptic-feedback';
 
 type InventoryView = 'vault' | 'loadout' | 'smith';
 
@@ -101,9 +101,7 @@ export default function InventoryScreen() {
     setUpdatingItemKey(itemKey);
     try {
       setOverview(await action());
-      if (process.env.EXPO_OS === 'ios') {
-        void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-      }
+      void playImpactHaptic('light');
     } catch (error) {
       Alert.alert(
         'Inventory action failed',

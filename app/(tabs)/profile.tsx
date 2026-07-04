@@ -1,5 +1,4 @@
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
-import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, type Href, useFocusEffect } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
@@ -15,6 +14,7 @@ import {
 } from 'react-native';
 
 import { AttributeRadarChart } from '@/components/attribute-radar-chart';
+import { PlayerAvatar } from '@/components/player-avatar';
 import {
   getAchievementSummary,
   type AchievementSummary,
@@ -27,7 +27,6 @@ import {
 } from '@/src/database/habit-repository';
 import {
   getPlayerProfile,
-  getProfileInitials,
   INITIAL_PLAYER_PROFILE,
   type PlayerProfile,
 } from '@/src/database/profile-repository';
@@ -314,21 +313,12 @@ export default function ProfileScreen() {
           style={styles.heroCard}>
           <View style={styles.cardAccent} />
           <View style={styles.identityRow}>
-            <View style={styles.avatarFrame}>
-              {playerProfile.avatarMode === 'custom' && playerProfile.customAvatarUri ? (
-                <Image
-                  contentFit="cover"
-                  source={{ uri: playerProfile.customAvatarUri }}
-                  style={styles.avatarImage}
-                />
-              ) : playerProfile.avatarMode === 'initials' ? (
-                <Text style={styles.avatarInitials}>
-                  {getProfileInitials(playerProfile.nickname)}
-                </Text>
-              ) : (
-                <MaterialCommunityIcons name="account" size={42} color="#FF9BCB" />
-              )}
-            </View>
+            <PlayerAvatar
+              activeClass={playerClassState.activeClass}
+              profile={playerProfile}
+              rankKey={playerProgress.rankKey}
+              size={70}
+            />
             <View style={styles.identityText}>
               <Text style={styles.playerName}>{playerProfile.nickname}</Text>
               <Text style={styles.rankTitle}>
@@ -1074,19 +1064,6 @@ const styles = StyleSheet.create({
     transform: [{ rotate: '23deg' }],
   },
   identityRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 20 },
-  avatarFrame: {
-    width: 66,
-    height: 66,
-    borderRadius: 19,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(7, 9, 22, 0.76)',
-    borderWidth: 1,
-    borderColor: '#774163',
-    overflow: 'hidden',
-  },
-  avatarImage: { width: '100%', height: '100%' },
-  avatarInitials: { color: '#FF9BCB', fontSize: 20, fontWeight: '900' },
   identityText: { flex: 1, paddingLeft: 13 },
   playerName: { color: '#F1EEFF', fontSize: 17, fontWeight: '900', marginBottom: 5 },
   rankTitle: { color: '#B9A4C8', fontSize: 12, fontWeight: '700' },

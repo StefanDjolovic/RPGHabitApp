@@ -1,5 +1,4 @@
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
-import * as Haptics from 'expo-haptics';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
@@ -39,6 +38,7 @@ import {
   INITIAL_PLAYER_PROGRESS,
   type PlayerProgress,
 } from '@/src/progression/player-progression';
+import { playNotificationHaptic } from '@/src/settings/haptic-feedback';
 
 export default function AwakeningScreen() {
   const db = useSQLiteContext();
@@ -96,9 +96,7 @@ export default function AwakeningScreen() {
         syncProgressNotifications(db).catch(() => 0),
       ]);
       setCompleted(true);
-      if (process.env.EXPO_OS === 'ios') {
-        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      }
+      void playNotificationHaptic('success');
     } catch (error) {
       Alert.alert(
         'Awakening not completed',

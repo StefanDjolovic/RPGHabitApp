@@ -1,5 +1,4 @@
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
-import * as Haptics from 'expo-haptics';
 import { Image } from 'expo-image';
 import { router } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
@@ -21,6 +20,7 @@ import {
   type RankTrialState,
 } from '@/src/database/rank-repository';
 import { syncProgressNotifications } from '@/src/notifications/system-notifications';
+import { playNotificationHaptic } from '@/src/settings/haptic-feedback';
 
 function RequirementRow({
   accent,
@@ -92,9 +92,7 @@ export default function RankTrialScreen() {
       setState(await completeRankTrial(db));
       await syncProgressNotifications(db).catch(() => 0);
       setCompletedRank(rankLabel);
-      if (process.env.EXPO_OS === 'ios') {
-        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      }
+      void playNotificationHaptic('success');
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'The Rank-Up Trial could not be completed.');
     } finally {

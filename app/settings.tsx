@@ -162,6 +162,59 @@ export default function SettingsScreen() {
         </View>
 
         <View style={styles.sectionHeader}>
+          <MaterialCommunityIcons name="human-handsup" size={18} color="#68E1A8" />
+          <Text style={styles.sectionTitle}>ACCESSIBILITY & COMFORT</Text>
+        </View>
+
+        <View style={styles.panel}>
+          <View style={styles.notificationRow}>
+            <View style={styles.notificationIdentity}>
+              <MaterialCommunityIcons name="motion-pause-outline" size={20} color="#7EE7FF" />
+              <Text style={styles.notificationLabel}>Reduce Motion</Text>
+            </View>
+            <Switch
+              accessibilityLabel="Reduce Motion"
+              onValueChange={(reduceMotionEnabled) => updateSettings({ reduceMotionEnabled })}
+              thumbColor={settings.reduceMotionEnabled ? '#F5F2FF' : '#8A91A8'}
+              trackColor={{ false: '#282D40', true: '#2D7486' }}
+              value={settings.reduceMotionEnabled}
+            />
+          </View>
+
+          <View style={styles.divider} />
+
+          <View style={styles.notificationRow}>
+            <View style={styles.notificationIdentity}>
+              <MaterialCommunityIcons name="volume-high" size={20} color="#FFD166" />
+              <Text style={styles.notificationLabel}>Sound</Text>
+            </View>
+            <Switch
+              accessibilityLabel="Sound"
+              onValueChange={(soundEnabled) => updateSettings({ soundEnabled })}
+              thumbColor={settings.soundEnabled ? '#F5F2FF' : '#8A91A8'}
+              trackColor={{ false: '#282D40', true: '#8A6A2D' }}
+              value={settings.soundEnabled}
+            />
+          </View>
+
+          <View style={styles.divider} />
+
+          <View style={styles.notificationRow}>
+            <View style={styles.notificationIdentity}>
+              <MaterialCommunityIcons name="vibrate" size={20} color="#C79CFF" />
+              <Text style={styles.notificationLabel}>Haptics</Text>
+            </View>
+            <Switch
+              accessibilityLabel="Haptics"
+              onValueChange={(hapticsEnabled) => updateSettings({ hapticsEnabled })}
+              thumbColor={settings.hapticsEnabled ? '#F5F2FF' : '#8A91A8'}
+              trackColor={{ false: '#282D40', true: '#7652A8' }}
+              value={settings.hapticsEnabled}
+            />
+          </View>
+        </View>
+
+        <View style={styles.sectionHeader}>
           <MaterialCommunityIcons name="bell-outline" size={18} color="#FFD166" />
           <Text style={styles.sectionTitle}>BRIEFINGS & REMINDERS</Text>
         </View>

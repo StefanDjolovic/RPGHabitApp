@@ -1,6 +1,6 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 
-const DATABASE_VERSION = 30;
+const DATABASE_VERSION = 31;
 
 export async function migrateDatabase(db: SQLiteDatabase) {
   await db.execAsync('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
@@ -1037,6 +1037,22 @@ export async function migrateDatabase(db: SQLiteDatabase) {
     await db.execAsync(`
       ALTER TABLE player_profile
         ADD COLUMN custom_avatar_uri TEXT;
+    `);
+  }
+
+  if (currentVersion < 31) {
+    await db.execAsync(`
+      ALTER TABLE user_settings
+        ADD COLUMN reduce_motion_enabled INTEGER NOT NULL DEFAULT 0
+        CHECK (reduce_motion_enabled IN (0, 1));
+
+      ALTER TABLE user_settings
+        ADD COLUMN sound_enabled INTEGER NOT NULL DEFAULT 1
+        CHECK (sound_enabled IN (0, 1));
+
+      ALTER TABLE user_settings
+        ADD COLUMN haptics_enabled INTEGER NOT NULL DEFAULT 1
+        CHECK (haptics_enabled IN (0, 1));
     `);
   }
 

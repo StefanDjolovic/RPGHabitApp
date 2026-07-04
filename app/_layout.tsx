@@ -3,13 +3,17 @@ import * as Notifications from 'expo-notifications';
 import { router, Stack, type Href } from 'expo-router';
 import { SQLiteProvider, type SQLiteDatabase } from 'expo-sqlite';
 import { StatusBar } from 'expo-status-bar';
-import { useEffect } from 'react';
+import { useEffect, useSyncExternalStore } from 'react';
 import 'react-native-reanimated';
 import '@/src/notifications/habit-reminders';
 
 import { migrateDatabase } from '@/src/database/database';
 import { syncSystemNotifications } from '@/src/notifications/system-notifications';
-import { loadUserSettings } from '@/src/settings/user-settings';
+import {
+  getRuntimeUserSettings,
+  loadUserSettings,
+  subscribeUserSettings,
+} from '@/src/settings/user-settings';
 
 const habitRpgTheme = {
   ...DarkTheme,
@@ -70,6 +74,12 @@ function useNotificationNavigation() {
 
 export default function RootLayout() {
   useNotificationNavigation();
+  const settings = useSyncExternalStore(
+    subscribeUserSettings,
+    getRuntimeUserSettings,
+    getRuntimeUserSettings,
+  );
+  const reduceMotion = settings.reduceMotionEnabled;
 
   return (
     <SQLiteProvider databaseName="habit-rpg.db" onInit={initializeDatabase}>
@@ -79,43 +89,59 @@ export default function RootLayout() {
           <Stack.Screen name="onboarding" options={{ headerShown: false, gestureEnabled: false }} />
           <Stack.Screen
             name="create-habit"
-            options={{ animation: 'slide_from_bottom', headerShown: false, presentation: 'modal' }}
+            options={{
+              animation: reduceMotion ? 'none' : 'slide_from_bottom',
+              headerShown: false,
+              presentation: 'modal',
+            }}
           />
           <Stack.Screen
             name="create-boss-quest"
-            options={{ animation: 'slide_from_bottom', headerShown: false, presentation: 'modal' }}
+            options={{
+              animation: reduceMotion ? 'none' : 'slide_from_bottom',
+              headerShown: false,
+              presentation: 'modal',
+            }}
           />
           <Stack.Screen
             name="settings"
-            options={{ animation: 'slide_from_bottom', headerShown: false, presentation: 'modal' }}
+            options={{
+              animation: reduceMotion ? 'none' : 'slide_from_bottom',
+              headerShown: false,
+              presentation: 'modal',
+            }}
           />
           <Stack.Screen
             name="edit-profile"
-            options={{ animation: 'slide_from_bottom', headerShown: false, presentation: 'modal' }}
+            options={{
+              animation: reduceMotion ? 'none' : 'slide_from_bottom',
+              headerShown: false,
+              presentation: 'modal',
+            }}
           />
           <Stack.Screen
             name="weekly-review"
-            options={{ animation: 'slide_from_right', headerShown: false }}
+            options={{ animation: reduceMotion ? 'none' : 'slide_from_right', headerShown: false }}
           />
           <Stack.Screen
             name="dungeon-run"
-            options={{ animation: 'fade', gestureEnabled: false, headerShown: false }}
+            options={{ animation: reduceMotion ? 'none' : 'fade', gestureEnabled: false, headerShown: false }}
           />
           <Stack.Screen
             name="awakening"
-            options={{ animation: 'fade', gestureEnabled: false, headerShown: false }}
+            options={{ animation: reduceMotion ? 'none' : 'fade', gestureEnabled: false, headerShown: false }}
           />
           <Stack.Screen
             name="class-skills"
-            options={{ animation: 'slide_from_right', headerShown: false }}
+            options={{ animation: reduceMotion ? 'none' : 'slide_from_right', headerShown: false }}
           />
           <Stack.Screen
             name="rank-trial"
-            options={{ animation: 'slide_from_right', headerShown: false }}
+            options={{ animation: reduceMotion ? 'none' : 'slide_from_right', headerShown: false }}
           />
           <Stack.Screen
             name="stat-recalibration"
-            options={{ animation: 'slide_from_right', headerShown: false }}
+            options={{ animation: reduceMotion ? 'none' : 'slide_from_right', headerShown: false }}
           />
           <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Habit RPG' }} />
         </Stack>

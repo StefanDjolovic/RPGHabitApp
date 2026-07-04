@@ -1,6 +1,8 @@
 import { Directory, File, Paths } from 'expo-file-system';
 
-const avatarDirectory = new Directory(Paths.document, 'profile-avatars');
+function getAvatarDirectory() {
+  return new Directory(Paths.document, 'profile-avatars');
+}
 
 function getImageExtension(uri: string) {
   const extension = /\.(jpe?g|png|webp|heic)$/i.exec(uri.split('?')[0])?.[0].toLowerCase();
@@ -8,6 +10,8 @@ function getImageExtension(uri: string) {
 }
 
 export function persistProfileAvatar(sourceUri: string) {
+  if (process.env.EXPO_OS === 'web') return sourceUri;
+  const avatarDirectory = getAvatarDirectory();
   avatarDirectory.create({ idempotent: true, intermediates: true });
   const source = new File(sourceUri);
   const destination = new File(
@@ -19,6 +23,8 @@ export function persistProfileAvatar(sourceUri: string) {
 }
 
 export function deleteStoredProfileAvatar(uri: string | null) {
+  if (process.env.EXPO_OS === 'web') return;
+  const avatarDirectory = getAvatarDirectory();
   if (!uri || !uri.startsWith(avatarDirectory.uri)) return;
   const file = new File(uri);
   if (file.exists) file.delete();

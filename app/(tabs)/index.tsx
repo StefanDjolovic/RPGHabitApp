@@ -1,5 +1,4 @@
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
-import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, type Href, useFocusEffect } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
@@ -20,6 +19,8 @@ import {
   getActiveBossQuest,
   type BossQuest,
 } from '@/src/database/boss-quest-repository';
+
+import { PlayerAvatar } from '@/components/player-avatar';
 
 import {
   changeHabitCounter,
@@ -46,7 +47,6 @@ import {
 } from '@/src/progression/player-progression';
 import {
   getPlayerProfile,
-  getProfileInitials,
   INITIAL_PLAYER_PROFILE,
   type PlayerProfile,
 } from '@/src/database/profile-repository';
@@ -604,17 +604,12 @@ export default function TodayScreen() {
             accessibilityLabel="Open profile"
             onPress={() => router.push('/profile')}
             style={styles.avatarButton}>
-            {playerProfile.avatarMode === 'custom' && playerProfile.customAvatarUri ? (
-              <Image
-                contentFit="cover"
-                source={{ uri: playerProfile.customAvatarUri }}
-                style={styles.avatarImage}
-              />
-            ) : playerProfile.avatarMode === 'initials' ? (
-              <Text style={styles.avatarInitials}>{getProfileInitials(playerProfile.nickname)}</Text>
-            ) : (
-              <MaterialCommunityIcons name="account" size={26} color="#9BE8FF" />
-            )}
+            <PlayerAvatar
+              activeClass={playerClassState.activeClass}
+              profile={playerProfile}
+              rankKey={playerProgress.rankKey}
+              size={48}
+            />
           </Pressable>
         </View>
 
@@ -1156,18 +1151,12 @@ const styles = StyleSheet.create({
   systemLabel: { color: '#6ECFE4', fontSize: 10, fontWeight: '800', letterSpacing: 1.8 },
   heading: { color: '#F5F2FF', fontSize: 31, fontWeight: '800', letterSpacing: -0.8 },
   avatarButton: {
-    width: 46,
-    height: 46,
+    width: 48,
+    height: 48,
     borderRadius: 14,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#11162A',
-    borderWidth: 1,
-    borderColor: '#293252',
-    overflow: 'hidden',
   },
-  avatarImage: { width: '100%', height: '100%' },
-  avatarInitials: { color: '#FF9BCB', fontSize: 13, fontWeight: '900' },
   playerCard: {
     borderRadius: 22,
     borderWidth: 1,

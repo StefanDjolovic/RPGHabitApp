@@ -8,6 +8,11 @@ import {
 } from '@/src/settings/user-settings';
 
 const REMINDER_CHANNEL_ID = 'habit-reminders';
+const SILENT_REMINDER_CHANNEL_ID = 'habit-reminders-silent';
+
+function getReminderChannelId(soundEnabled: boolean) {
+  return soundEnabled ? REMINDER_CHANNEL_ID : SILENT_REMINDER_CHANNEL_ID;
+}
 
 type ReminderHabitRow = {
   title: string;
@@ -24,7 +29,9 @@ type ReminderHabitRow = {
 if (process.env.EXPO_OS !== 'web') {
   Notifications.setNotificationHandler({
     handleNotification: async () => ({
-      shouldPlaySound: true,
+      shouldPlaySound: process.env.EXPO_OS === 'android'
+        ? true
+        : getRuntimeUserSettings().soundEnabled,
       shouldSetBadge: false,
       shouldShowBanner: true,
       shouldShowList: true,
@@ -32,14 +39,14 @@ if (process.env.EXPO_OS !== 'web') {
   });
 }
 
-async function ensureAndroidReminderChannel() {
+async function ensureAndroidReminderChannel(soundEnabled = getRuntimeUserSettings().soundEnabled) {
   if (process.env.EXPO_OS !== 'android') return;
 
-  await Notifications.setNotificationChannelAsync(REMINDER_CHANNEL_ID, {
-    name: 'Habit reminders',
+  await Notifications.setNotificationChannelAsync(getReminderChannelId(soundEnabled), {
+    name: soundEnabled ? 'Habit reminders' : 'Silent habit reminders',
     description: 'Reminders for scheduled real-life quests',
     importance: Notifications.AndroidImportance.DEFAULT,
-    sound: 'default',
+    sound: soundEnabled ? 'default' : null,
     vibrationPattern: [0, 180],
     lightColor: '#6DDEFF',
   });
@@ -152,13 +159,14 @@ export async function syncHabitReminderFromDatabase(
     return false;
   }
 
-  await ensureAndroidReminderChannel();
+  const settings = getRuntimeUserSettings();
+  await ensureAndroidReminderChannel(settings.soundEnabled);
   const permission = await Notifications.getPermissionsAsync();
   if (permission.status !== 'granted') return false;
 
   const scheduledTime = getQuietHoursAdjustedTime(
     habit.reminderTime,
-    getRuntimeUserSettings(),
+    settings,
   );
   const { hour, minute } = parseReminderTime(scheduledTime.time);
   const message = getReminderMessage(habit.title, habit.reminderTone);
@@ -171,14 +179,16 @@ export async function syncHabitReminderFromDatabase(
         content: {
           ...message,
           data: { url: '/', habitId },
-          sound: 'default',
+          sound: settings.soundEnabled ? 'default' : false,
         },
         trigger: {
           type: Notifications.SchedulableTriggerInputTypes.WEEKLY,
           weekday,
           hour,
           minute,
-          channelId: process.env.EXPO_OS === 'android' ? REMINDER_CHANNEL_ID : undefined,
+          channelId: process.env.EXPO_OS === 'android'
+            ? getReminderChannelId(settings.soundEnabled)
+            : undefined,
         },
       });
       scheduled.push({ notificationId, weekday });

@@ -13,6 +13,11 @@ import {
 } from '@/src/settings/user-settings';
 
 const SYSTEM_CHANNEL_ID = 'system-updates';
+const SILENT_SYSTEM_CHANNEL_ID = 'system-updates-silent';
+
+function getSystemChannelId(soundEnabled: boolean) {
+  return soundEnabled ? SYSTEM_CHANNEL_ID : SILENT_SYSTEM_CHANNEL_ID;
+}
 
 type SystemNotificationKey =
   | 'morning-briefing'
@@ -166,14 +171,16 @@ function getProgressMessage(
   return messages[tone][kind];
 }
 
-async function ensureSystemNotificationChannel() {
+async function ensureSystemNotificationChannel(
+  soundEnabled = getRuntimeUserSettings().soundEnabled,
+) {
   if (process.env.EXPO_OS !== 'android') return;
 
-  await Notifications.setNotificationChannelAsync(SYSTEM_CHANNEL_ID, {
-    name: 'Briefings and progress',
+  await Notifications.setNotificationChannelAsync(getSystemChannelId(soundEnabled), {
+    name: soundEnabled ? 'Briefings and progress' : 'Silent briefings and progress',
     description: 'Daily briefings, reviews and recovery reminders',
     importance: Notifications.AndroidImportance.DEFAULT,
-    sound: 'default',
+    sound: soundEnabled ? 'default' : null,
     vibrationPattern: [0, 160],
     lightColor: '#6DDEFF',
   });
@@ -182,7 +189,7 @@ async function ensureSystemNotificationChannel() {
 async function getPermission(requestPermission: boolean) {
   if (process.env.EXPO_OS === 'web') return false;
 
-  await ensureSystemNotificationChannel();
+  await ensureSystemNotificationChannel(getRuntimeUserSettings().soundEnabled);
   const current = await Notifications.getPermissionsAsync();
   if (current.status === 'granted') return true;
   if (!requestPermission) return false;
@@ -279,20 +286,24 @@ export async function syncSystemNotifications(
             type: Notifications.SchedulableTriggerInputTypes.DAILY,
             hour,
             minute,
-            channelId: process.env.EXPO_OS === 'android' ? SYSTEM_CHANNEL_ID : undefined,
+            channelId: process.env.EXPO_OS === 'android'
+              ? getSystemChannelId(settings.soundEnabled)
+              : undefined,
           } satisfies Notifications.DailyTriggerInput)
         : ({
             type: Notifications.SchedulableTriggerInputTypes.WEEKLY,
             weekday: ((definition.weekday + adjusted.dayOffset) % 7) + 1,
             hour,
             minute,
-            channelId: process.env.EXPO_OS === 'android' ? SYSTEM_CHANNEL_ID : undefined,
+            channelId: process.env.EXPO_OS === 'android'
+              ? getSystemChannelId(settings.soundEnabled)
+              : undefined,
           } satisfies Notifications.WeeklyTriggerInput);
       const notificationId = await Notifications.scheduleNotificationAsync({
         content: {
           ...message,
           data: { url: definition.url, notificationType: definition.key },
-          sound: 'default',
+          sound: settings.soundEnabled ? 'default' : false,
         },
         trigger,
       });
@@ -359,12 +370,13 @@ async function presentProgressNotification(
   tone: NotificationTone,
   detail = '',
 ) {
+  const settings = getRuntimeUserSettings();
   const message = getProgressMessage(kind, tone, detail);
   await Notifications.scheduleNotificationAsync({
     content: {
       ...message,
       data: { url, notificationType: kind },
-      sound: 'default',
+      sound: settings.soundEnabled ? 'default' : false,
     },
     trigger: null,
   });

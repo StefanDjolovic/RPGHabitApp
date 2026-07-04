@@ -1,6 +1,6 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 
-const DATABASE_VERSION = 34;
+const DATABASE_VERSION = 35;
 
 export async function migrateDatabase(db: SQLiteDatabase) {
   await db.execAsync('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
@@ -1090,6 +1090,22 @@ export async function migrateDatabase(db: SQLiteDatabase) {
 
       CREATE INDEX IF NOT EXISTS idx_habit_reminder_snoozes_habit_time
         ON habit_reminder_snoozes(habit_id, reminder_time, snoozed_at);
+    `);
+  }
+
+  if (currentVersion < 35) {
+    await db.execAsync(`
+      UPDATE player_rank_state
+      SET current_rank_key = 'sss_rank', updated_at = CURRENT_TIMESTAMP
+      WHERE current_rank_key = 'ascendant';
+
+      UPDATE rank_trial_events
+      SET previous_rank_key = 'sss_rank'
+      WHERE previous_rank_key = 'ascendant';
+
+      UPDATE rank_trial_events
+      SET next_rank_key = 'sss_rank'
+      WHERE next_rank_key = 'ascendant';
     `);
   }
 

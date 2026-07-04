@@ -300,8 +300,18 @@ export default function ProfileScreen() {
               style={({ pressed }) => [styles.settingsButton, pressed && styles.buttonPressed]}>
               <MaterialCommunityIcons name="cog-outline" size={22} color="#BFC5DB" />
             </Pressable>
-            <View style={styles.rankSeal}>
-              <Text style={styles.rankSealText}>{playerProgress.rankShort}</Text>
+            <View
+              style={[
+                styles.rankSeal,
+                { borderColor: `${rankTrialState.currentRank.accent}88` },
+              ]}>
+              <Text
+                style={[
+                  styles.rankSealText,
+                  { color: rankTrialState.currentRank.accent },
+                ]}>
+                {playerProgress.rankShort}
+              </Text>
             </View>
           </View>
         </View>

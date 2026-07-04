@@ -8,6 +8,10 @@ import {
   hasCombatStatus,
   type CombatStatus,
 } from '@/src/dungeon/combat-statuses';
+import {
+  getDungeonDefinition,
+  type DungeonCombatTheme,
+} from '@/src/dungeon/dungeon-catalog';
 import type { PlayerProgress } from '@/src/progression/player-progression';
 
 export type CombatAction = 'attack' | 'skill' | 'defend' | 'item';
@@ -77,6 +81,67 @@ const VERDANT_INTENT_CYCLE: Omit<EnemyIntent, 'damage'>[] = [
   { type: 'attack', name: 'Toxic Bloom', detail: 'A poisonous cloud follows the strike.', status: { type: 'poison', turns: 3, potency: 4 } },
 ];
 
+const SUNKEN_INTENT_CYCLE: Omit<EnemyIntent, 'damage'>[] = [
+  { type: 'attack', name: 'Tidal Spear', detail: 'A compressed current cuts through armor.', status: null },
+  { type: 'charge', name: 'Rising Pressure', detail: 'The enemy gathers the weight of the deep.', status: null },
+  { type: 'heavy', name: 'Abyssal Crash', detail: 'Heavy pressure leaves the target Vulnerable.', status: { type: 'vulnerable', turns: 3, potency: 20 } },
+  { type: 'attack', name: 'Drowned Edge', detail: 'A corroded blade opens a lasting wound.', status: { type: 'bleed', turns: 3, potency: 4 } },
+];
+
+const OBSIDIAN_INTENT_CYCLE: Omit<EnemyIntent, 'damage'>[] = [
+  { type: 'attack', name: 'Blackglass Claw', detail: 'A jagged strike tears through the dark.', status: null },
+  { type: 'charge', name: 'Forge Compression', detail: 'Obsidian plates lock around a molten core.', status: null },
+  { type: 'heavy', name: 'Nightforge Impact', detail: 'A crushing blow weakens the target.', status: { type: 'weakened', turns: 3, potency: 25 } },
+  { type: 'attack', name: 'Shadow Shard', detail: 'A splintered edge inflicts Bleed.', status: { type: 'bleed', turns: 3, potency: 5 } },
+];
+
+const FROZEN_INTENT_CYCLE: Omit<EnemyIntent, 'damage'>[] = [
+  { type: 'attack', name: 'Rime Fang', detail: 'A precise strike wrapped in killing frost.', status: null },
+  { type: 'charge', name: 'Absolute Zero', detail: 'The air freezes around the enemy.', status: null },
+  { type: 'heavy', name: 'Glacial Sentence', detail: 'A frozen impact briefly Stuns the target.', status: { type: 'stun', turns: 2, potency: 0 } },
+  { type: 'attack', name: 'Icebrand Cut', detail: 'A brittle wound leaves the target Vulnerable.', status: { type: 'vulnerable', turns: 3, potency: 20 } },
+];
+
+const CELESTIAL_INTENT_CYCLE: Omit<EnemyIntent, 'damage'>[] = [
+  { type: 'attack', name: 'Star Lance', detail: 'Focused starlight pierces the battlefield.', status: null },
+  { type: 'charge', name: 'Constellation Shift', detail: 'The gate aligns around a forming star.', status: null },
+  { type: 'heavy', name: 'Supernova Brand', detail: 'A stellar detonation inflicts Burn.', status: { type: 'burn', turns: 4, potency: 5 } },
+  { type: 'attack', name: 'Rift Prism', detail: 'Bent light exposes a dimensional weakness.', status: { type: 'vulnerable', turns: 3, potency: 25 } },
+];
+
+const VOID_INTENT_CYCLE: Omit<EnemyIntent, 'damage'>[] = [
+  { type: 'attack', name: 'Null Rend', detail: 'A silent fracture cuts through space.', status: null },
+  { type: 'charge', name: 'Gravity Well', detail: 'The bastion collapses power into one point.', status: null },
+  { type: 'heavy', name: 'Event Horizon', detail: 'A crushing void leaves the target Weakened.', status: { type: 'weakened', turns: 4, potency: 30 } },
+  { type: 'attack', name: 'Entropy Mark', detail: 'Unstable energy opens the target to damage.', status: { type: 'vulnerable', turns: 3, potency: 25 } },
+];
+
+const ASTRAL_INTENT_CYCLE: Omit<EnemyIntent, 'damage'>[] = [
+  { type: 'attack', name: 'Astral Blade', detail: 'A sovereign weapon falls from above.', status: null },
+  { type: 'charge', name: 'Nebula Crown', detail: 'Cosmic matter gathers around the throne.', status: null },
+  { type: 'heavy', name: 'Dominion Fall', detail: 'Starfire crashes down and inflicts Burn.', status: { type: 'burn', turns: 4, potency: 6 } },
+  { type: 'attack', name: 'Comet Trail', detail: 'A passing strike leaves a deep Bleed.', status: { type: 'bleed', turns: 4, potency: 6 } },
+];
+
+const ECLIPSE_INTENT_CYCLE: Omit<EnemyIntent, 'damage'>[] = [
+  { type: 'attack', name: 'Last Light', detail: 'A razor-thin horizon cuts across the gate.', status: null },
+  { type: 'charge', name: 'Totality', detail: 'Light and shadow collapse into the enemy.', status: null },
+  { type: 'heavy', name: 'Eclipse Cataclysm', detail: 'A forbidden impact Stuns the target.', status: { type: 'stun', turns: 2, potency: 0 } },
+  { type: 'attack', name: 'Umbral Venom', detail: 'Living darkness inflicts Poison.', status: { type: 'poison', turns: 4, potency: 7 } },
+];
+
+const INTENT_CYCLES: Record<DungeonCombatTheme, Omit<EnemyIntent, 'damage'>[]> = {
+  ashen: ASHEN_INTENT_CYCLE,
+  verdant: VERDANT_INTENT_CYCLE,
+  sunken: SUNKEN_INTENT_CYCLE,
+  obsidian: OBSIDIAN_INTENT_CYCLE,
+  frozen: FROZEN_INTENT_CYCLE,
+  celestial: CELESTIAL_INTENT_CYCLE,
+  void: VOID_INTENT_CYCLE,
+  astral: ASTRAL_INTENT_CYCLE,
+  eclipse: ECLIPSE_INTENT_CYCLE,
+};
+
 function getAttributePoints(progress: PlayerProgress, attribute: keyof PlayerProgress['attributeXp']) {
   return (
     progress.attributeProgression[attribute].naturalPoints + progress.manualStatPoints[attribute]
@@ -111,7 +176,7 @@ export function getEnemyIntent(
   dungeonKey = 'ashen-ruins',
 ): EnemyIntent {
   const safeTurn = Math.max(1, Math.floor(turnNumber));
-  const cycle = dungeonKey === 'verdant-wilds' ? VERDANT_INTENT_CYCLE : ASHEN_INTENT_CYCLE;
+  const cycle = INTENT_CYCLES[getDungeonDefinition(dungeonKey).combatTheme];
   const definition = cycle[(safeTurn - 1) % cycle.length];
   const baseDamage = definition.type === 'heavy' ? 17 : definition.type === 'attack' ? 9 : 0;
 
@@ -334,7 +399,7 @@ export function resolveCombatAction(
     entries.push({
       message:
         intent.type === 'charge'
-          ? 'The Warden gathers cinders and deals no damage.'
+          ? `${enemyName} gathers power and deals no damage.`
           : `${intent.name} deals ${enemyDamage} damage.`,
       tone: 'enemy',
     });

@@ -13,7 +13,11 @@ import {
   MAX_DAILY_DUNGEON_ENERGY,
   MAX_DUNGEON_ENERGY,
 } from '@/src/progression/dungeon-energy';
-import { getRankDefinition, type RankKey } from '@/src/progression/rank-catalog';
+import {
+  getRankDefinition,
+  rankCatalog,
+  type RankKey,
+} from '@/src/progression/rank-catalog';
 
 export const MAX_LEVEL = 100;
 export const STAT_POINTS_PER_LEVEL = 2;
@@ -102,15 +106,11 @@ export function getLevelProgress(totalXp: number) {
 }
 
 export function getRankForLevel(level: number) {
-  if (level < 10) return { rankLabel: 'Unawakened', rankShort: 'U' };
-  if (level < 20) return { rankLabel: 'E Rank', rankShort: 'E' };
-  if (level < 30) return { rankLabel: 'D Rank', rankShort: 'D' };
-  if (level < 40) return { rankLabel: 'C Rank', rankShort: 'C' };
-  if (level < 50) return { rankLabel: 'B Rank', rankShort: 'B' };
-  if (level < 65) return { rankLabel: 'A Rank', rankShort: 'A' };
-  if (level < 80) return { rankLabel: 'S Rank', rankShort: 'S' };
-  if (level < 100) return { rankLabel: 'Ascendant', rankShort: 'A+' };
-  return { rankLabel: 'Transcendent', rankShort: 'T' };
+  const safeLevel = Math.min(MAX_LEVEL, Math.max(1, Math.floor(level)));
+  const rank = [...rankCatalog]
+    .reverse()
+    .find((definition) => safeLevel >= definition.minimumLevel) ?? rankCatalog[0];
+  return { rankLabel: rank.label, rankShort: rank.shortLabel };
 }
 
 export async function getPlayerProgress(db: SQLiteDatabase): Promise<PlayerProgress> {

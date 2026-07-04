@@ -1,6 +1,6 @@
 import type MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 
-export type ItemRarity = 'common' | 'uncommon' | 'rare' | 'epic';
+export type ItemRarity = 'common' | 'uncommon' | 'rare' | 'epic' | 'legendary' | 'mythic';
 export type ItemCategory = 'equipment' | 'material' | 'consumable';
 export type EquipmentSlot =
   | 'Main Hand'
@@ -33,7 +33,7 @@ export type ItemDefinition = {
 };
 
 export type LootReward = {
-  itemKey: string;
+  itemKey: ItemKey;
   quantity: number;
 };
 
@@ -44,6 +44,8 @@ export const rarityMeta: Record<ItemRarity, { label: string; color: string; rank
   uncommon: { label: 'Uncommon', color: '#68E1A8', rank: 2 },
   rare: { label: 'Rare', color: '#61D4FF', rank: 3 },
   epic: { label: 'Epic', color: '#C68CFF', rank: 4 },
+  legendary: { label: 'Legendary', color: '#FFD166', rank: 5 },
+  mythic: { label: 'Mythic', color: '#FF647C', rank: 6 },
 };
 
 export const itemCatalog = {
@@ -123,6 +125,125 @@ export const itemCatalog = {
     description: 'A pulsing wooden charm that amplifies awakened abilities.',
     combatBonus: { maxHp: 5, skillDamage: 2 },
   },
+  'abyssal-scale': {
+    name: 'Abyssal Scale',
+    rarity: 'common',
+    category: 'material',
+    slot: 'Material',
+    icon: 'fish',
+    description: 'A pressure-hardened scale recovered from the Sunken Citadel.',
+  },
+  'tideglass-amulet': {
+    name: 'Tideglass Amulet',
+    rarity: 'rare',
+    category: 'equipment',
+    slot: 'Necklace',
+    icon: 'necklace',
+    description: 'Deep-water glass that strengthens health and awakened techniques.',
+    combatBonus: { maxHp: 10, skillDamage: 3 },
+  },
+  'obsidian-fragment': {
+    name: 'Obsidian Fragment',
+    rarity: 'uncommon',
+    category: 'material',
+    slot: 'Material',
+    icon: 'hexagon-multiple',
+    description: 'A blackforge shard with heat trapped beneath its surface.',
+  },
+  'nightguard-plate': {
+    name: 'Nightguard Plate',
+    rarity: 'epic',
+    category: 'equipment',
+    slot: 'Chestplate',
+    icon: 'tshirt-crew',
+    description: 'Obsidian armor built to withstand crushing elite attacks.',
+    combatBonus: { maxHp: 16, defense: 4 },
+  },
+  'frost-sigil': {
+    name: 'Frost Sigil',
+    rarity: 'rare',
+    category: 'material',
+    slot: 'Material',
+    icon: 'snowflake',
+    description: 'A rune that remains frozen outside the Winter Gate.',
+  },
+  'crownwalker-helm': {
+    name: 'Crownwalker Helm',
+    rarity: 'epic',
+    category: 'equipment',
+    slot: 'Helmet',
+    icon: 'crown-outline',
+    description: 'A royal ice helm that protects focus under extreme pressure.',
+    combatBonus: { maxHp: 12, skillDamage: 4, defense: 3 },
+  },
+  'celestial-thread': {
+    name: 'Celestial Thread',
+    rarity: 'rare',
+    category: 'material',
+    slot: 'Material',
+    icon: 'creation',
+    description: 'A strand of condensed starlight from the Celestial Rift.',
+  },
+  'riftbound-ring': {
+    name: 'Riftbound Ring',
+    rarity: 'legendary',
+    category: 'equipment',
+    slot: 'Ring',
+    icon: 'ring',
+    description: 'A ring anchored across two dimensions, amplifying every attack form.',
+    combatBonus: { basicDamage: 5, skillDamage: 6, defense: 2 },
+  },
+  'void-crystal': {
+    name: 'Void Crystal',
+    rarity: 'epic',
+    category: 'material',
+    slot: 'Material',
+    icon: 'hexagram-outline',
+    description: 'A stable absence shaped into a Blacksmith material.',
+  },
+  'voidwalker-blade': {
+    name: 'Voidwalker Blade',
+    rarity: 'legendary',
+    category: 'equipment',
+    slot: 'Main Hand',
+    icon: 'sword',
+    description: 'A superior-rank weapon that cuts through physical and magical defense.',
+    combatBonus: { basicDamage: 8, skillDamage: 5 },
+  },
+  'astral-core': {
+    name: 'Astral Core',
+    rarity: 'epic',
+    category: 'material',
+    slot: 'Material',
+    icon: 'star-four-points',
+    description: 'The condensed heart of an SSS-rank constellation beast.',
+  },
+  'sovereign-mantle': {
+    name: 'Sovereign Mantle',
+    rarity: 'legendary',
+    category: 'equipment',
+    slot: 'Chestplate',
+    icon: 'tshirt-crew-outline',
+    description: 'Royal astral armor made for hunters who command impossible gates.',
+    combatBonus: { maxHp: 24, skillDamage: 7, defense: 5 },
+  },
+  'eclipse-shard': {
+    name: 'Eclipse Shard',
+    rarity: 'legendary',
+    category: 'material',
+    slot: 'Material',
+    icon: 'weather-sunset',
+    description: 'A fragment holding the final instant before total darkness.',
+  },
+  'final-gate-crown': {
+    name: 'Final Gate Crown',
+    rarity: 'mythic',
+    category: 'equipment',
+    slot: 'Helmet',
+    icon: 'crown',
+    description: 'A Mythic crown recognized only by gates beyond standard ranking.',
+    combatBonus: { maxHp: 30, basicDamage: 8, skillDamage: 10, defense: 6 },
+  },
   'dungeon-key': {
     name: 'Dungeon Key',
     rarity: 'rare',
@@ -198,12 +319,83 @@ const verdantWildsLootTable: LootTableEntry[] = [
   { itemKey: 'ember-core', quantity: 2, weight: 5 },
 ];
 
+const sunkenCitadelLootTable: LootTableEntry[] = [
+  { itemKey: 'abyssal-scale', quantity: 4, weight: 30 },
+  { itemKey: 'minor-health-potion', quantity: 2, weight: 16 },
+  { itemKey: 'tideglass-amulet', quantity: 1, weight: 20 },
+  { itemKey: 'focus-crystal', quantity: 2, weight: 14 },
+  { itemKey: 'heartwood-charm', quantity: 1, weight: 10 },
+  { itemKey: 'ember-core', quantity: 2, weight: 10 },
+];
+
+const obsidianDepthsLootTable: LootTableEntry[] = [
+  { itemKey: 'obsidian-fragment', quantity: 4, weight: 30 },
+  { itemKey: 'minor-health-potion', quantity: 2, weight: 14 },
+  { itemKey: 'nightguard-plate', quantity: 1, weight: 22 },
+  { itemKey: 'ember-core', quantity: 2, weight: 16 },
+  { itemKey: 'tideglass-amulet', quantity: 1, weight: 10 },
+  { itemKey: 'focus-crystal', quantity: 3, weight: 8 },
+];
+
+const frozenCrownLootTable: LootTableEntry[] = [
+  { itemKey: 'frost-sigil', quantity: 3, weight: 28 },
+  { itemKey: 'minor-health-potion', quantity: 2, weight: 14 },
+  { itemKey: 'crownwalker-helm', quantity: 1, weight: 22 },
+  { itemKey: 'ember-core', quantity: 2, weight: 14 },
+  { itemKey: 'nightguard-plate', quantity: 1, weight: 10 },
+  { itemKey: 'focus-crystal', quantity: 3, weight: 12 },
+];
+
+const celestialRiftLootTable: LootTableEntry[] = [
+  { itemKey: 'celestial-thread', quantity: 3, weight: 28 },
+  { itemKey: 'minor-health-potion', quantity: 2, weight: 12 },
+  { itemKey: 'riftbound-ring', quantity: 1, weight: 15 },
+  { itemKey: 'crownwalker-helm', quantity: 1, weight: 18 },
+  { itemKey: 'focus-crystal', quantity: 4, weight: 15 },
+  { itemKey: 'ember-core', quantity: 3, weight: 12 },
+];
+
+const voidBastionLootTable: LootTableEntry[] = [
+  { itemKey: 'void-crystal', quantity: 3, weight: 30 },
+  { itemKey: 'minor-health-potion', quantity: 3, weight: 10 },
+  { itemKey: 'voidwalker-blade', quantity: 1, weight: 15 },
+  { itemKey: 'riftbound-ring', quantity: 1, weight: 15 },
+  { itemKey: 'celestial-thread', quantity: 3, weight: 16 },
+  { itemKey: 'ember-core', quantity: 4, weight: 14 },
+];
+
+const astralDominionLootTable: LootTableEntry[] = [
+  { itemKey: 'astral-core', quantity: 3, weight: 30 },
+  { itemKey: 'minor-health-potion', quantity: 3, weight: 8 },
+  { itemKey: 'sovereign-mantle', quantity: 1, weight: 15 },
+  { itemKey: 'voidwalker-blade', quantity: 1, weight: 16 },
+  { itemKey: 'void-crystal', quantity: 3, weight: 16 },
+  { itemKey: 'celestial-thread', quantity: 4, weight: 15 },
+];
+
+const finalEclipseLootTable: LootTableEntry[] = [
+  { itemKey: 'eclipse-shard', quantity: 3, weight: 30 },
+  { itemKey: 'minor-health-potion', quantity: 4, weight: 8 },
+  { itemKey: 'final-gate-crown', quantity: 1, weight: 10 },
+  { itemKey: 'sovereign-mantle', quantity: 1, weight: 17 },
+  { itemKey: 'astral-core', quantity: 3, weight: 18 },
+  { itemKey: 'voidwalker-blade', quantity: 1, weight: 17 },
+];
+
+const dungeonLootTables: Record<string, LootTableEntry[]> = {
+  'ashen-ruins': ashenRuinsLootTable,
+  'verdant-wilds': verdantWildsLootTable,
+  'sunken-citadel': sunkenCitadelLootTable,
+  'obsidian-depths': obsidianDepthsLootTable,
+  'frozen-crown': frozenCrownLootTable,
+  'celestial-rift': celestialRiftLootTable,
+  'void-bastion': voidBastionLootTable,
+  'astral-dominion': astralDominionLootTable,
+  'final-eclipse': finalEclipseLootTable,
+};
+
 export function rollDungeonReward(dungeonKey: string): LootReward {
-  const lootTable = dungeonKey === 'ashen-ruins'
-    ? ashenRuinsLootTable
-    : dungeonKey === 'verdant-wilds'
-      ? verdantWildsLootTable
-      : dailyClearLootTable;
+  const lootTable = dungeonLootTables[dungeonKey] ?? dailyClearLootTable;
   const totalWeight = lootTable.reduce((sum, entry) => sum + entry.weight, 0);
   let roll = Math.random() * totalWeight;
 

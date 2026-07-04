@@ -72,6 +72,8 @@ const salvageRewards: Record<ItemRarity, SalvageReward> = {
   uncommon: { gold: 12, materialKey: 'focus-crystal', materialQuantity: 1 },
   rare: { gold: 22, materialKey: 'ember-core', materialQuantity: 1 },
   epic: { gold: 40, materialKey: 'ember-core', materialQuantity: 2 },
+  legendary: { gold: 70, materialKey: 'ember-core', materialQuantity: 3 },
+  mythic: { gold: 110, materialKey: 'ember-core', materialQuantity: 5 },
 };
 
 export function getCompatibleSlots(slot: EquipmentSlot): EquipmentSlotKey[] {

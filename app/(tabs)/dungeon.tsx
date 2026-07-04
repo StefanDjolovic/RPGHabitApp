@@ -21,6 +21,7 @@ import {
 import { dungeons } from '@/src/dungeon/dungeon-catalog';
 import { syncProgressNotifications } from '@/src/notifications/system-notifications';
 import { MAX_DUNGEON_ENERGY } from '@/src/progression/dungeon-energy';
+import { getRankDefinition } from '@/src/progression/rank-catalog';
 
 const initialOverview: DungeonOverview = {
   energyAvailable: 0,
@@ -144,6 +145,7 @@ export default function DungeonScreen() {
         <View style={styles.gateList}>
           {overview.dungeons.map((availability) => {
             const { dungeon } = availability;
+            const requiredRank = getRankDefinition(dungeon.requiredRankKey);
             const anotherDungeonIsActive =
               overview.activeDungeonKey !== null && !availability.active;
             const hasEnergy = overview.energyAvailable >= availability.entryCost;
@@ -215,7 +217,8 @@ export default function DungeonScreen() {
                   <View style={styles.lockBanner}>
                     <MaterialCommunityIcons name="shield-lock-outline" size={17} color="#AAB0C5" />
                     <Text style={styles.lockText}>
-                      Reach {dungeon.rank} through a Rank-Up Trial to unlock this region.
+                      Reach {dungeon.rank} at Level {requiredRank.minimumLevel} through a Rank-Up
+                      Trial to unlock this region.
                     </Text>
                   </View>
                 ) : null}

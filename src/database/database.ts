@@ -1,6 +1,6 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 
-const DATABASE_VERSION = 33;
+const DATABASE_VERSION = 34;
 
 export async function migrateDatabase(db: SQLiteDatabase) {
   await db.execAsync('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
@@ -1074,6 +1074,22 @@ export async function migrateDatabase(db: SQLiteDatabase) {
 
       ALTER TABLE user_settings
         ADD COLUMN streak_risk_time TEXT NOT NULL DEFAULT '21:00';
+    `);
+  }
+
+  if (currentVersion < 34) {
+    await db.execAsync(`
+      CREATE TABLE IF NOT EXISTS habit_reminder_snoozes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        client_event_id TEXT NOT NULL UNIQUE,
+        habit_id INTEGER NOT NULL,
+        reminder_time TEXT NOT NULL,
+        snoozed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (habit_id) REFERENCES habits(id) ON DELETE CASCADE
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_habit_reminder_snoozes_habit_time
+        ON habit_reminder_snoozes(habit_id, reminder_time, snoozed_at);
     `);
   }
 

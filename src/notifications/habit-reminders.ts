@@ -1,7 +1,13 @@
 import * as Notifications from 'expo-notifications';
 import type { SQLiteDatabase } from 'expo-sqlite';
 
-import type { ReminderTone } from '@/src/database/habit-repository';
+import {
+  setHabitCompletion,
+  type HabitCadence,
+  type HabitGoalType,
+  type ReminderTone,
+} from '@/src/database/habit-repository';
+import { syncSystemNotifications } from '@/src/notifications/system-notifications';
 import {
   getQuietHoursAdjustedTime,
   getRuntimeUserSettings,
@@ -9,6 +15,11 @@ import {
 
 const REMINDER_CHANNEL_ID = 'habit-reminders';
 const SILENT_REMINDER_CHANNEL_ID = 'habit-reminders-silent';
+const HABIT_REMINDER_CATEGORY_ID = 'habitReminderActions';
+const HABIT_REMINDER_SNOOZE_CATEGORY_ID = 'habitReminderSnooze';
+const COMPLETE_HABIT_ACTION_ID = 'completeHabit';
+const SNOOZE_HABIT_ACTION_ID = 'snoozeHabit';
+const SNOOZE_MINUTES = 15;
 
 function getReminderChannelId(soundEnabled: boolean) {
   return soundEnabled ? REMINDER_CHANNEL_ID : SILENT_REMINDER_CHANNEL_ID;
@@ -16,7 +27,8 @@ function getReminderChannelId(soundEnabled: boolean) {
 
 type ReminderHabitRow = {
   title: string;
-  cadence: 'daily' | 'weekly' | 'one-time';
+  cadence: HabitCadence;
+  goalType: HabitGoalType;
   scheduleDays: string;
   reminderEnabled: number;
   reminderTime: string;
@@ -25,6 +37,8 @@ type ReminderHabitRow = {
   isPaused: number;
   isCompleted: number;
 };
+
+export type HabitReminderResponseResult = 'completed' | 'snoozed' | null;
 
 if (process.env.EXPO_OS !== 'web') {
   Notifications.setNotificationHandler({
@@ -50,6 +64,29 @@ async function ensureAndroidReminderChannel(soundEnabled = getRuntimeUserSetting
     vibrationPattern: [0, 180],
     lightColor: '#6DDEFF',
   });
+}
+
+export async function configureHabitReminderActions() {
+  if (process.env.EXPO_OS === 'web') return;
+
+  const snoozeAction: Notifications.NotificationAction = {
+    identifier: SNOOZE_HABIT_ACTION_ID,
+    buttonTitle: `Snooze ${SNOOZE_MINUTES} min`,
+    options: { opensAppToForeground: true },
+  };
+  await Promise.all([
+    Notifications.setNotificationCategoryAsync(HABIT_REMINDER_CATEGORY_ID, [
+      {
+        identifier: COMPLETE_HABIT_ACTION_ID,
+        buttonTitle: 'Complete quest',
+        options: { opensAppToForeground: true },
+      },
+      snoozeAction,
+    ]),
+    Notifications.setNotificationCategoryAsync(HABIT_REMINDER_SNOOZE_CATEGORY_ID, [
+      snoozeAction,
+    ]),
+  ]);
 }
 
 export async function requestHabitReminderPermission() {
@@ -98,6 +135,101 @@ function parseScheduleDays(value: string) {
     .sort((first, second) => first - second);
 }
 
+function getSnoozeDeliveryDate() {
+  const settings = getRuntimeUserSettings();
+  const deliveryDate = new Date(Date.now() + SNOOZE_MINUTES * 60 * 1000);
+  const originalTime = `${String(deliveryDate.getHours()).padStart(2, '0')}:${String(
+    deliveryDate.getMinutes(),
+  ).padStart(2, '0')}`;
+  const adjusted = getQuietHoursAdjustedTime(originalTime, settings);
+  const { hour, minute } = parseReminderTime(adjusted.time);
+  deliveryDate.setHours(hour, minute, 0, 0);
+  deliveryDate.setDate(deliveryDate.getDate() + adjusted.dayOffset);
+  return deliveryDate;
+}
+
+async function recordHabitReminderSnooze(
+  db: SQLiteDatabase,
+  habitId: number,
+  reminderTime: string,
+  notificationId: string,
+) {
+  const result = await db.runAsync(
+    `INSERT OR IGNORE INTO habit_reminder_snoozes (
+       client_event_id, habit_id, reminder_time
+     ) VALUES (?, ?, ?)`,
+    `${notificationId}:snooze`,
+    habitId,
+    reminderTime,
+  );
+  return result.changes > 0;
+}
+
+export async function getHabitReminderSnoozeCount(
+  db: SQLiteDatabase,
+  habitId: number,
+) {
+  const row = await db.getFirstAsync<{ snoozeCount: number }>(
+    `SELECT COUNT(*) AS snoozeCount
+     FROM habit_reminder_snoozes hrs
+     JOIN habits h ON h.id = hrs.habit_id
+     WHERE hrs.habit_id = ?
+       AND hrs.reminder_time = h.reminder_time
+       AND hrs.snoozed_at >= datetime('now', '-30 days')`,
+    habitId,
+  );
+  return row?.snoozeCount ?? 0;
+}
+
+async function scheduleSnoozedHabitReminder(notification: Notifications.Notification) {
+  const settings = getRuntimeUserSettings();
+  const content = notification.request.content;
+  await Notifications.scheduleNotificationAsync({
+    content: {
+      title: content.title ?? 'Quest reminder',
+      body: content.body ?? 'Your quest is ready when you are.',
+      data: content.data,
+      categoryIdentifier: content.categoryIdentifier ?? HABIT_REMINDER_SNOOZE_CATEGORY_ID,
+      sound: settings.soundEnabled ? 'default' : false,
+    },
+    trigger: {
+      type: Notifications.SchedulableTriggerInputTypes.DATE,
+      date: getSnoozeDeliveryDate(),
+      channelId: process.env.EXPO_OS === 'android'
+        ? getReminderChannelId(settings.soundEnabled)
+        : undefined,
+    },
+  });
+}
+
+export async function handleHabitReminderResponse(
+  db: SQLiteDatabase,
+  response: Notifications.NotificationResponse,
+): Promise<HabitReminderResponseResult> {
+  const data = response.notification.request.content.data;
+  const habitId = Number(data?.habitId);
+  if (!Number.isInteger(habitId) || habitId <= 0) return null;
+
+  if (response.actionIdentifier === SNOOZE_HABIT_ACTION_ID) {
+    const reminderTime = typeof data?.reminderTime === 'string' ? data.reminderTime : '09:00';
+    const recorded = await recordHabitReminderSnooze(
+      db,
+      habitId,
+      reminderTime,
+      response.notification.request.identifier,
+    );
+    if (recorded) await scheduleSnoozedHabitReminder(response.notification);
+    return 'snoozed';
+  }
+
+  if (response.actionIdentifier !== COMPLETE_HABIT_ACTION_ID) return null;
+  const cadence = data?.habitCadence === 'one-time' ? 'one-time' : 'daily';
+  await setHabitCompletion(db, habitId, true, cadence);
+  await syncHabitReminderFromDatabase(db, habitId);
+  await syncSystemNotifications(db);
+  return 'completed';
+}
+
 export async function cancelHabitReminderNotifications(
   db: SQLiteDatabase,
   habitId: number,
@@ -129,6 +261,10 @@ export async function syncHabitReminderFromDatabase(
     `SELECT
        title,
        habit_type AS cadence,
+       CASE
+         WHEN target_duration_minutes > 0 THEN 'timer'
+         ELSE goal_type
+       END AS goalType,
        schedule_days AS scheduleDays,
        reminder_enabled AS reminderEnabled,
        reminder_time AS reminderTime,
@@ -170,6 +306,9 @@ export async function syncHabitReminderFromDatabase(
   );
   const { hour, minute } = parseReminderTime(scheduledTime.time);
   const message = getReminderMessage(habit.title, habit.reminderTone);
+  const canComplete =
+    habit.goalType === 'single' &&
+    (habit.cadence === 'daily' || habit.cadence === 'one-time');
   const scheduled: { notificationId: string; weekday: number }[] = [];
 
   try {
@@ -178,7 +317,15 @@ export async function syncHabitReminderFromDatabase(
       const notificationId = await Notifications.scheduleNotificationAsync({
         content: {
           ...message,
-          data: { url: '/', habitId },
+          data: {
+            url: '/',
+            habitId,
+            habitCadence: habit.cadence,
+            reminderTime: habit.reminderTime,
+          },
+          categoryIdentifier: canComplete
+            ? HABIT_REMINDER_CATEGORY_ID
+            : HABIT_REMINDER_SNOOZE_CATEGORY_ID,
           sound: settings.soundEnabled ? 'default' : false,
         },
         trigger: {

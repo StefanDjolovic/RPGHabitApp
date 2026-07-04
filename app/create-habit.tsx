@@ -37,6 +37,7 @@ import {
 } from '@/src/habits/habit-appearance';
 import {
   disableHabitReminder,
+  getHabitReminderSnoozeCount,
   requestHabitReminderPermission,
   syncHabitReminderFromDatabase,
 } from '@/src/notifications/habit-reminders';
@@ -112,6 +113,7 @@ export default function CreateHabitScreen() {
   const [reminderHour, setReminderHour] = useState(9);
   const [reminderMinute, setReminderMinute] = useState(0);
   const [reminderTone, setReminderTone] = useState<ReminderTone>('gentle');
+  const [reminderSnoozeCount, setReminderSnoozeCount] = useState(0);
   const [loadingHabit, setLoadingHabit] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -125,7 +127,10 @@ export default function CreateHabitScreen() {
       try {
         setLoadingHabit(true);
         setError('');
-        const habit = await getHabitForEdit(db, habitId);
+        const [habit, snoozeCount] = await Promise.all([
+          getHabitForEdit(db, habitId),
+          getHabitReminderSnoozeCount(db, habitId),
+        ]);
         if (!active) return;
 
         if (!habit) {
@@ -151,6 +156,7 @@ export default function CreateHabitScreen() {
         setReminderHour(Number.isInteger(hour) ? hour : 9);
         setReminderMinute(Number.isInteger(minute) ? minute : 0);
         setReminderTone(habit.reminderTone);
+        setReminderSnoozeCount(snoozeCount);
       } catch {
         if (active) setError('The quest could not be loaded. Please try again.');
       } finally {
@@ -267,6 +273,19 @@ export default function CreateHabitScreen() {
     const nextTotal = (currentTotal + minutes + 24 * 60) % (24 * 60);
     setReminderHour(Math.floor(nextTotal / 60));
     setReminderMinute(nextTotal % 60);
+  };
+  const suggestedReminderTime = useMemo(() => {
+    const nextTotal = (reminderHour * 60 + reminderMinute + 60) % (24 * 60);
+    return `${String(Math.floor(nextTotal / 60)).padStart(2, '0')}:${String(
+      nextTotal % 60,
+    ).padStart(2, '0')}`;
+  }, [reminderHour, reminderMinute]);
+
+  const applySuggestedReminderTime = () => {
+    const [hour, minute] = suggestedReminderTime.split(':').map(Number);
+    setReminderHour(hour);
+    setReminderMinute(minute);
+    setReminderSnoozeCount(0);
   };
 
   return (
@@ -710,6 +729,27 @@ export default function CreateHabitScreen() {
                 </Pressable>
               </View>
 
+              {reminderSnoozeCount >= 3 ? (
+                <View style={styles.reminderSuggestion}>
+                  <MaterialCommunityIcons name="clock-alert-outline" size={20} color="#FFD27A" />
+                  <View style={styles.reminderSuggestionText}>
+                    <Text style={styles.reminderSuggestionTitle}>Try a later reminder</Text>
+                    <Text style={styles.reminderSuggestionBody}>
+                      Snoozed {reminderSnoozeCount} times recently
+                    </Text>
+                  </View>
+                  <Pressable
+                    accessibilityLabel={`Use suggested reminder time ${suggestedReminderTime}`}
+                    onPress={applySuggestedReminderTime}
+                    style={({ pressed }) => [
+                      styles.reminderSuggestionButton,
+                      pressed && styles.timeButtonPressed,
+                    ]}>
+                    <Text style={styles.reminderSuggestionButtonText}>{suggestedReminderTime}</Text>
+                  </Pressable>
+                </View>
+              ) : null}
+
               <Text style={styles.reminderSettingLabel}>TONE</Text>
               <View style={styles.reminderToneRow}>
                 {reminderToneOptions.map((option) => {
@@ -1069,6 +1109,38 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '900',
     textAlign: 'center',
+    fontVariant: ['tabular-nums'],
+  },
+  reminderSuggestion: {
+    minHeight: 58,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#574C32',
+    backgroundColor: '#17140E',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 11,
+    marginBottom: 16,
+  },
+  reminderSuggestionText: { flex: 1, minWidth: 0 },
+  reminderSuggestionTitle: { color: '#F2E7C8', fontSize: 11, fontWeight: '900' },
+  reminderSuggestionBody: { color: '#9D927A', fontSize: 9, fontWeight: '700', paddingTop: 3 },
+  reminderSuggestionButton: {
+    minWidth: 58,
+    height: 34,
+    borderRadius: 9,
+    borderWidth: 1,
+    borderColor: '#8A7138',
+    backgroundColor: '#2A2414',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 8,
+  },
+  reminderSuggestionButtonText: {
+    color: '#FFD27A',
+    fontSize: 11,
+    fontWeight: '900',
     fontVariant: ['tabular-nums'],
   },
   reminderToneRow: { flexDirection: 'row', gap: 7 },

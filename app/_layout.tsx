@@ -1,13 +1,16 @@
 import { DarkTheme, ThemeProvider } from '@react-navigation/native';
 import * as Notifications from 'expo-notifications';
 import { router, Stack, type Href } from 'expo-router';
-import { SQLiteProvider, type SQLiteDatabase } from 'expo-sqlite';
+import { SQLiteProvider, type SQLiteDatabase, useSQLiteContext } from 'expo-sqlite';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useSyncExternalStore } from 'react';
 import 'react-native-reanimated';
-import '@/src/notifications/habit-reminders';
 
 import { migrateDatabase } from '@/src/database/database';
+import {
+  configureHabitReminderActions,
+  handleHabitReminderResponse,
+} from '@/src/notifications/habit-reminders';
 import { syncSystemNotifications } from '@/src/notifications/system-notifications';
 import {
   getRuntimeUserSettings,
@@ -34,13 +37,14 @@ export const unstable_settings = {
 async function initializeDatabase(db: SQLiteDatabase) {
   await migrateDatabase(db);
   await loadUserSettings(db);
+  await configureHabitReminderActions().catch(() => undefined);
   await syncSystemNotifications(db).catch(() => ({
     permissionGranted: false,
     scheduledCount: 0,
   }));
 }
 
-function useNotificationNavigation() {
+function useNotificationNavigation(db: SQLiteDatabase) {
   useEffect(() => {
     if (process.env.EXPO_OS === 'web') return;
 
@@ -57,23 +61,41 @@ function useNotificationNavigation() {
       }
     };
 
+    const handleResponse = async (response: Notifications.NotificationResponse) => {
+      try {
+        const result = await handleHabitReminderResponse(db, response);
+        if (result === 'completed') {
+          router.push('/');
+        } else if (result === null) {
+          openNotification(response.notification);
+        }
+      } catch {
+        openNotification(response.notification);
+      } finally {
+        await Notifications.clearLastNotificationResponseAsync().catch(() => undefined);
+      }
+    };
+
     void Notifications.getLastNotificationResponseAsync().then((response) => {
       if (!response?.notification) return;
-      openNotification(response.notification);
-      return Notifications.clearLastNotificationResponseAsync();
+      return handleResponse(response);
     }).catch(() => undefined);
 
     const subscription = Notifications.addNotificationResponseReceivedListener((response) => {
-      openNotification(response.notification);
-      void Notifications.clearLastNotificationResponseAsync().catch(() => undefined);
+      void handleResponse(response);
     });
 
     return () => subscription.remove();
-  }, []);
+  }, [db]);
+}
+
+function NotificationCoordinator() {
+  const db = useSQLiteContext();
+  useNotificationNavigation(db);
+  return null;
 }
 
 export default function RootLayout() {
-  useNotificationNavigation();
   const settings = useSyncExternalStore(
     subscribeUserSettings,
     getRuntimeUserSettings,
@@ -83,6 +105,7 @@ export default function RootLayout() {
 
   return (
     <SQLiteProvider databaseName="habit-rpg.db" onInit={initializeDatabase}>
+      <NotificationCoordinator />
       <ThemeProvider value={habitRpgTheme}>
         <Stack screenOptions={{ contentStyle: { backgroundColor: '#050711' } }}>
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />

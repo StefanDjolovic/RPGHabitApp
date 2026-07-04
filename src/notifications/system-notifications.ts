@@ -1,10 +1,12 @@
 import * as Notifications from 'expo-notifications';
 import type { SQLiteDatabase } from 'expo-sqlite';
 
+import { getDailyClearStatus } from '@/src/database/habit-repository';
 import { getRankTrialState } from '@/src/database/rank-repository';
 import { MAX_DUNGEON_ENERGY } from '@/src/progression/dungeon-energy';
 import { getPlayerProgress } from '@/src/progression/player-progression';
 import { getRecoveryQuestStatus } from '@/src/progression/recovery-quest';
+import { isActivityStreakAtRisk } from '@/src/progression/activity-streak';
 import {
   getQuietHoursAdjustedTime,
   getRuntimeUserSettings,
@@ -22,6 +24,7 @@ function getSystemChannelId(soundEnabled: boolean) {
 type SystemNotificationKey =
   | 'morning-briefing'
   | 'evening-checkin'
+  | 'streak-at-risk'
   | 'weekly-review'
   | 'recovery-quest';
 
@@ -32,6 +35,7 @@ type ScheduleDefinition = {
   key: SystemNotificationKey;
   time: string;
   weekday?: number;
+  oneTime?: boolean;
   url: '/' | '/weekly-review';
 };
 
@@ -68,6 +72,10 @@ function getMessage(key: SystemNotificationKey, tone: NotificationTone) {
         title: 'Evening check-in',
         body: 'A quick check-in can close the day when you are ready.',
       },
+      'streak-at-risk': {
+        title: 'Your streak is still within reach',
+        body: 'A required quest is waiting if you want to keep the momentum going.',
+      },
       'weekly-review': {
         title: 'Your week in review',
         body: 'See what worked and shape a lighter plan for the next week.',
@@ -86,6 +94,10 @@ function getMessage(key: SystemNotificationKey, tone: NotificationTone) {
         title: 'Daily status check',
         body: 'Review remaining objectives before the day closes.',
       },
+      'streak-at-risk': {
+        title: 'Activity Streak pending',
+        body: 'A required quest remains before today closes.',
+      },
       'weekly-review': {
         title: 'Weekly report generated',
         body: 'Performance trends and habit suggestions are ready.',
@@ -103,6 +115,10 @@ function getMessage(key: SystemNotificationKey, tone: NotificationTone) {
       'evening-checkin': {
         title: 'Finish the daily check-in',
         body: 'Review what remains and close the day deliberately.',
+      },
+      'streak-at-risk': {
+        title: 'Protect today\'s streak',
+        body: 'Complete a required quest before the daily cutoff.',
       },
       'weekly-review': {
         title: 'Review the week',
@@ -178,7 +194,7 @@ async function ensureSystemNotificationChannel(
 
   await Notifications.setNotificationChannelAsync(getSystemChannelId(soundEnabled), {
     name: soundEnabled ? 'Briefings and progress' : 'Silent briefings and progress',
-    description: 'Daily briefings, reviews and recovery reminders',
+    description: 'Daily briefings, streak alerts, reviews and recovery reminders',
     importance: Notifications.AndroidImportance.DEFAULT,
     sound: soundEnabled ? 'default' : null,
     vibrationPattern: [0, 160],
@@ -230,6 +246,20 @@ async function getScheduleDefinitions(db: SQLiteDatabase, settings: UserSettings
       url: '/',
     });
   }
+  if (settings.streakRiskEnabled) {
+    const [streakAtRisk, dailyClear] = await Promise.all([
+      isActivityStreakAtRisk(db),
+      getDailyClearStatus(db),
+    ]);
+    if (streakAtRisk && dailyClear.completed < dailyClear.required) {
+      definitions.push({
+        key: 'streak-at-risk',
+        time: settings.streakRiskTime,
+        oneTime: true,
+        url: '/',
+      });
+    }
+  }
   if (settings.weeklyReviewEnabled) {
     definitions.push({
       key: 'weekly-review',
@@ -262,6 +292,7 @@ export async function syncSystemNotifications(
   const hasEnabledNotifications =
     settings.morningBriefingEnabled ||
     settings.eveningCheckinEnabled ||
+    settings.streakRiskEnabled ||
     settings.weeklyReviewEnabled ||
     settings.recoveryReminderEnabled ||
     settings.progressAlertsEnabled;
@@ -281,24 +312,40 @@ export async function syncSystemNotifications(
       const adjusted = getQuietHoursAdjustedTime(definition.time, settings);
       const { hour, minute } = parseTime(adjusted.time);
       const message = getMessage(definition.key, settings.notificationTone);
-      const trigger = definition.weekday === undefined
-        ? ({
-            type: Notifications.SchedulableTriggerInputTypes.DAILY,
-            hour,
-            minute,
-            channelId: process.env.EXPO_OS === 'android'
-              ? getSystemChannelId(settings.soundEnabled)
-              : undefined,
-          } satisfies Notifications.DailyTriggerInput)
-        : ({
-            type: Notifications.SchedulableTriggerInputTypes.WEEKLY,
-            weekday: ((definition.weekday + adjusted.dayOffset) % 7) + 1,
-            hour,
-            minute,
-            channelId: process.env.EXPO_OS === 'android'
-              ? getSystemChannelId(settings.soundEnabled)
-              : undefined,
-          } satisfies Notifications.WeeklyTriggerInput);
+      let trigger: Notifications.SchedulableNotificationTriggerInput;
+      if (definition.oneTime) {
+        if (adjusted.dayOffset > 0) continue;
+        const deliveryDate = new Date();
+        deliveryDate.setHours(hour, minute, 0, 0);
+        deliveryDate.setDate(deliveryDate.getDate() + adjusted.dayOffset);
+        if (deliveryDate.getTime() <= Date.now()) continue;
+        trigger = {
+          type: Notifications.SchedulableTriggerInputTypes.DATE,
+          date: deliveryDate,
+          channelId: process.env.EXPO_OS === 'android'
+            ? getSystemChannelId(settings.soundEnabled)
+            : undefined,
+        } satisfies Notifications.DateTriggerInput;
+      } else if (definition.weekday === undefined) {
+        trigger = {
+          type: Notifications.SchedulableTriggerInputTypes.DAILY,
+          hour,
+          minute,
+          channelId: process.env.EXPO_OS === 'android'
+            ? getSystemChannelId(settings.soundEnabled)
+            : undefined,
+        } satisfies Notifications.DailyTriggerInput;
+      } else {
+        trigger = {
+          type: Notifications.SchedulableTriggerInputTypes.WEEKLY,
+          weekday: ((definition.weekday + adjusted.dayOffset) % 7) + 1,
+          hour,
+          minute,
+          channelId: process.env.EXPO_OS === 'android'
+            ? getSystemChannelId(settings.soundEnabled)
+            : undefined,
+        } satisfies Notifications.WeeklyTriggerInput;
+      }
       const notificationId = await Notifications.scheduleNotificationAsync({
         content: {
           ...message,

@@ -14,6 +14,8 @@ export type UserSettings = {
   morningBriefingTime: string;
   eveningCheckinEnabled: boolean;
   eveningCheckinTime: string;
+  streakRiskEnabled: boolean;
+  streakRiskTime: string;
   weeklyReviewEnabled: boolean;
   weeklyReviewDay: number;
   weeklyReviewTime: string;
@@ -32,6 +34,7 @@ type UserSettingsRow = Omit<
   | 'quietHoursEnabled'
   | 'morningBriefingEnabled'
   | 'eveningCheckinEnabled'
+  | 'streakRiskEnabled'
   | 'weeklyReviewEnabled'
   | 'recoveryReminderEnabled'
   | 'progressAlertsEnabled'
@@ -42,6 +45,7 @@ type UserSettingsRow = Omit<
   quietHoursEnabled: number;
   morningBriefingEnabled: number;
   eveningCheckinEnabled: number;
+  streakRiskEnabled: number;
   weeklyReviewEnabled: number;
   recoveryReminderEnabled: number;
   progressAlertsEnabled: number;
@@ -61,6 +65,8 @@ const defaultSettings: UserSettings = {
   morningBriefingTime: '08:00',
   eveningCheckinEnabled: false,
   eveningCheckinTime: '20:00',
+  streakRiskEnabled: false,
+  streakRiskTime: '21:00',
   weeklyReviewEnabled: false,
   weeklyReviewDay: 0,
   weeklyReviewTime: '18:00',
@@ -118,6 +124,8 @@ function normalizeSettings(settings: UserSettings): UserSettings {
       settings.eveningCheckinTime,
       defaultSettings.eveningCheckinTime,
     ),
+    streakRiskEnabled: Boolean(settings.streakRiskEnabled),
+    streakRiskTime: normalizeTime(settings.streakRiskTime, defaultSettings.streakRiskTime),
     weeklyReviewEnabled: Boolean(settings.weeklyReviewEnabled),
     weeklyReviewDay: Math.min(6, Math.max(0, Math.floor(settings.weeklyReviewDay))),
     weeklyReviewTime: normalizeTime(
@@ -160,6 +168,8 @@ export async function loadUserSettings(db: SQLiteDatabase) {
        morning_briefing_time AS morningBriefingTime,
        evening_checkin_enabled AS eveningCheckinEnabled,
        evening_checkin_time AS eveningCheckinTime,
+       streak_risk_enabled AS streakRiskEnabled,
+       streak_risk_time AS streakRiskTime,
        weekly_review_enabled AS weeklyReviewEnabled,
        weekly_review_day AS weeklyReviewDay,
        weekly_review_time AS weeklyReviewTime,
@@ -184,6 +194,8 @@ export async function loadUserSettings(db: SQLiteDatabase) {
     morningBriefingTime: row?.morningBriefingTime ?? defaultSettings.morningBriefingTime,
     eveningCheckinEnabled: row?.eveningCheckinEnabled === 1,
     eveningCheckinTime: row?.eveningCheckinTime ?? defaultSettings.eveningCheckinTime,
+    streakRiskEnabled: row?.streakRiskEnabled === 1,
+    streakRiskTime: row?.streakRiskTime ?? defaultSettings.streakRiskTime,
     weeklyReviewEnabled: row?.weeklyReviewEnabled === 1,
     weeklyReviewDay: row?.weeklyReviewDay ?? defaultSettings.weeklyReviewDay,
     weeklyReviewTime: row?.weeklyReviewTime ?? defaultSettings.weeklyReviewTime,
@@ -219,9 +231,10 @@ export async function saveUserSettings(db: SQLiteDatabase, settings: UserSetting
        haptics_enabled, quiet_hours_enabled, quiet_start, quiet_end,
        notification_tone, morning_briefing_enabled, morning_briefing_time,
        evening_checkin_enabled, evening_checkin_time, weekly_review_enabled,
-       weekly_review_day, weekly_review_time, recovery_reminder_enabled,
-       recovery_reminder_time, progress_alerts_enabled
-     ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       streak_risk_enabled, streak_risk_time, weekly_review_day,
+       weekly_review_time, recovery_reminder_enabled, recovery_reminder_time,
+       progress_alerts_enabled
+     ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET
        timezone = excluded.timezone,
        day_cutoff_hour = excluded.day_cutoff_hour,
@@ -237,6 +250,8 @@ export async function saveUserSettings(db: SQLiteDatabase, settings: UserSetting
        evening_checkin_enabled = excluded.evening_checkin_enabled,
        evening_checkin_time = excluded.evening_checkin_time,
        weekly_review_enabled = excluded.weekly_review_enabled,
+       streak_risk_enabled = excluded.streak_risk_enabled,
+       streak_risk_time = excluded.streak_risk_time,
        weekly_review_day = excluded.weekly_review_day,
        weekly_review_time = excluded.weekly_review_time,
        recovery_reminder_enabled = excluded.recovery_reminder_enabled,
@@ -257,6 +272,8 @@ export async function saveUserSettings(db: SQLiteDatabase, settings: UserSetting
     normalizedSettings.eveningCheckinEnabled ? 1 : 0,
     normalizedSettings.eveningCheckinTime,
     normalizedSettings.weeklyReviewEnabled ? 1 : 0,
+    normalizedSettings.streakRiskEnabled ? 1 : 0,
+    normalizedSettings.streakRiskTime,
     normalizedSettings.weeklyReviewDay,
     normalizedSettings.weeklyReviewTime,
     normalizedSettings.recoveryReminderEnabled ? 1 : 0,

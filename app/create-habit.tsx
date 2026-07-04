@@ -30,10 +30,17 @@ import {
   updateHabit,
 } from '@/src/database/habit-repository';
 import {
+  habitColorOptions,
+  habitIconOptions,
+  type HabitColorKey,
+  type HabitIconKey,
+} from '@/src/habits/habit-appearance';
+import {
   disableHabitReminder,
   requestHabitReminderPermission,
   syncHabitReminderFromDatabase,
 } from '@/src/notifications/habit-reminders';
+import { syncSystemNotifications } from '@/src/notifications/system-notifications';
 import { getSecondaryAttributeXp } from '@/src/progression/attribute-rewards';
 
 const difficultyOptions: { value: HabitDifficulty; label: string; color: string }[] = [
@@ -90,6 +97,8 @@ export default function CreateHabitScreen() {
   const editing = habitId !== null;
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
+  const [iconKey, setIconKey] = useState<HabitIconKey | null>(null);
+  const [colorKey, setColorKey] = useState<HabitColorKey | null>(null);
   const [difficulty, setDifficulty] = useState<HabitDifficulty>('medium');
   const [attribute, setAttribute] = useState<HabitAttribute>('discipline');
   const [secondaryAttribute, setSecondaryAttribute] = useState<HabitAttribute | null>(null);
@@ -126,6 +135,8 @@ export default function CreateHabitScreen() {
 
         setTitle(habit.title);
         setDescription(habit.description);
+        setIconKey(habit.iconKey ?? null);
+        setColorKey(habit.colorKey ?? null);
         setDifficulty(habit.difficulty);
         setAttribute(habit.attribute);
         setSecondaryAttribute(habit.secondaryAttribute);
@@ -176,6 +187,8 @@ export default function CreateHabitScreen() {
       const habitPayload = {
         title,
         description,
+        iconKey,
+        colorKey,
         difficulty,
         attribute,
         secondaryAttribute,
@@ -206,6 +219,10 @@ export default function CreateHabitScreen() {
           'The reminder could not be scheduled. The quest was saved with reminders turned off.',
         );
       }
+      await syncSystemNotifications(db).catch(() => ({
+        permissionGranted: false,
+        scheduledCount: 0,
+      }));
       router.back();
     } catch {
       setError('The habit could not be saved. Please try again.');
@@ -294,6 +311,81 @@ export default function CreateHabitScreen() {
             textAlignVertical="top"
             value={description}
           />
+
+          <View style={styles.appearanceBlock}>
+            <Text style={styles.label}>QUEST ICON</Text>
+            <ScrollView
+              contentContainerStyle={styles.appearanceScrollContent}
+              horizontal
+              showsHorizontalScrollIndicator={false}>
+              <Pressable
+                accessibilityLabel="Automatic quest icon"
+                accessibilityRole="radio"
+                accessibilityState={{ checked: iconKey === null }}
+                onPress={() => setIconKey(null)}
+                style={[styles.iconOption, iconKey === null && styles.iconOptionSelected]}>
+                <MaterialCommunityIcons
+                  color={iconKey === null ? '#7EE7FF' : '#707894'}
+                  name="auto-fix"
+                  size={21}
+                />
+              </Pressable>
+              {habitIconOptions.map((option) => {
+                const selected = iconKey === option.key;
+                return (
+                  <Pressable
+                    accessibilityLabel={`${option.label} quest icon`}
+                    accessibilityRole="radio"
+                    accessibilityState={{ checked: selected }}
+                    key={option.key}
+                    onPress={() => setIconKey(option.key)}
+                    style={[styles.iconOption, selected && styles.iconOptionSelected]}>
+                    <MaterialCommunityIcons
+                      color={selected ? '#7EE7FF' : '#707894'}
+                      name={option.key}
+                      size={21}
+                    />
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+
+            <Text style={styles.label}>QUEST COLOR</Text>
+            <View style={styles.colorRow}>
+              <Pressable
+                accessibilityLabel="Automatic quest color"
+                accessibilityRole="radio"
+                accessibilityState={{ checked: colorKey === null }}
+                onPress={() => setColorKey(null)}
+                style={[styles.colorOption, colorKey === null && styles.colorOptionSelected]}>
+                <MaterialCommunityIcons
+                  color={colorKey === null ? '#7EE7FF' : '#707894'}
+                  name="format-color-fill"
+                  size={18}
+                />
+              </Pressable>
+              {habitColorOptions.map((option) => {
+                const selected = colorKey === option.key;
+                return (
+                  <Pressable
+                    accessibilityLabel={`${option.label} quest color`}
+                    accessibilityRole="radio"
+                    accessibilityState={{ checked: selected }}
+                    key={option.key}
+                    onPress={() => setColorKey(option.key)}
+                    style={[styles.colorOption, selected && styles.colorOptionSelected]}>
+                    <View
+                      style={[
+                        styles.colorSwatch,
+                        { backgroundColor: option.color },
+                        selected && { borderColor: '#F3F0FF' },
+                      ]}
+                    />
+                  </Pressable>
+                );
+              })}
+            </View>
+          </View>
 
           <Text style={styles.label}>CADENCE</Text>
           <View style={styles.modeRow}>
@@ -827,6 +919,33 @@ const styles = StyleSheet.create({
     marginBottom: 22,
   },
   descriptionInput: { height: 88, paddingTop: 14 },
+  appearanceBlock: { marginBottom: 22, gap: 10 },
+  appearanceScrollContent: { gap: 8, paddingRight: 4 },
+  iconOption: {
+    width: 48,
+    height: 48,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#292E48',
+    backgroundColor: '#0D1121',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  iconOptionSelected: { borderColor: '#3DAFCB', backgroundColor: '#0C202C' },
+  colorRow: { height: 42, flexDirection: 'row', gap: 6 },
+  colorOption: {
+    flex: 1,
+    minWidth: 0,
+    height: 42,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#292E48',
+    backgroundColor: '#0D1121',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  colorOptionSelected: { borderColor: '#8B9BC7', backgroundColor: '#171D30' },
+  colorSwatch: { width: 20, height: 20, borderRadius: 10, borderWidth: 2, borderColor: 'transparent' },
   modeRow: { flexDirection: 'row', gap: 8, marginBottom: 22 },
   modeOption: {
     flex: 1,

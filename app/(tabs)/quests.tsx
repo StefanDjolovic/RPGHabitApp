@@ -37,22 +37,13 @@ import {
 import { getHabitStreaksById } from '@/src/progression/habit-streak';
 import { getSecondaryAttributeXp } from '@/src/progression/attribute-rewards';
 import { syncHabitReminderFromDatabase } from '@/src/notifications/habit-reminders';
+import { syncSystemNotifications } from '@/src/notifications/system-notifications';
+import { getHabitAppearance } from '@/src/habits/habit-appearance';
 
 const difficultyMeta: Record<HabitDifficulty, { color: string; label: string }> = {
   easy: { color: '#68E1A8', label: 'Easy' },
   medium: { color: '#61D4FF', label: 'Medium' },
   hard: { color: '#C68CFF', label: 'Hard' },
-};
-
-const attributeIcons: Record<
-  HabitAttribute,
-  keyof typeof MaterialCommunityIcons.glyphMap
-> = {
-  strength: 'dumbbell',
-  intelligence: 'brain',
-  discipline: 'shield-check',
-  vitality: 'heart-pulse',
-  creativity: 'palette',
 };
 
 type QuestFilter = 'active' | 'archived';
@@ -126,6 +117,10 @@ export default function QuestsScreen() {
         setQuests((current) => current.filter((item) => item.id !== quest.id));
         await archiveHabit(db, quest.id);
         await syncHabitReminderFromDatabase(db, quest.id).catch(() => false);
+        await syncSystemNotifications(db).catch(() => ({
+          permissionGranted: false,
+          scheduledCount: 0,
+        }));
       } catch {
         setQuests(previousQuests);
       } finally {
@@ -143,6 +138,10 @@ export default function QuestsScreen() {
         setQuests((current) => current.filter((item) => item.id !== quest.id));
         await restoreHabit(db, quest.id);
         await syncHabitReminderFromDatabase(db, quest.id).catch(() => false);
+        await syncSystemNotifications(db).catch(() => ({
+          permissionGranted: false,
+          scheduledCount: 0,
+        }));
       } catch {
         setQuests(previousQuests);
       } finally {
@@ -169,6 +168,10 @@ export default function QuestsScreen() {
           await pauseHabit(db, quest.id);
         }
         await syncHabitReminderFromDatabase(db, quest.id).catch(() => false);
+        await syncSystemNotifications(db).catch(() => ({
+          permissionGranted: false,
+          scheduledCount: 0,
+        }));
       } catch {
         setQuests(previousQuests);
       } finally {
@@ -535,6 +538,12 @@ export default function QuestsScreen() {
 
           {quests.map((quest) => {
             const difficulty = difficultyMeta[quest.difficulty];
+            const appearance = getHabitAppearance(
+              quest.iconKey,
+              quest.colorKey,
+              quest.attribute,
+              difficulty.color,
+            );
             const reward = rewardByDifficulty[quest.difficulty];
             const habitStreak = habitStreaksById[quest.id] ?? 0;
 
@@ -546,11 +555,11 @@ export default function QuestsScreen() {
                   quest.complete && styles.questCardComplete,
                   quest.isPaused && styles.questCardPaused,
                 ]}>
-                <View style={[styles.questIcon, { borderColor: `${difficulty.color}66` }]}>
+                <View style={[styles.questIcon, { borderColor: `${appearance.color}66` }]}>
                   <MaterialCommunityIcons
-                    name={attributeIcons[quest.attribute]}
+                    name={appearance.icon}
                     size={23}
-                    color={difficulty.color}
+                    color={appearance.color}
                   />
                 </View>
 

@@ -109,6 +109,7 @@ export default function SettingsScreen() {
       const systemNotificationsEnabled =
         settings.morningBriefingEnabled ||
         settings.eveningCheckinEnabled ||
+        settings.streakRiskEnabled ||
         settings.weeklyReviewEnabled ||
         settings.recoveryReminderEnabled ||
         settings.progressAlertsEnabled;
@@ -293,6 +294,29 @@ export default function SettingsScreen() {
               label="DELIVERY"
               onChange={(eveningCheckinTime) => updateSettings({ eveningCheckinTime })}
               value={settings.eveningCheckinTime}
+            />
+          ) : null}
+
+          <View style={styles.divider} />
+
+          <View style={styles.notificationRow}>
+            <View style={styles.notificationIdentity}>
+              <MaterialCommunityIcons name="fire-alert" size={20} color="#FF9B8A" />
+              <Text style={styles.notificationLabel}>Streak at Risk</Text>
+            </View>
+            <Switch
+              accessibilityLabel="Streak at risk reminder"
+              onValueChange={(streakRiskEnabled) => updateSettings({ streakRiskEnabled })}
+              thumbColor={settings.streakRiskEnabled ? '#F5F2FF' : '#8A91A8'}
+              trackColor={{ false: '#282D40', true: '#8B4B43' }}
+              value={settings.streakRiskEnabled}
+            />
+          </View>
+          {settings.streakRiskEnabled ? (
+            <TimeStepper
+              label="DELIVERY"
+              onChange={(streakRiskTime) => updateSettings({ streakRiskTime })}
+              value={settings.streakRiskTime}
             />
           ) : null}
 

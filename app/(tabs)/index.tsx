@@ -62,27 +62,14 @@ import {
   type RecoveryQuestStatus,
 } from '@/src/progression/recovery-quest';
 import { getItemDefinition } from '@/src/inventory/item-catalog';
+import { getHabitAppearance } from '@/src/habits/habit-appearance';
 import { syncHabitReminderFromDatabase } from '@/src/notifications/habit-reminders';
-import {
-  syncProgressNotifications,
-  syncSystemNotifications,
-} from '@/src/notifications/system-notifications';
+import { syncSystemNotifications } from '@/src/notifications/system-notifications';
 
 const difficultyColors = {
   easy: '#68E1A8',
   medium: '#61D4FF',
   hard: '#C68CFF',
-};
-
-const attributeIcons: Record<
-  HabitAttribute,
-  keyof typeof MaterialCommunityIcons.glyphMap
-> = {
-  strength: 'dumbbell',
-  intelligence: 'brain',
-  discipline: 'shield-check',
-  vitality: 'heart-pulse',
-  creativity: 'palette',
 };
 
 function formatAttribute(attribute: HabitAttribute) {
@@ -144,8 +131,11 @@ export default function TodayScreen() {
   const [updatingBossQuest, setUpdatingBossQuest] = useState(false);
   const [clockEpoch, setClockEpoch] = useState(() => Math.floor(Date.now() / 1000));
   const [loading, setLoading] = useState(true);
-  const syncProgressAlerts = useCallback(() => {
-    void syncProgressNotifications(db).catch(() => 0);
+  const syncNotificationState = useCallback(() => {
+    void syncSystemNotifications(db).catch(() => ({
+      permissionGranted: false,
+      scheduledCount: 0,
+    }));
   }, [db]);
   const requiredProgress =
     dailyClearStatus.required > 0
@@ -222,11 +212,11 @@ export default function TodayScreen() {
       setActivityStreak(streak);
       setRecoveryStatus(recovery);
       setDailyClearStatus(dailyClear);
-      syncProgressAlerts();
+      syncNotificationState();
     } finally {
       setLoading(false);
     }
-  }, [db, syncProgressAlerts]);
+  }, [db, syncNotificationState]);
 
   useFocusEffect(
     useCallback(() => {
@@ -266,7 +256,7 @@ export default function TodayScreen() {
       setActivityStreak(streak);
       setRecoveryStatus(recovery);
       setDailyClearStatus(dailyClear);
-      syncProgressAlerts();
+      syncNotificationState();
     } catch {
       setHabits((current) =>
         current.map((item) => (item.id === id ? { ...item, complete: habit.complete } : item)),
@@ -315,7 +305,7 @@ export default function TodayScreen() {
       setActivityStreak(streak);
       setRecoveryStatus(recovery);
       setDailyClearStatus(dailyClear);
-      syncProgressAlerts();
+      syncNotificationState();
     } catch {
       setHabits((current) =>
         current.map((item) => (item.id === habit.id ? habit : item)),
@@ -370,7 +360,7 @@ export default function TodayScreen() {
       setActivityStreak(streak);
       setRecoveryStatus(recovery);
       setDailyClearStatus(dailyClear);
-      syncProgressAlerts();
+      syncNotificationState();
     } catch {
       setHabits((current) =>
         current.map((item) => (item.id === habit.id ? habit : item)),
@@ -424,7 +414,7 @@ export default function TodayScreen() {
         setActivityStreak(streak);
         setRecoveryStatus(recovery);
         setDailyClearStatus(dailyClear);
-        syncProgressAlerts();
+        syncNotificationState();
       } catch {
         setHabits((current) =>
           current.map((item) => (item.id === habit.id ? habit : item)),
@@ -433,7 +423,7 @@ export default function TodayScreen() {
         setUpdatingHabitId(null);
       }
     },
-    [db, syncProgressAlerts, updatingHabitId],
+    [db, syncNotificationState, updatingHabitId],
   );
 
   const resetTimedHabit = async (habit: Habit) => {
@@ -465,7 +455,7 @@ export default function TodayScreen() {
       setActivityStreak(streak);
       setRecoveryStatus(recovery);
       setDailyClearStatus(dailyClear);
-      syncProgressAlerts();
+      syncNotificationState();
     } catch {
       setHabits((current) =>
         current.map((item) => (item.id === habit.id ? habit : item)),
@@ -514,7 +504,7 @@ export default function TodayScreen() {
       setPlayerProgress(progressSummary);
       setActivityStreak(streak);
       setRecoveryStatus(recovery);
-      syncProgressAlerts();
+      syncNotificationState();
 
       if (!nextBoss) {
         Alert.alert(
@@ -906,7 +896,13 @@ export default function TodayScreen() {
           ) : null}
 
           {habits.map((habit) => {
-            const accent = difficultyColors[habit.difficulty];
+            const difficultyAccent = difficultyColors[habit.difficulty];
+            const appearance = getHabitAppearance(
+              habit.iconKey,
+              habit.colorKey,
+              habit.attribute,
+              difficultyAccent,
+            );
             const reward = rewardByDifficulty[habit.difficulty];
             const timerElapsedSeconds = getTimedHabitElapsedSeconds(habit, clockEpoch);
             return (
@@ -916,11 +912,11 @@ export default function TodayScreen() {
                   styles.habitCard,
                   habit.complete && styles.habitCardComplete,
                 ]}>
-                <View style={[styles.habitIcon, { borderColor: `${accent}55` }]}>
+                <View style={[styles.habitIcon, { borderColor: `${appearance.color}66` }]}>
                   <MaterialCommunityIcons
-                    name={attributeIcons[habit.attribute]}
+                    name={appearance.icon}
                     size={23}
-                    color={accent}
+                    color={appearance.color}
                   />
                 </View>
 
@@ -939,7 +935,7 @@ export default function TodayScreen() {
                               ? 'REQ'
                               : 'OPT'}
                       </Text>
-                      <Text style={[styles.difficulty, { color: accent }]}>
+                      <Text style={[styles.difficulty, { color: difficultyAccent }]}>
                         {habit.difficulty.toUpperCase()}
                       </Text>
                     </View>

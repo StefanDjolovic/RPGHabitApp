@@ -2,6 +2,12 @@ import type { SQLiteDatabase } from 'expo-sqlite';
 import { Platform } from 'react-native';
 
 import { grantDailyClearReward } from '@/src/database/inventory-repository';
+import {
+  normalizeHabitColorKey,
+  normalizeHabitIconKey,
+  type HabitColorKey,
+  type HabitIconKey,
+} from '@/src/habits/habit-appearance';
 import { MAX_DAILY_DUNGEON_ENERGY } from '@/src/progression/dungeon-energy';
 import {
   getEffectiveDateContext,
@@ -24,6 +30,8 @@ export type Habit = {
   id: number;
   title: string;
   description: string;
+  iconKey: HabitIconKey | null;
+  colorKey: HabitColorKey | null;
   difficulty: HabitDifficulty;
   attribute: HabitAttribute;
   secondaryAttribute: HabitAttribute | null;
@@ -80,6 +88,8 @@ export type TimedHabitProgress = {
 export type NewHabit = {
   title: string;
   description: string;
+  iconKey?: HabitIconKey | null;
+  colorKey?: HabitColorKey | null;
   difficulty: HabitDifficulty;
   attribute: HabitAttribute;
   secondaryAttribute: HabitAttribute | null;
@@ -98,8 +108,16 @@ export type EditableHabit = NewHabit & { id: number };
 
 type HabitRow = Omit<
   Habit,
-  'complete' | 'checkedToday' | 'scheduleDays' | 'isRequired' | 'reminderEnabled'
+  | 'complete'
+  | 'checkedToday'
+  | 'scheduleDays'
+  | 'isRequired'
+  | 'reminderEnabled'
+  | 'iconKey'
+  | 'colorKey'
 > & {
+  iconKey: string | null;
+  colorKey: string | null;
   scheduleDays: string;
   isRequired: number;
   reminderEnabled: number;
@@ -114,7 +132,11 @@ type QuestLogHabitRow = Omit<
   | 'isRequired'
   | 'isPaused'
   | 'reminderEnabled'
+  | 'iconKey'
+  | 'colorKey'
 > & {
+  iconKey: string | null;
+  colorKey: string | null;
   scheduleDays: string;
   isRequired: number;
   isPaused: number;
@@ -124,8 +146,10 @@ type QuestLogHabitRow = Omit<
 };
 type EditableHabitRow = Omit<
   EditableHabit,
-  'scheduleDays' | 'isRequired' | 'reminderEnabled'
+  'scheduleDays' | 'isRequired' | 'reminderEnabled' | 'iconKey' | 'colorKey'
 > & {
+  iconKey: string | null;
+  colorKey: string | null;
   scheduleDays: string;
   isRequired: number;
   reminderEnabled: number;
@@ -200,6 +224,8 @@ function normalizeReminderTime(value: string) {
 function toHabit(row: HabitRow): Habit {
   return {
     ...row,
+    iconKey: normalizeHabitIconKey(row.iconKey),
+    colorKey: normalizeHabitColorKey(row.colorKey),
     scheduleDays: parseScheduleDays(row.scheduleDays),
     isRequired: Boolean(row.isRequired),
     reminderEnabled: Boolean(row.reminderEnabled),
@@ -211,6 +237,8 @@ function toHabit(row: HabitRow): Habit {
 function toQuestLogHabit(row: QuestLogHabitRow): QuestLogHabit {
   return {
     ...row,
+    iconKey: normalizeHabitIconKey(row.iconKey),
+    colorKey: normalizeHabitColorKey(row.colorKey),
     scheduleDays: parseScheduleDays(row.scheduleDays),
     isRequired: Boolean(row.isRequired),
     isPaused: Boolean(row.isPaused),
@@ -247,6 +275,8 @@ export async function getTodayHabits(db: SQLiteDatabase): Promise<Habit[]> {
        h.id,
        h.title,
        h.description,
+       h.icon_key AS iconKey,
+       h.color_key AS colorKey,
        h.difficulty,
        h.attribute,
        h.secondary_attribute AS secondaryAttribute,
@@ -356,6 +386,8 @@ export async function getQuestLogHabits(
        h.id,
        h.title,
        h.description,
+       h.icon_key AS iconKey,
+       h.color_key AS colorKey,
        h.difficulty,
        h.attribute,
        h.secondary_attribute AS secondaryAttribute,
@@ -748,6 +780,8 @@ export async function createHabit(db: SQLiteDatabase, habit: NewHabit) {
     `INSERT INTO habits (
        title,
        description,
+       icon_key,
+       color_key,
        habit_type,
        difficulty,
        attribute,
@@ -762,9 +796,11 @@ export async function createHabit(db: SQLiteDatabase, habit: NewHabit) {
        is_required,
        start_date
      )
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     title,
     description,
+    normalizeHabitIconKey(habit.iconKey),
+    normalizeHabitColorKey(habit.colorKey),
     habit.cadence,
     habit.difficulty,
     habit.attribute,
@@ -792,6 +828,8 @@ export async function getHabitForEdit(
        id,
        title,
        description,
+       icon_key AS iconKey,
+       color_key AS colorKey,
        habit_type AS cadence,
        difficulty,
        attribute,
@@ -817,6 +855,8 @@ export async function getHabitForEdit(
 
   return {
     ...row,
+    iconKey: normalizeHabitIconKey(row.iconKey),
+    colorKey: normalizeHabitColorKey(row.colorKey),
     scheduleDays: parseScheduleDays(row.scheduleDays),
     isRequired: row.isRequired === 1,
     reminderEnabled: row.reminderEnabled === 1,
@@ -855,6 +895,8 @@ export async function updateHabit(db: SQLiteDatabase, habitId: number, habit: Ne
      SET
        title = ?,
        description = ?,
+       icon_key = ?,
+       color_key = ?,
        habit_type = ?,
        difficulty = ?,
        attribute = ?,
@@ -870,6 +912,8 @@ export async function updateHabit(db: SQLiteDatabase, habitId: number, habit: Ne
      WHERE id = ?`,
     title,
     description,
+    normalizeHabitIconKey(habit.iconKey),
+    normalizeHabitColorKey(habit.colorKey),
     habit.cadence,
     habit.difficulty,
     habit.attribute,

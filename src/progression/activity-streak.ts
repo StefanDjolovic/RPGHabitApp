@@ -15,21 +15,7 @@ function getPreviousLocalDateKey(dateKey: string) {
   return date.toISOString().slice(0, 10);
 }
 
-export function getConsecutiveActivityStreak(activeDateKeys: string[], todayKey = getLocalDateKey()) {
-  const activeDates = new Set(activeDateKeys);
-  let streak = 0;
-  let currentDateKey = todayKey;
-
-  while (activeDates.has(currentDateKey)) {
-    streak += 1;
-    currentDateKey = getPreviousLocalDateKey(currentDateKey);
-  }
-
-  return streak;
-}
-
-export async function getActivityStreak(db: SQLiteDatabase) {
-  const today = getLocalDateKey();
+async function getActivityDateKeys(db: SQLiteDatabase, throughDateKey: string) {
   const rows = await db.getAllAsync<ActivityDateRow>(
     `SELECT DISTINCT completionDate
      FROM (
@@ -46,11 +32,35 @@ export async function getActivityStreak(db: SQLiteDatabase) {
      )
      WHERE completionDate <= ?
      ORDER BY completionDate DESC`,
-    today,
+    throughDateKey,
   );
 
-  return getConsecutiveActivityStreak(
-    rows.map((row) => row.completionDate),
-    today,
-  );
+  return rows.map((row) => row.completionDate);
+}
+
+export function getConsecutiveActivityStreak(activeDateKeys: string[], todayKey = getLocalDateKey()) {
+  const activeDates = new Set(activeDateKeys);
+  let streak = 0;
+  let currentDateKey = todayKey;
+
+  while (activeDates.has(currentDateKey)) {
+    streak += 1;
+    currentDateKey = getPreviousLocalDateKey(currentDateKey);
+  }
+
+  return streak;
+}
+
+export async function getActivityStreak(db: SQLiteDatabase) {
+  const today = getLocalDateKey();
+  return getConsecutiveActivityStreak(await getActivityDateKeys(db, today), today);
+}
+
+export async function isActivityStreakAtRisk(db: SQLiteDatabase) {
+  const today = getLocalDateKey();
+  const activityDateKeys = await getActivityDateKeys(db, today);
+  if (activityDateKeys.includes(today)) return false;
+
+  const yesterday = getPreviousLocalDateKey(today);
+  return getConsecutiveActivityStreak(activityDateKeys, yesterday) > 0;
 }

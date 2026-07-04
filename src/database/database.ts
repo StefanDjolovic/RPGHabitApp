@@ -1,6 +1,6 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 
-const DATABASE_VERSION = 31;
+const DATABASE_VERSION = 33;
 
 export async function migrateDatabase(db: SQLiteDatabase) {
   await db.execAsync('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
@@ -1053,6 +1053,27 @@ export async function migrateDatabase(db: SQLiteDatabase) {
       ALTER TABLE user_settings
         ADD COLUMN haptics_enabled INTEGER NOT NULL DEFAULT 1
         CHECK (haptics_enabled IN (0, 1));
+    `);
+  }
+
+  if (currentVersion < 32) {
+    await db.execAsync(`
+      ALTER TABLE habits
+        ADD COLUMN icon_key TEXT;
+
+      ALTER TABLE habits
+        ADD COLUMN color_key TEXT;
+    `);
+  }
+
+  if (currentVersion < 33) {
+    await db.execAsync(`
+      ALTER TABLE user_settings
+        ADD COLUMN streak_risk_enabled INTEGER NOT NULL DEFAULT 0
+        CHECK (streak_risk_enabled IN (0, 1));
+
+      ALTER TABLE user_settings
+        ADD COLUMN streak_risk_time TEXT NOT NULL DEFAULT '21:00';
     `);
   }
 

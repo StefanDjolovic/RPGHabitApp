@@ -23,6 +23,7 @@ import {
 
 import {
   archiveHabit,
+  deleteHabit,
   getDayFromDateKey,
   getLocalDateKey,
   getQuestLogHabits,
@@ -151,6 +152,28 @@ export default function QuestsScreen() {
     [db, quests],
   );
 
+  const deleteQuest = useCallback(
+    async (quest: QuestLogHabit) => {
+      const previousQuests = quests;
+      try {
+        setUpdatingQuestId(quest.id);
+        setQuests((current) => current.filter((item) => item.id !== quest.id));
+        await deleteHabit(db, quest.id);
+        await syncHabitReminderFromDatabase(db, quest.id).catch(() => false);
+        await syncSystemNotifications(db).catch(() => ({
+          permissionGranted: false,
+          scheduledCount: 0,
+        }));
+      } catch {
+        setQuests(previousQuests);
+        Alert.alert('Quest not deleted', 'Please try again.');
+      } finally {
+        setUpdatingQuestId(null);
+      }
+    },
+    [db, quests],
+  );
+
   const toggleQuestPaused = useCallback(
     async (quest: QuestLogHabit) => {
       const previousQuests = quests;
@@ -199,6 +222,26 @@ export default function QuestsScreen() {
       );
     },
     [archiveQuest],
+  );
+
+  const confirmDeleteQuest = useCallback(
+    (quest: QuestLogHabit) => {
+      Alert.alert(
+        'Delete quest permanently?',
+        'The quest will disappear from your lists. Completion history and earned rewards will remain saved.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Delete',
+            onPress: () => {
+              void deleteQuest(quest);
+            },
+            style: 'destructive',
+          },
+        ],
+      );
+    },
+    [deleteQuest],
   );
 
   const archiveBoss = useCallback(
@@ -626,6 +669,20 @@ export default function QuestsScreen() {
                             size={16}
                             color={showingArchived ? '#7EE8FF' : '#7F879F'}
                           />
+                        </Pressable>
+                      ) : null}
+                      {showingArchived ? (
+                        <Pressable
+                          accessibilityLabel={`Delete ${quest.title}`}
+                          disabled={updatingQuestId === quest.id}
+                          onPress={() => confirmDeleteQuest(quest)}
+                          style={({ pressed }) => [
+                            styles.cardActionButton,
+                            styles.deleteActionButton,
+                            pressed && styles.cardActionButtonPressed,
+                            updatingQuestId === quest.id && styles.cardActionButtonDisabled,
+                          ]}>
+                          <MaterialCommunityIcons name="trash-can-outline" size={16} color="#FF8191" />
                         </Pressable>
                       ) : null}
                     </View>
@@ -1059,6 +1116,7 @@ const styles = StyleSheet.create({
   },
   cardActionButtonPressed: { opacity: 0.72 },
   cardActionButtonDisabled: { opacity: 0.38 },
+  deleteActionButton: { backgroundColor: '#251218', borderColor: '#61303B' },
   difficulty: { fontSize: 8, fontWeight: '900', letterSpacing: 0.9, marginLeft: 8 },
   questDescription: { color: '#737B98', fontSize: 10, marginTop: 4 },
   rewardRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', marginTop: 8, gap: 6 },

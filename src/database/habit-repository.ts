@@ -461,7 +461,8 @@ export async function getQuestLogHabits(
        WHERE week_start = ?
        GROUP BY habit_id
      ) weekly_checkins ON weekly_checkins.habit_id = h.id
-     WHERE h.is_active = ?
+      WHERE h.is_active = ?
+        AND h.deleted_at IS NULL
      ORDER BY h.created_at ASC, h.id ASC`,
     weekStart,
     weekStart,
@@ -962,7 +963,7 @@ export async function archiveHabit(db: SQLiteDatabase, habitId: number) {
   await db.runAsync(
     `UPDATE habits
      SET is_active = 0
-     WHERE id = ? AND is_active = 1`,
+     WHERE id = ? AND is_active = 1 AND deleted_at IS NULL`,
     habitId,
   );
 }
@@ -990,9 +991,24 @@ export async function restoreHabit(db: SQLiteDatabase, habitId: number) {
   await db.runAsync(
     `UPDATE habits
      SET is_active = 1, is_paused = 0
-     WHERE id = ? AND is_active = 0`,
+     WHERE id = ? AND is_active = 0 AND deleted_at IS NULL`,
     habitId,
   );
+}
+
+export async function deleteHabit(db: SQLiteDatabase, habitId: number) {
+  await stopActiveTimerProgress(db, habitId);
+  const result = await db.runAsync(
+    `UPDATE habits
+     SET
+       is_active = 0,
+       is_paused = 0,
+       reminder_enabled = 0,
+       deleted_at = CURRENT_TIMESTAMP
+     WHERE id = ? AND deleted_at IS NULL`,
+    habitId,
+  );
+  if (result.changes === 0) throw new Error('Habit not found.');
 }
 
 async function applyHabitCompletionTransition(

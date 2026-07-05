@@ -183,6 +183,7 @@ export default function ProfileScreen() {
   const [selectedActivityDate, setSelectedActivityDate] = useState('');
   const [achievementSummary, setAchievementSummary] =
     useState<AchievementSummary>(initialAchievementSummary);
+  const [selectedAchievementKey, setSelectedAchievementKey] = useState<string | null>(null);
   const [allocatingAttribute, setAllocatingAttribute] = useState<HabitAttribute | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -266,6 +267,11 @@ export default function ProfileScreen() {
         return second.progress - first.progress;
       }),
     [achievementSummary.achievements],
+  );
+  const selectedAchievement = useMemo(
+    () =>
+      visibleAchievements.find((achievement) => achievement.key === selectedAchievementKey) ?? null,
+    [selectedAchievementKey, visibleAchievements],
   );
   const calendarWeeks = useMemo(
     () =>
@@ -622,62 +628,41 @@ export default function ProfileScreen() {
           </View>
         </View>
 
-        <View style={styles.achievementList}>
-          {visibleAchievements.map((achievement) => (
-            <View
-              key={achievement.key}
-              style={[
-                styles.achievementCard,
-                achievement.unlocked && styles.achievementCardUnlocked,
-              ]}>
-              <View
-                style={[
-                  styles.achievementIcon,
-                  { borderColor: `${achievement.accent}66` },
-                  achievement.unlocked && { backgroundColor: `${achievement.accent}22` },
+        <View style={styles.achievementGrid}>
+          {visibleAchievements.map((achievement) => {
+            const selected = selectedAchievementKey === achievement.key;
+            return (
+              <Pressable
+                accessibilityLabel={`${achievement.title}, ${achievement.unlocked ? 'unlocked' : `${achievement.current} of ${achievement.target}`}`}
+                accessibilityRole="button"
+                accessibilityState={{ selected }}
+                key={achievement.key}
+                onPress={() => setSelectedAchievementKey(selected ? null : achievement.key)}
+                style={({ pressed }) => [
+                  styles.achievementTile,
+                  achievement.unlocked && {
+                    backgroundColor: `${achievement.accent}16`,
+                    borderColor: `${achievement.accent}66`,
+                  },
+                  selected && styles.achievementTileSelected,
+                  pressed && styles.buttonPressed,
                 ]}>
                 <MaterialCommunityIcons
-                  name={
-                    achievement.secret && !achievement.unlocked
-                      ? 'help-rhombus-outline'
-                      : achievement.icon
-                  }
-                  size={21}
-                  color={achievement.unlocked ? achievement.accent : '#777E9C'}
+                  color={achievement.unlocked ? achievement.accent : '#737B94'}
+                  name={achievement.secret && !achievement.unlocked ? 'help-rhombus-outline' : achievement.icon}
+                  size={29}
                 />
-              </View>
-              <View style={styles.achievementBody}>
-                <View style={styles.achievementTopRow}>
-                  <Text
-                    style={[
-                      styles.achievementTitle,
-                      achievement.unlocked && styles.achievementTitleUnlocked,
-                    ]}>
-                    {achievement.secret && !achievement.unlocked
-                      ? 'Hidden Record'
-                      : achievement.title}
-                  </Text>
-                  <Text
-                    style={[
-                      styles.achievementStatus,
-                      achievement.unlocked && { color: achievement.accent },
-                    ]}>
-                    {achievement.unlocked
-                      ? 'UNLOCKED'
-                      : achievement.secret
-                        ? 'SECRET'
-                        : `${achievement.current}/${achievement.target}`}
-                  </Text>
+                <View style={styles.achievementTileStatus}>
+                  <MaterialCommunityIcons
+                    color={achievement.unlocked ? '#68E1A8' : '#606980'}
+                    name={achievement.unlocked ? 'check-circle' : 'lock-outline'}
+                    size={12}
+                  />
                 </View>
-                <Text style={styles.achievementDescription}>
-                  {achievement.secret && !achievement.unlocked
-                    ? 'Keep exploring to reveal this achievement.'
-                    : achievement.description}
-                </Text>
-                <View style={styles.achievementMiniTrack}>
+                <View style={styles.achievementTileTrack}>
                   <View
                     style={[
-                      styles.achievementMiniFill,
+                      styles.achievementTileFill,
                       {
                         backgroundColor: achievement.accent,
                         width: `${achievement.progress * 100}%`,
@@ -685,10 +670,67 @@ export default function ProfileScreen() {
                     ]}
                   />
                 </View>
+              </Pressable>
+            );
+          })}
+        </View>
+
+        {selectedAchievement ? (
+          <View style={styles.achievementDetail}>
+            <View
+              style={[
+                styles.achievementDetailIcon,
+                {
+                  backgroundColor: `${selectedAchievement.accent}18`,
+                  borderColor: `${selectedAchievement.accent}66`,
+                },
+              ]}>
+              <MaterialCommunityIcons
+                color={selectedAchievement.accent}
+                name={selectedAchievement.icon}
+                size={25}
+              />
+            </View>
+            <View style={styles.achievementDetailBody}>
+              <View style={styles.achievementDetailTopRow}>
+                <View style={styles.achievementDetailTitleBlock}>
+                  <Text style={styles.achievementDetailCategory}>
+                    {selectedAchievement.category.toUpperCase()}
+                  </Text>
+                  <Text style={styles.achievementDetailTitle}>{selectedAchievement.title}</Text>
+                </View>
+                <Text
+                  style={[
+                    styles.achievementDetailStatus,
+                    selectedAchievement.unlocked && { color: '#68E1A8' },
+                  ]}>
+                  {selectedAchievement.unlocked ? 'UNLOCKED' : 'LOCKED'}
+                </Text>
+              </View>
+              <Text style={styles.achievementDetailDescription}>
+                {selectedAchievement.description}
+              </Text>
+              <View style={styles.achievementDetailProgressHeader}>
+                <Text style={styles.achievementDetailProgressLabel}>PROGRESS</Text>
+                <Text style={styles.achievementDetailProgressValue}>
+                  {Math.min(selectedAchievement.current, selectedAchievement.target)}/
+                  {selectedAchievement.target}
+                </Text>
+              </View>
+              <View style={styles.achievementDetailTrack}>
+                <View
+                  style={[
+                    styles.achievementDetailFill,
+                    {
+                      backgroundColor: selectedAchievement.accent,
+                      width: `${selectedAchievement.progress * 100}%`,
+                    },
+                  ]}
+                />
               </View>
             </View>
-          ))}
-        </View>
+          </View>
+        ) : null}
 
         <View style={styles.sectionHeader}>
           <View>
@@ -1385,44 +1427,98 @@ const styles = StyleSheet.create({
   achievementPanelValue: { color: '#F7F2FF', fontSize: 22, fontWeight: '900', marginTop: 2 },
   achievementTrack: { height: 6, borderRadius: 3, backgroundColor: '#080B18', overflow: 'hidden' },
   achievementFill: { height: '100%', borderRadius: 3 },
-  achievementList: { gap: 10, marginBottom: 24 },
-  achievementCard: {
-    minHeight: 86,
-    borderRadius: 17,
+  achievementGrid: {
+    width: '100%',
+    maxWidth: 520,
+    alignSelf: 'center',
     flexDirection: 'row',
-    alignItems: 'center',
-    padding: 13,
-    backgroundColor: 'rgba(12, 16, 31, 0.86)',
-    borderWidth: 1,
-    borderColor: '#222842',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 12,
   },
-  achievementCardUnlocked: {
-    backgroundColor: 'rgba(16, 24, 35, 0.94)',
-    borderColor: '#2E4355',
-  },
-  achievementIcon: {
-    width: 44,
-    height: 44,
-    borderRadius: 14,
+  achievementTile: {
+    width: 70,
+    height: 70,
+    borderRadius: 8,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#11172A',
+    backgroundColor: '#0D1120',
+    borderWidth: 1,
+    borderColor: '#262C43',
+    overflow: 'hidden',
+  },
+  achievementTileSelected: {
+    borderColor: '#F0E9FF',
+    borderWidth: 2,
+  },
+  achievementTileStatus: { position: 'absolute', top: 5, right: 5 },
+  achievementTileTrack: {
+    position: 'absolute',
+    left: 7,
+    right: 7,
+    bottom: 6,
+    height: 3,
+    borderRadius: 2,
+    backgroundColor: '#080B17',
+    overflow: 'hidden',
+  },
+  achievementTileFill: { height: '100%', borderRadius: 2 },
+  achievementDetail: {
+    width: '100%',
+    maxWidth: 520,
+    alignSelf: 'center',
+    minHeight: 130,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+    padding: 13,
+    borderRadius: 8,
+    backgroundColor: '#0D111D',
+    borderWidth: 1,
+    borderColor: '#343A54',
+    marginBottom: 24,
+  },
+  achievementDetailIcon: {
+    width: 46,
+    height: 46,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
     borderWidth: 1,
   },
-  achievementBody: { flex: 1, minWidth: 0, paddingLeft: 12 },
-  achievementTopRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  achievementTitle: { color: '#AEB5CA', fontSize: 13, fontWeight: '900', flex: 1 },
-  achievementTitleUnlocked: { color: '#F0EEFF' },
-  achievementStatus: { color: '#6D748D', fontSize: 8, fontWeight: '900', letterSpacing: 0.8 },
-  achievementDescription: { color: '#777F98', fontSize: 10, fontWeight: '700', marginTop: 4 },
-  achievementMiniTrack: {
+  achievementDetailBody: { flex: 1, minWidth: 0 },
+  achievementDetailTopRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  achievementDetailTitleBlock: { flex: 1, minWidth: 0 },
+  achievementDetailCategory: { color: '#8B94AD', fontSize: 7, fontWeight: '900' },
+  achievementDetailTitle: { color: '#F0EEFF', fontSize: 14, fontWeight: '900', marginTop: 2 },
+  achievementDetailStatus: { color: '#737B94', fontSize: 8, fontWeight: '900' },
+  achievementDetailDescription: { color: '#A0A8BE', fontSize: 10, fontWeight: '700', marginTop: 7 },
+  achievementDetailProgressHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingTop: 11,
+  },
+  achievementDetailProgressLabel: { color: '#6F7892', fontSize: 7, fontWeight: '900' },
+  achievementDetailProgressValue: {
+    color: '#B8C0D6',
+    fontSize: 8,
+    fontWeight: '900',
+    fontVariant: ['tabular-nums'],
+  },
+  achievementDetailTrack: {
     height: 5,
     borderRadius: 3,
     backgroundColor: '#080B18',
     overflow: 'hidden',
-    marginTop: 9,
+    marginTop: 5,
   },
-  achievementMiniFill: { height: '100%', borderRadius: 3 },
+  achievementDetailFill: { height: '100%', borderRadius: 3 },
   sectionHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',

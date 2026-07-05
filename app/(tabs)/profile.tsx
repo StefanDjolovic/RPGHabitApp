@@ -2,7 +2,7 @@ import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, type Href, useFocusEffect } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -66,6 +66,18 @@ const attributeOrder: HabitAttribute[] = [
   'discipline',
   'vitality',
   'creativity',
+];
+
+type ProfileView = 'overview' | 'growth' | 'journey';
+
+const profileViews: {
+  key: ProfileView;
+  label: string;
+  icon: keyof typeof MaterialCommunityIcons.glyphMap;
+}[] = [
+  { key: 'overview', label: 'Overview', icon: 'account-outline' },
+  { key: 'growth', label: 'Growth', icon: 'chart-line' },
+  { key: 'journey', label: 'Journey', icon: 'map-marker-path' },
 ];
 
 const attributeMeta: Record<
@@ -155,6 +167,8 @@ function formatCadence(cadence: HabitInsight['cadence']) {
 
 export default function ProfileScreen() {
   const db = useSQLiteContext();
+  const scrollRef = useRef<ScrollView>(null);
+  const [profileView, setProfileView] = useState<ProfileView>('overview');
   const [playerProgress, setPlayerProgress] = useState<PlayerProgress>(INITIAL_PLAYER_PROGRESS);
   const [playerProfile, setPlayerProfile] = useState<PlayerProfile>(INITIAL_PLAYER_PROFILE);
   const [playerClassState, setPlayerClassState] =
@@ -233,6 +247,11 @@ export default function ProfileScreen() {
     }
   };
 
+  const selectProfileView = (view: ProfileView) => {
+    setProfileView(view);
+    scrollRef.current?.scrollTo({ y: 0, animated: true });
+  };
+
   const xpRatio = getProgressRatio(playerProgress.xpIntoLevel, playerProgress.xpForNextLevel);
   const energyRatio = getProgressRatio(playerProgress.dungeonEnergy, MAX_DUNGEON_ENERGY);
   const xpRemaining = Math.max(playerProgress.xpForNextLevel - playerProgress.xpIntoLevel, 0);
@@ -277,6 +296,7 @@ export default function ProfileScreen() {
       <ScrollView
         contentContainerStyle={styles.content}
         contentInsetAdjustmentBehavior="automatic"
+        ref={scrollRef}
         showsVerticalScrollIndicator={false}>
         <View style={styles.header}>
           <View>
@@ -372,6 +392,42 @@ export default function ProfileScreen() {
           </Text>
         </LinearGradient>
 
+        <View accessibilityRole="tablist" style={styles.profileViewTabs}>
+          {profileViews.map((view) => {
+            const selected = profileView === view.key;
+            return (
+              <Pressable
+                accessibilityLabel={`Show ${view.label}`}
+                accessibilityRole="tab"
+                accessibilityState={{ selected }}
+                key={view.key}
+                onPress={() => selectProfileView(view.key)}
+                style={({ pressed }) => [
+                  styles.profileViewTab,
+                  selected && styles.profileViewTabSelected,
+                  pressed && styles.buttonPressed,
+                ]}>
+                <MaterialCommunityIcons
+                  color={selected ? '#071018' : '#838CA5'}
+                  name={view.icon}
+                  size={17}
+                />
+                <Text
+                  adjustsFontSizeToFit
+                  numberOfLines={1}
+                  style={[
+                    styles.profileViewTabText,
+                    selected && styles.profileViewTabTextSelected,
+                  ]}>
+                  {view.label}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+
+        {profileView === 'overview' ? (
+          <>
         {playerClassState.eligible ? (
           playerClassState.activeClass ? (
             <View
@@ -502,6 +558,11 @@ export default function ProfileScreen() {
           </View>
         </View>
 
+          </>
+        ) : null}
+
+        {profileView === 'growth' ? (
+          <>
         <View style={styles.statPointPanel}>
           <View style={styles.statPointTopRow}>
             <View>
@@ -702,14 +763,23 @@ export default function ProfileScreen() {
           })}
         </View>
 
+          </>
+        ) : null}
+
+        {profileView === 'journey' ? (
+          <>
         <View style={styles.sectionHeader}>
           <View>
             <Text style={styles.sectionEyebrow}>JOURNEY</Text>
             <Text style={styles.sectionTitle}>Activity calendar</Text>
           </View>
-          <View style={styles.calendarRangeBadge}>
-            <Text style={styles.calendarRangeText}>28 DAYS</Text>
-          </View>
+          <Pressable
+            accessibilityLabel="Open full habit history"
+            onPress={() => router.push('/activity-history' as Href)}
+            style={({ pressed }) => [styles.calendarRangeBadge, pressed && styles.buttonPressed]}>
+            <MaterialCommunityIcons color="#8EDFF2" name="calendar-search" size={15} />
+            <Text style={styles.calendarRangeText}>FULL HISTORY</Text>
+          </Pressable>
         </View>
 
         <View style={styles.calendarGrid}>
@@ -988,6 +1058,9 @@ export default function ProfileScreen() {
           })}
         </View>
 
+          </>
+        ) : null}
+
         {loading ? (
           <View style={styles.loadingOverlay}>
             <ActivityIndicator color="#FF8FC7" />
@@ -1063,6 +1136,41 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     marginBottom: 14,
   },
+  profileViewTabs: {
+    width: '100%',
+    maxWidth: 520,
+    minHeight: 48,
+    alignSelf: 'center',
+    flexDirection: 'row',
+    gap: 6,
+    padding: 5,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#292E44',
+    backgroundColor: '#0D111D',
+    marginBottom: 14,
+  },
+  profileViewTab: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: 36,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    paddingHorizontal: 7,
+    borderRadius: 6,
+  },
+  profileViewTabSelected: {
+    backgroundColor: '#7EE7FF',
+  },
+  profileViewTabText: {
+    minWidth: 0,
+    color: '#838CA5',
+    fontSize: 10,
+    fontWeight: '900',
+  },
+  profileViewTabTextSelected: { color: '#071018' },
   cardAccent: {
     position: 'absolute',
     width: 95,
@@ -1385,6 +1493,8 @@ const styles = StyleSheet.create({
   allocateButtonPressed: { opacity: 0.76, transform: [{ scale: 0.96 }] },
   calendarRangeBadge: {
     height: 26,
+    flexDirection: 'row',
+    gap: 5,
     borderRadius: 9,
     borderWidth: 1,
     borderColor: '#303652',

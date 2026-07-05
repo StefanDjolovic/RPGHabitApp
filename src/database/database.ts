@@ -1,6 +1,6 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 
-const DATABASE_VERSION = 36;
+const DATABASE_VERSION = 37;
 
 export async function migrateDatabase(db: SQLiteDatabase) {
   await db.execAsync('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
@@ -1113,6 +1113,40 @@ export async function migrateDatabase(db: SQLiteDatabase) {
     await db.execAsync(`
       ALTER TABLE dungeon_battle_sessions
         ADD COLUMN summons TEXT NOT NULL DEFAULT '[]';
+    `);
+  }
+
+  if (currentVersion < 37) {
+    await db.execAsync(`
+      ALTER TABLE habit_completions
+        ADD COLUMN habit_title TEXT;
+
+      ALTER TABLE habit_completions
+        ADD COLUMN habit_difficulty TEXT
+        CHECK (habit_difficulty IS NULL OR habit_difficulty IN ('easy', 'medium', 'hard'));
+
+      ALTER TABLE habit_completions
+        ADD COLUMN habit_attribute TEXT
+        CHECK (
+          habit_attribute IS NULL OR
+          habit_attribute IN ('strength', 'intelligence', 'discipline', 'vitality', 'creativity')
+        );
+
+      UPDATE habit_completions
+      SET
+        habit_title = (
+          SELECT h.title FROM habits h WHERE h.id = habit_completions.habit_id
+        ),
+        habit_difficulty = (
+          SELECT h.difficulty FROM habits h WHERE h.id = habit_completions.habit_id
+        ),
+        habit_attribute = (
+          SELECT h.attribute FROM habits h WHERE h.id = habit_completions.habit_id
+        )
+      WHERE habit_title IS NULL;
+
+      CREATE INDEX IF NOT EXISTS idx_habit_completions_status_date
+        ON habit_completions(status, completion_date);
     `);
   }
 

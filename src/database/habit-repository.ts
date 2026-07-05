@@ -1007,6 +1007,7 @@ async function applyHabitCompletionTransition(
   const row = await txn.getFirstAsync<{
       completionId: number | null;
       status: 'complete' | 'undone' | null;
+      title: string;
       difficulty: HabitDifficulty;
       attribute: HabitAttribute;
       secondaryAttribute: HabitAttribute | null;
@@ -1016,6 +1017,7 @@ async function applyHabitCompletionTransition(
       `SELECT
          hc.id AS completionId,
          hc.status,
+         h.title,
          h.difficulty,
          h.attribute,
          h.secondary_attribute AS secondaryAttribute,
@@ -1050,12 +1052,16 @@ async function applyHabitCompletionTransition(
       const settings = getRuntimeUserSettings();
       const result = await txn.runAsync(
         `INSERT INTO habit_completions (
-           habit_id, completion_date, status, local_timezone, day_cutoff_hour, updated_at
-         ) VALUES (?, ?, 'complete', ?, ?, CURRENT_TIMESTAMP)`,
+           habit_id, completion_date, status, local_timezone, day_cutoff_hour,
+           habit_title, habit_difficulty, habit_attribute, updated_at
+         ) VALUES (?, ?, 'complete', ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
         habitId,
         completionDate,
         settings.timezone,
         settings.dayCutoffHour,
+        row.title,
+        row.difficulty,
+        row.attribute,
       );
       completionId = result.lastInsertRowId;
     } else {

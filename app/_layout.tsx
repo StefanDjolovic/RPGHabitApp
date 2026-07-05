@@ -147,6 +147,10 @@ export default function RootLayout() {
             options={{ animation: reduceMotion ? 'none' : 'slide_from_right', headerShown: false }}
           />
           <Stack.Screen
+            name="activity-history"
+            options={{ animation: reduceMotion ? 'none' : 'slide_from_right', headerShown: false }}
+          />
+          <Stack.Screen
             name="dungeon-run"
             options={{ animation: reduceMotion ? 'none' : 'fade', gestureEnabled: false, headerShown: false }}
           />

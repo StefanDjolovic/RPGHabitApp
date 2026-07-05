@@ -8,13 +8,15 @@
       "autoIncrement": true,
       "channel": "preview",
       "distribution": "internal",
+      "environment": "preview",
       "android": {
         "buildType": "apk"
       }
     },
     "production": {
       "autoIncrement": true,
-      "channel": "production"
+      "channel": "production",
+      "environment": "production"
     }
   }
 }

@@ -9,7 +9,7 @@
     "ios": "expo start --ios",
     "web": "expo start --web",
     "build:android:preview": "npx eas-cli@latest build --platform android --profile preview",
-    "update:preview": "npx eas-cli@latest update --channel preview",
+    "update:preview": "npx eas-cli@latest update --channel preview --environment preview",
     "lint": "expo lint"
   },
   "dependencies": {

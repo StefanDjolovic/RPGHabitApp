@@ -1,6 +1,6 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 
-const DATABASE_VERSION = 39;
+const DATABASE_VERSION = 40;
 
 export async function migrateDatabase(db: SQLiteDatabase) {
   await db.execAsync('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
@@ -1170,6 +1170,22 @@ export async function migrateDatabase(db: SQLiteDatabase) {
       );
 
       INSERT OR IGNORE INTO cloud_sync_state (id) VALUES (1);
+    `);
+  }
+
+  if (currentVersion < 40) {
+    await db.execAsync(`
+      CREATE TABLE IF NOT EXISTS shop_purchase_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        client_event_id TEXT NOT NULL UNIQUE,
+        offer_key TEXT NOT NULL,
+        offer_name TEXT NOT NULL,
+        gold_spent INTEGER NOT NULL CHECK (gold_spent > 0),
+        purchased_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_shop_purchase_offer_date
+        ON shop_purchase_events(offer_key, purchased_at);
     `);
   }
 

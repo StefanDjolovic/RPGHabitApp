@@ -24,6 +24,7 @@ const SYNC_TABLES = [
   'equipment_progress',
   'equipment_loadouts',
   'gold_events',
+  'shop_purchase_events',
   'blacksmith_events',
   'equipment_events',
   'user_achievements',

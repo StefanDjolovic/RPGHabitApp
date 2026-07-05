@@ -25,6 +25,12 @@ import {
   type InventoryOverview,
 } from '@/src/database/inventory-repository';
 import {
+  getShopOverview,
+  purchaseShopOffer,
+  type ShopOffer,
+  type ShopOverview,
+} from '@/src/database/shop-repository';
+import {
   equipmentSlots,
   getBlacksmithQuote,
   getSalvageReward,
@@ -33,13 +39,20 @@ import {
 import { getItemDefinition, rarityMeta, type ItemRarity } from '@/src/inventory/item-catalog';
 import { playImpactHaptic } from '@/src/settings/haptic-feedback';
 
-type InventoryView = 'vault' | 'loadout' | 'smith';
+type InventoryView = 'vault' | 'loadout' | 'smith' | 'shop';
 
 const initialOverview: InventoryOverview = {
   items: [],
   gold: 0,
   loadoutKey: 'unawakened',
   loadout: equipmentSlots.map((slot) => ({ ...slot, item: null })),
+};
+
+const initialShopOverview: ShopOverview = {
+  gold: 0,
+  currentRankLabel: 'Unawakened',
+  offers: [],
+  recentPurchases: [],
 };
 
 const categoryLabels: Record<InventoryItem['category'], string> = {
@@ -55,6 +68,7 @@ const viewMeta: Record<
   vault: { label: 'Vault', icon: 'treasure-chest-outline' },
   loadout: { label: 'Loadout', icon: 'shield-sword-outline' },
   smith: { label: 'Smith', icon: 'anvil' },
+  shop: { label: 'Shop', icon: 'storefront-outline' },
 };
 
 function formatRarity(rarity: ItemRarity) {
@@ -64,13 +78,19 @@ function formatRarity(rarity: ItemRarity) {
 export default function InventoryScreen() {
   const db = useSQLiteContext();
   const [overview, setOverview] = useState<InventoryOverview>(initialOverview);
+  const [shopOverview, setShopOverview] = useState<ShopOverview>(initialShopOverview);
   const [selectedView, setSelectedView] = useState<InventoryView>('vault');
   const [loading, setLoading] = useState(true);
   const [updatingItemKey, setUpdatingItemKey] = useState<string | null>(null);
 
   const loadInventory = useCallback(async () => {
     try {
-      setOverview(await getInventoryOverview(db));
+      const [nextOverview, nextShopOverview] = await Promise.all([
+        getInventoryOverview(db),
+        getShopOverview(db),
+      ]);
+      setOverview(nextOverview);
+      setShopOverview(nextShopOverview);
     } finally {
       setLoading(false);
     }
@@ -100,7 +120,9 @@ export default function InventoryScreen() {
     if (updatingItemKey) return;
     setUpdatingItemKey(itemKey);
     try {
-      setOverview(await action());
+      const nextOverview = await action();
+      setOverview(nextOverview);
+      setShopOverview(await getShopOverview(db));
       void playImpactHaptic('light');
     } catch (error) {
       Alert.alert(
@@ -138,6 +160,37 @@ export default function InventoryScreen() {
           onPress: () =>
             void runItemAction(item.itemKey, () => salvageEquipment(db, item.itemKey)),
         },
+      ],
+    );
+  };
+
+  const buyOffer = async (offer: ShopOffer) => {
+    const actionKey = `shop:${offer.key}`;
+    if (updatingItemKey) return;
+    setUpdatingItemKey(actionKey);
+    try {
+      await purchaseShopOffer(db, offer.key);
+      const [nextOverview, nextShopOverview] = await Promise.all([
+        getInventoryOverview(db),
+        getShopOverview(db),
+      ]);
+      setOverview(nextOverview);
+      setShopOverview(nextShopOverview);
+      void playImpactHaptic('medium');
+    } catch (error) {
+      Alert.alert('Purchase failed', error instanceof Error ? error.message : 'Please try again.');
+    } finally {
+      setUpdatingItemKey(null);
+    }
+  };
+
+  const confirmPurchase = (offer: ShopOffer) => {
+    Alert.alert(
+      `Buy ${offer.name}?`,
+      `${offer.rewardSummary}\n\nCost: ${offer.price} Gold`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Buy', onPress: () => void buyOffer(offer) },
       ],
     );
   };
@@ -262,8 +315,123 @@ export default function InventoryScreen() {
             updatingItemKey={updatingItemKey}
           />
         ) : null}
+
+        {!loading && selectedView === 'shop' ? (
+          <ShopView
+            overview={shopOverview}
+            onPurchase={confirmPurchase}
+            updatingItemKey={updatingItemKey}
+          />
+        ) : null}
       </ScrollView>
     </SafeAreaView>
+  );
+}
+
+function ShopView({
+  overview,
+  updatingItemKey,
+  onPurchase,
+}: {
+  overview: ShopOverview;
+  updatingItemKey: string | null;
+  onPurchase: (offer: ShopOffer) => void;
+}) {
+  return (
+    <View style={styles.section}>
+      <View style={styles.shopHeader}>
+        <View>
+          <Text style={styles.shopEyebrow}>HUNTER EXCHANGE</Text>
+          <Text style={styles.sectionTitle}>Daily supplies</Text>
+        </View>
+        <View style={styles.rankBadge}>
+          <MaterialCommunityIcons color="#C68CFF" name="shield-star-outline" size={15} />
+          <Text numberOfLines={1} style={styles.rankBadgeText}>{overview.currentRankLabel}</Text>
+        </View>
+      </View>
+
+      <View style={styles.shopNotice}>
+        <MaterialCommunityIcons color="#FFD166" name="clock-outline" size={19} />
+        <Text style={styles.shopNoticeText}>Daily stock resets at midnight on this device.</Text>
+      </View>
+
+      <View style={styles.itemList}>
+        {overview.offers.map((offer) => {
+          const soldOut = offer.remainingToday <= 0;
+          const available = offer.unlocked && offer.canAfford && !soldOut;
+          const updating = updatingItemKey === `shop:${offer.key}`;
+          const status = !offer.unlocked
+            ? `${offer.requiredRankLabel} required`
+            : soldOut
+              ? 'Sold out until tomorrow'
+              : !offer.canAfford
+                ? `Need ${offer.price - overview.gold} more Gold`
+                : `${offer.remainingToday} of ${offer.dailyLimit} left today`;
+
+          return (
+            <View key={offer.key} style={[styles.shopCard, !offer.unlocked && styles.shopCardLocked]}>
+              <View style={styles.shopOfferMain}>
+                <View style={[styles.shopOfferIcon, { borderColor: `${offer.accent}66` }]}>
+                  <MaterialCommunityIcons color={offer.accent} name={offer.icon} size={27} />
+                </View>
+                <View style={styles.shopOfferBody}>
+                  <View style={styles.shopOfferTitleRow}>
+                    <Text numberOfLines={1} style={styles.itemName}>{offer.name}</Text>
+                    <View style={styles.shopPrice}>
+                      <MaterialCommunityIcons color="#FFD166" name="circle-multiple" size={14} />
+                      <Text style={styles.shopPriceText}>{offer.price}</Text>
+                    </View>
+                  </View>
+                  <Text numberOfLines={2} style={styles.itemDescription}>{offer.description}</Text>
+                  <Text numberOfLines={2} style={[styles.shopReward, { color: offer.accent }]}>{offer.rewardSummary}</Text>
+                  <Text numberOfLines={2} style={styles.shopOwned}>Owned: {offer.ownedSummary}</Text>
+                </View>
+              </View>
+
+              <View style={styles.shopActionRow}>
+                <View style={styles.shopStatusBody}>
+                  <MaterialCommunityIcons
+                    color={available ? '#68E1A8' : '#7D8498'}
+                    name={available ? 'check-circle-outline' : offer.unlocked ? 'clock-alert-outline' : 'lock-outline'}
+                    size={15}
+                  />
+                  <Text numberOfLines={1} style={[styles.shopStatus, available && styles.shopStatusAvailable]}>{status}</Text>
+                </View>
+                <Pressable
+                  accessibilityLabel={`Buy ${offer.name}`}
+                  disabled={!available || updatingItemKey !== null}
+                  onPress={() => onPurchase(offer)}
+                  style={({ pressed }) => [
+                    styles.buyButton,
+                    !available && styles.disabledButton,
+                    pressed && available && styles.buttonPressed,
+                  ]}>
+                  {updating ? (
+                    <ActivityIndicator color="#071018" size="small" />
+                  ) : (
+                    <MaterialCommunityIcons color={available ? '#071018' : '#535A6D'} name="cart-plus" size={17} />
+                  )}
+                  <Text style={[styles.buyButtonText, !available && styles.disabledText]}>Buy</Text>
+                </Pressable>
+              </View>
+            </View>
+          );
+        })}
+      </View>
+
+      {overview.recentPurchases.length > 0 ? (
+        <View style={styles.purchaseHistory}>
+          <Text style={styles.sectionEyebrow}>RECENT PURCHASES</Text>
+          {overview.recentPurchases.map((purchase) => (
+            <View key={purchase.id} style={styles.purchaseRow}>
+              <MaterialCommunityIcons color="#68E1A8" name="check" size={16} />
+              <Text numberOfLines={1} style={styles.purchaseName}>{purchase.offerName}</Text>
+              <Text style={styles.purchaseCost}>-{purchase.goldSpent} Gold</Text>
+            </View>
+          ))}
+        </View>
+      ) : null}
+    </View>
   );
 }
 
@@ -601,10 +769,10 @@ const styles = StyleSheet.create({
   statTile: { flex: 1, minHeight: 57, justifyContent: 'center', paddingHorizontal: 10, borderRadius: 8, backgroundColor: '#0C111E', borderWidth: 1, borderColor: '#293044' },
   statValue: { color: '#F1F2F8', fontSize: 16, fontWeight: '900', fontVariant: ['tabular-nums'] },
   statLabel: { color: '#7E879E', fontSize: 8, fontWeight: '800', marginTop: 3 },
-  segmentedControl: { height: 44, flexDirection: 'row', gap: 4, padding: 4, borderRadius: 8, backgroundColor: '#0D111C', borderWidth: 1, borderColor: '#252B3D' },
-  segmentButton: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, borderRadius: 6 },
+  segmentedControl: { height: 44, flexDirection: 'row', gap: 3, padding: 4, borderRadius: 8, backgroundColor: '#0D111C', borderWidth: 1, borderColor: '#252B3D' },
+  segmentButton: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, borderRadius: 6 },
   segmentButtonSelected: { backgroundColor: '#7CDFF2' },
-  segmentText: { color: '#858DA6', fontSize: 10, fontWeight: '900' },
+  segmentText: { color: '#858DA6', fontSize: 9, fontWeight: '900' },
   segmentTextSelected: { color: '#071018' },
   loadingState: { minHeight: 120, alignItems: 'center', justifyContent: 'center', gap: 9, borderRadius: 8, backgroundColor: '#0C101B', borderWidth: 1, borderColor: '#272D40' },
   loadingText: { color: '#858DA4', fontSize: 10, fontWeight: '700' },
@@ -666,4 +834,30 @@ const styles = StyleSheet.create({
   salvageReward: { flex: 1, color: '#777F94', fontSize: 8, lineHeight: 13, fontWeight: '700' },
   salvageButton: { height: 32, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, paddingHorizontal: 9, borderRadius: 7, backgroundColor: '#24151D', borderWidth: 1, borderColor: '#563044' },
   salvageText: { color: '#D98BA4', fontSize: 8, fontWeight: '900' },
+  shopHeader: { minHeight: 45, flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', gap: 10 },
+  shopEyebrow: { color: '#FFD166', fontSize: 8, fontWeight: '900', letterSpacing: 1.2 },
+  rankBadge: { maxWidth: '48%', height: 32, flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 9, borderRadius: 7, backgroundColor: '#181322', borderWidth: 1, borderColor: '#4D3B61' },
+  rankBadgeText: { flexShrink: 1, color: '#D7B7FF', fontSize: 8, fontWeight: '900' },
+  shopNotice: { minHeight: 45, flexDirection: 'row', alignItems: 'center', gap: 9, paddingHorizontal: 11, borderRadius: 8, backgroundColor: '#18150D', borderWidth: 1, borderColor: '#4D4022' },
+  shopNoticeText: { flex: 1, color: '#BDB18F', fontSize: 9, fontWeight: '700', lineHeight: 14 },
+  shopCard: { gap: 11, padding: 12, borderRadius: 8, backgroundColor: '#0C101B', borderWidth: 1, borderColor: '#2A3042' },
+  shopCardLocked: { opacity: 0.72, backgroundColor: '#0A0D15' },
+  shopOfferMain: { flexDirection: 'row', alignItems: 'flex-start', gap: 11 },
+  shopOfferIcon: { width: 50, height: 50, alignItems: 'center', justifyContent: 'center', borderRadius: 8, backgroundColor: '#121827', borderWidth: 1 },
+  shopOfferBody: { flex: 1, minWidth: 0 },
+  shopOfferTitleRow: { minHeight: 20, flexDirection: 'row', alignItems: 'center', gap: 8 },
+  shopPrice: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  shopPriceText: { color: '#FFD166', fontSize: 11, fontWeight: '900', fontVariant: ['tabular-nums'] },
+  shopReward: { fontSize: 9, lineHeight: 14, fontWeight: '900', marginTop: 7 },
+  shopOwned: { color: '#737C94', fontSize: 8, lineHeight: 12, fontWeight: '700', marginTop: 3 },
+  shopActionRow: { minHeight: 39, flexDirection: 'row', alignItems: 'center', gap: 9, paddingTop: 9, borderTopWidth: 1, borderTopColor: '#22283A' },
+  shopStatusBody: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 6 },
+  shopStatus: { flex: 1, color: '#7D8498', fontSize: 8, fontWeight: '800' },
+  shopStatusAvailable: { color: '#75D8A4' },
+  buyButton: { width: 76, height: 34, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, borderRadius: 7, backgroundColor: '#FFD166' },
+  buyButtonText: { color: '#071018', fontSize: 9, fontWeight: '900' },
+  purchaseHistory: { gap: 7, paddingTop: 6 },
+  purchaseRow: { minHeight: 38, flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 10, borderBottomWidth: 1, borderBottomColor: '#202638' },
+  purchaseName: { flex: 1, minWidth: 0, color: '#C5CAD8', fontSize: 9, fontWeight: '800' },
+  purchaseCost: { color: '#D9A85A', fontSize: 8, fontWeight: '900', fontVariant: ['tabular-nums'] },
 });

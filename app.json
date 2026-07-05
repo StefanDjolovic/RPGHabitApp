@@ -2,7 +2,7 @@
   "expo": {
     "name": "Habit RPG",
     "slug": "habit-rpg",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "runtimeVersion": {
       "policy": "appVersion"
     },
@@ -61,7 +61,8 @@
           "color": "#6DDEFF",
           "defaultChannel": "habit-reminders"
         }
-      ]
+      ],
+      "expo-secure-store"
     ],
     "experiments": {
       "typedRoutes": true,

@@ -1,6 +1,6 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 
-const DATABASE_VERSION = 38;
+const DATABASE_VERSION = 39;
 
 export async function migrateDatabase(db: SQLiteDatabase) {
   await db.execAsync('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
@@ -1157,6 +1157,19 @@ export async function migrateDatabase(db: SQLiteDatabase) {
 
       CREATE INDEX IF NOT EXISTS idx_habits_deleted_at
         ON habits(deleted_at);
+    `);
+  }
+
+  if (currentVersion < 39) {
+    await db.execAsync(`
+      CREATE TABLE IF NOT EXISTS cloud_sync_state (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        user_id TEXT,
+        last_backup_at TEXT,
+        last_restore_at TEXT
+      );
+
+      INSERT OR IGNORE INTO cloud_sync_state (id) VALUES (1);
     `);
   }
 

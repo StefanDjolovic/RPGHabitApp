@@ -316,6 +316,12 @@ export default function ProfileScreen() {
 
           <View style={styles.headerActions}>
             <Pressable
+              accessibilityLabel="Open account and cloud"
+              onPress={() => router.push('/account' as Href)}
+              style={({ pressed }) => [styles.settingsButton, pressed && styles.buttonPressed]}>
+              <MaterialCommunityIcons name="account-circle-outline" size={22} color="#7EE7FF" />
+            </Pressable>
+            <Pressable
               accessibilityLabel="Edit profile"
               onPress={() => router.push('/edit-profile' as Href)}
               style={({ pressed }) => [styles.settingsButton, pressed && styles.buttonPressed]}>

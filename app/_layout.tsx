@@ -6,6 +6,8 @@ import { StatusBar } from 'expo-status-bar';
 import { useEffect, useSyncExternalStore } from 'react';
 import 'react-native-reanimated';
 
+import { AuthProvider } from '@/src/auth/auth-context';
+import { CloudSyncProvider } from '@/src/cloud/cloud-sync-context';
 import { migrateDatabase } from '@/src/database/database';
 import {
   configureHabitReminderActions,
@@ -104,76 +106,88 @@ export default function RootLayout() {
   const reduceMotion = settings.reduceMotionEnabled;
 
   return (
-    <SQLiteProvider databaseName="habit-rpg.db" onInit={initializeDatabase}>
-      <NotificationCoordinator />
-      <ThemeProvider value={habitRpgTheme}>
-        <Stack screenOptions={{ contentStyle: { backgroundColor: '#050711' } }}>
-          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-          <Stack.Screen name="onboarding" options={{ headerShown: false, gestureEnabled: false }} />
-          <Stack.Screen
-            name="create-habit"
-            options={{
-              animation: reduceMotion ? 'none' : 'slide_from_bottom',
-              headerShown: false,
-              presentation: 'modal',
-            }}
-          />
-          <Stack.Screen
-            name="create-boss-quest"
-            options={{
-              animation: reduceMotion ? 'none' : 'slide_from_bottom',
-              headerShown: false,
-              presentation: 'modal',
-            }}
-          />
-          <Stack.Screen
-            name="settings"
-            options={{
-              animation: reduceMotion ? 'none' : 'slide_from_bottom',
-              headerShown: false,
-              presentation: 'modal',
-            }}
-          />
-          <Stack.Screen
-            name="edit-profile"
-            options={{
-              animation: reduceMotion ? 'none' : 'slide_from_bottom',
-              headerShown: false,
-              presentation: 'modal',
-            }}
-          />
-          <Stack.Screen
-            name="weekly-review"
-            options={{ animation: reduceMotion ? 'none' : 'slide_from_right', headerShown: false }}
-          />
-          <Stack.Screen
-            name="activity-history"
-            options={{ animation: reduceMotion ? 'none' : 'slide_from_right', headerShown: false }}
-          />
-          <Stack.Screen
-            name="dungeon-run"
-            options={{ animation: reduceMotion ? 'none' : 'fade', gestureEnabled: false, headerShown: false }}
-          />
-          <Stack.Screen
-            name="awakening"
-            options={{ animation: reduceMotion ? 'none' : 'fade', gestureEnabled: false, headerShown: false }}
-          />
-          <Stack.Screen
-            name="class-skills"
-            options={{ animation: reduceMotion ? 'none' : 'slide_from_right', headerShown: false }}
-          />
-          <Stack.Screen
-            name="rank-trial"
-            options={{ animation: reduceMotion ? 'none' : 'slide_from_right', headerShown: false }}
-          />
-          <Stack.Screen
-            name="stat-recalibration"
-            options={{ animation: reduceMotion ? 'none' : 'slide_from_right', headerShown: false }}
-          />
-          <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Habit RPG' }} />
-        </Stack>
-        <StatusBar style="light" />
-      </ThemeProvider>
-    </SQLiteProvider>
+    <AuthProvider>
+      <SQLiteProvider databaseName="habit-rpg.db" onInit={initializeDatabase}>
+        <CloudSyncProvider>
+          <NotificationCoordinator />
+          <ThemeProvider value={habitRpgTheme}>
+            <Stack screenOptions={{ contentStyle: { backgroundColor: '#050711' } }}>
+              <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+              <Stack.Screen name="onboarding" options={{ headerShown: false, gestureEnabled: false }} />
+              <Stack.Screen
+                name="create-habit"
+                options={{
+                  animation: reduceMotion ? 'none' : 'slide_from_bottom',
+                  headerShown: false,
+                  presentation: 'modal',
+                }}
+              />
+              <Stack.Screen
+                name="create-boss-quest"
+                options={{
+                  animation: reduceMotion ? 'none' : 'slide_from_bottom',
+                  headerShown: false,
+                  presentation: 'modal',
+                }}
+              />
+              <Stack.Screen
+                name="settings"
+                options={{
+                  animation: reduceMotion ? 'none' : 'slide_from_bottom',
+                  headerShown: false,
+                  presentation: 'modal',
+                }}
+              />
+              <Stack.Screen
+                name="edit-profile"
+                options={{
+                  animation: reduceMotion ? 'none' : 'slide_from_bottom',
+                  headerShown: false,
+                  presentation: 'modal',
+                }}
+              />
+              <Stack.Screen
+                name="weekly-review"
+                options={{ animation: reduceMotion ? 'none' : 'slide_from_right', headerShown: false }}
+              />
+              <Stack.Screen
+                name="activity-history"
+                options={{ animation: reduceMotion ? 'none' : 'slide_from_right', headerShown: false }}
+              />
+              <Stack.Screen
+                name="account"
+                options={{ animation: reduceMotion ? 'none' : 'slide_from_right', headerShown: false }}
+              />
+              <Stack.Screen
+                name="admin-lab"
+                options={{ animation: reduceMotion ? 'none' : 'slide_from_right', headerShown: false }}
+              />
+              <Stack.Screen
+                name="dungeon-run"
+                options={{ animation: reduceMotion ? 'none' : 'fade', gestureEnabled: false, headerShown: false }}
+              />
+              <Stack.Screen
+                name="awakening"
+                options={{ animation: reduceMotion ? 'none' : 'fade', gestureEnabled: false, headerShown: false }}
+              />
+              <Stack.Screen
+                name="class-skills"
+                options={{ animation: reduceMotion ? 'none' : 'slide_from_right', headerShown: false }}
+              />
+              <Stack.Screen
+                name="rank-trial"
+                options={{ animation: reduceMotion ? 'none' : 'slide_from_right', headerShown: false }}
+              />
+              <Stack.Screen
+                name="stat-recalibration"
+                options={{ animation: reduceMotion ? 'none' : 'slide_from_right', headerShown: false }}
+              />
+              <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Habit RPG' }} />
+            </Stack>
+            <StatusBar style="light" />
+          </ThemeProvider>
+        </CloudSyncProvider>
+      </SQLiteProvider>
+    </AuthProvider>
   );
 }

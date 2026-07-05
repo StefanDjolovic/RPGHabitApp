@@ -23,7 +23,7 @@ where id = (select id from auth.users where email = 'your-admin-email@example.co
 
 Sign out and sign back in. The Account screen will then show **Admin Lab**.
 
-Each installation keeps one local profile. To keep personal and admin progress fully separate, use the admin account on a fresh app installation or a separate test device. The app blocks a new account from accidentally inheriting another account's local progress.
+Each account receives its own local SQLite profile. Signing out opens a neutral guest profile, and signing back in restores that account's local database and cloud backup. Personal and admin progress therefore remain separate on the same phone.
 
 ## Backup Behavior
 

@@ -1,13 +1,14 @@
 import { DarkTheme, ThemeProvider } from '@react-navigation/native';
 import * as Notifications from 'expo-notifications';
 import { router, Stack, type Href } from 'expo-router';
-import { SQLiteProvider, type SQLiteDatabase, useSQLiteContext } from 'expo-sqlite';
+import { type SQLiteDatabase, useSQLiteContext } from 'expo-sqlite';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useSyncExternalStore } from 'react';
 import 'react-native-reanimated';
 
 import { AuthProvider } from '@/src/auth/auth-context';
 import { CloudSyncProvider } from '@/src/cloud/cloud-sync-context';
+import { AccountDatabaseProvider } from '@/src/database/account-database-provider';
 import { migrateDatabase } from '@/src/database/database';
 import {
   configureHabitReminderActions,
@@ -107,7 +108,7 @@ export default function RootLayout() {
 
   return (
     <AuthProvider>
-      <SQLiteProvider databaseName="habit-rpg.db" onInit={initializeDatabase}>
+      <AccountDatabaseProvider onInit={initializeDatabase}>
         <CloudSyncProvider>
           <NotificationCoordinator />
           <ThemeProvider value={habitRpgTheme}>
@@ -187,7 +188,7 @@ export default function RootLayout() {
             <StatusBar style="light" />
           </ThemeProvider>
         </CloudSyncProvider>
-      </SQLiteProvider>
+      </AccountDatabaseProvider>
     </AuthProvider>
   );
 }

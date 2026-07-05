@@ -122,7 +122,7 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
       if (!metadata) {
         if (localState?.userId && localState.userId !== user.id) {
           setStatus('error');
-          setError('Local progress belongs to another account. Use a fresh app install for a new test account.');
+          setError('The active local profile does not match this account. Sign out and sign in again.');
           return;
         }
         const updatedAt = await uploadCloudBackup(db, user.id);

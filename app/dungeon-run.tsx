@@ -31,7 +31,9 @@ import {
 } from '@/src/database/dungeon-repository';
 import {
   BattleScene,
+  getBattleAnimationDuration,
   type BattleAnimationEvent,
+  type BattleAnimationSpeed,
 } from '@/src/dungeon/battle-scene';
 import {
   combatStatusCatalog,
@@ -190,6 +192,7 @@ export default function DungeonRunScreen() {
   const [acting, setActing] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [animationEvent, setAnimationEvent] = useState<BattleAnimationEvent | null>(null);
+  const [animationSpeed, setAnimationSpeed] = useState<BattleAnimationSpeed>(1);
   const animationSequence = useRef(0);
   const animationTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -201,21 +204,70 @@ export default function DungeonRunScreen() {
     action: CombatAction,
     skillKey: string | undefined,
     feedback: Pick<BattleAnimationEvent, 'playerDamage' | 'enemyDamage' | 'healing'> | null,
+    previousBattle: DungeonBattle,
+    nextBattle: DungeonBattle | null,
+    resultOutcome: 'active' | 'path-choice' | 'room-cleared' | 'cleared' | 'failed' | 'fled',
   ) => {
-    if (!feedback) return;
-    const event = {
+    if (!feedback) return 0;
+    const skillProfile = previousBattle.activeSkillProfiles.find(
+      (profile) => profile.skillKey === skillKey,
+    ) ?? previousBattle.combatProfile;
+    const summonsBefore = previousBattle.snapshot.summons.map((summon) => summon.key);
+    const summonsAfter = nextBattle?.snapshot.summons.map((summon) => summon.key) ?? summonsBefore;
+    const summonCreated = skillKey === 'summoner-wolf'
+      ? 'wolf'
+      : skillKey === 'summoner-wisp'
+        ? 'wisp'
+        : null;
+    const summonDismissed = skillKey === 'summoner-reclaim-essence'
+      ? [...previousBattle.snapshot.summons].sort((first, second) => first.hp - second.hp)[0]?.key ?? null
+      : summonsBefore.find((summon) => !summonsAfter.includes(summon)) ?? null;
+    const summonActors = previousBattle.classKey === 'summoner'
+      ? summonsBefore.filter((summon) =>
+          summon === 'wolf'
+            ? feedback.playerDamage > 0
+            : summon === 'wisp' && feedback.healing > 0,
+        )
+      : [];
+    const enemyActs = resultOutcome === 'active' || resultOutcome === 'failed';
+    const event: BattleAnimationEvent = {
       ...feedback,
       id: ++animationSequence.current,
       action,
       skillKey,
+      actionName: action === 'skill'
+        ? skillProfile.skillName
+        : action === 'attack'
+          ? 'Basic Attack'
+          : action === 'defend'
+            ? 'Defensive Stance'
+            : 'Health Potion',
+      classKey: previousBattle.classKey,
+      accent: skillProfile.accent,
+      enemyIntent: {
+        name: previousBattle.enemyIntent.name,
+        type: previousBattle.enemyIntent.type,
+      },
+      enemyActs,
+      summonActors,
+      summonCreated,
+      summonDismissed,
+      enemyStatus: action === 'skill' && resultOutcome === 'active'
+        ? skillProfile.skillStatus?.type ?? null
+        : null,
+      playerStatus: enemyActs && feedback.enemyDamage > 0
+        ? previousBattle.enemyIntent.status?.type ?? null
+        : null,
     };
     setAnimationEvent(event);
     if (animationTimeout.current) clearTimeout(animationTimeout.current);
+    const duration = getBattleAnimationDuration(reduceMotion, animationSpeed);
     animationTimeout.current = setTimeout(
       () => setAnimationEvent((current) => current?.id === event.id ? null : current),
-      reduceMotion ? 50 : 850,
+      duration + 80,
     );
-  }, [reduceMotion]);
+    return duration;
+  }, [animationSpeed, reduceMotion]);
 
   const loadBattle = useCallback(async () => {
     try {
@@ -286,21 +338,29 @@ export default function DungeonRunScreen() {
 
   const performAction = async (action: CombatAction, skillKey?: string) => {
     if (isActionDisabled(action, skillKey)) return;
+    const previousBattle = battle;
+    if (!previousBattle) return;
     setActing(true);
     setErrorMessage('');
     try {
       const result = await performDungeonBattleAction(db, action, skillKey);
-      showCombatFeedback(action, skillKey, result.feedback);
+      const animationDuration = showCombatFeedback(
+        action,
+        skillKey,
+        result.feedback,
+        previousBattle,
+        result.battle,
+        result.outcome,
+      );
+      void playImpactHaptic('light');
+      if (animationDuration > 0) {
+        await new Promise((resolve) => setTimeout(resolve, animationDuration));
+      }
       if (result.outcome === 'active') {
         setBattle(result.battle);
-        void playImpactHaptic('light');
-        if (!reduceMotion) await new Promise((resolve) => setTimeout(resolve, 620));
       } else if (result.outcome === 'path-choice' || result.outcome === 'room-cleared') {
-        void playImpactHaptic('light');
-        if (!reduceMotion) await new Promise((resolve) => setTimeout(resolve, 500));
         setBattle(result.battle);
       } else {
-        if (!reduceMotion) await new Promise((resolve) => setTimeout(resolve, 540));
         setBattle(null);
         setOutcome(result.outcome);
         setCompletedRun(result.run);
@@ -400,8 +460,20 @@ export default function DungeonRunScreen() {
               ? `${battle.className.toUpperCase()} - ROOM ${battle.roomIndex}/4`
               : 'GATE COMBAT'}
           </Text>
-          <Text style={styles.runName}>{battle?.dungeonName ?? 'Gate Result'}</Text>
+          <Text numberOfLines={1} style={styles.runName}>{battle?.dungeonName ?? 'Gate Result'}</Text>
         </View>
+        <Pressable
+          accessibilityLabel={`Combat animation speed ${animationSpeed}x`}
+          disabled={acting}
+          onPress={() => setAnimationSpeed((current) => current === 1 ? 2 : 1)}
+          style={({ pressed }) => [
+            styles.speedButton,
+            acting && styles.speedButtonDisabled,
+            pressed && !acting && styles.buttonPressed,
+          ]}>
+          <MaterialCommunityIcons color="#8DEAFF" name="fast-forward-outline" size={15} />
+          <Text style={styles.speedText}>{animationSpeed}x</Text>
+        </Pressable>
         <View style={styles.turnBadge}>
           <Text style={styles.turnLabel}>
             {battle && ['combat', 'elite', 'boss'].includes(battle.roomType) ? 'TURN' : 'ROOM'}
@@ -519,6 +591,7 @@ export default function DungeonRunScreen() {
               battle={battle}
               event={animationEvent}
               reduceMotion={reduceMotion}
+              speed={animationSpeed}
             />
             <Text style={styles.enemyRank}>
               {battle.roomType === 'boss'
@@ -805,6 +878,19 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#2B3042',
   },
+  speedButton: {
+    width: 44,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 1,
+    borderRadius: 8,
+    backgroundColor: '#0D1820',
+    borderWidth: 1,
+    borderColor: '#285363',
+  },
+  speedButtonDisabled: { opacity: 0.45 },
+  speedText: { color: '#8DEAFF', fontSize: 8, fontWeight: '900' },
   turnLabel: { color: '#737B94', fontSize: 7, fontWeight: '900' },
   turnValue: { color: '#E6E9F5', fontSize: 14, fontWeight: '900', fontVariant: ['tabular-nums'] },
   routeMap: {

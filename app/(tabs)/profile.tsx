@@ -68,7 +68,7 @@ const attributeOrder: HabitAttribute[] = [
   'creativity',
 ];
 
-type ProfileView = 'overview' | 'growth' | 'journey';
+type ProfileView = 'overview' | 'growth' | 'journey' | 'achievements';
 
 const profileViews: {
   key: ProfileView;
@@ -78,6 +78,7 @@ const profileViews: {
   { key: 'overview', label: 'Overview', icon: 'account-outline' },
   { key: 'growth', label: 'Growth', icon: 'chart-line' },
   { key: 'journey', label: 'Journey', icon: 'map-marker-path' },
+  { key: 'achievements', label: 'Achievements', icon: 'trophy-outline' },
 ];
 
 const attributeMeta: Record<
@@ -564,6 +565,51 @@ export default function ProfileScreen() {
           </View>
         </View>
 
+        <View style={styles.sectionHeader}>
+          <View>
+            <Text style={styles.sectionEyebrow}>LATEST CLEARS</Text>
+            <Text style={styles.sectionTitle}>Recent activity</Text>
+          </View>
+        </View>
+
+        <View style={styles.activityList}>
+          {!loading && recentActivity.length === 0 ? (
+            <View style={styles.emptyActivityCard}>
+              <MaterialCommunityIcons name="calendar-blank" size={25} color="#707894" />
+              <Text style={styles.emptyActivityText}>No completed quests recorded yet.</Text>
+            </View>
+          ) : null}
+
+          {recentActivity.slice(0, 3).map((day) => {
+            const date = formatActivityDate(day.dateKey);
+
+            return (
+              <View key={day.dateKey} style={styles.activityCard}>
+                <View style={styles.activityDateBadge}>
+                  <Text style={styles.activityDateMonth}>{date.month}</Text>
+                  <Text style={styles.activityDateDay}>{date.day}</Text>
+                </View>
+                <View style={styles.activityBody}>
+                  <Text style={styles.activityTitle}>
+                    {day.completedCount} {day.completedCount === 1 ? 'quest' : 'quests'} cleared
+                  </Text>
+                  <View style={styles.activityRewardRow}>
+                    <Text style={styles.activityReward}>+{formatNumber(day.xpEarned)} EXP</Text>
+                    <View style={styles.activityDot} />
+                    <Text style={styles.activityReward}>
+                      +{formatNumber(day.statXpEarned)} Stat XP
+                    </Text>
+                    <View style={styles.activityDot} />
+                    <Text style={styles.activityReward}>
+                      +{formatNumber(day.energyEarned)} Energy
+                    </Text>
+                  </View>
+                </View>
+              </View>
+            );
+          })}
+        </View>
+
           </>
         ) : null}
 
@@ -595,6 +641,12 @@ export default function ProfileScreen() {
             </Pressable>
           ) : null}
         </View>
+
+          </>
+        ) : null}
+
+        {profileView === 'achievements' ? (
+          <>
 
         <View style={styles.sectionHeader}>
           <View>
@@ -731,6 +783,12 @@ export default function ProfileScreen() {
             </View>
           </View>
         ) : null}
+
+          </>
+        ) : null}
+
+        {profileView === 'growth' ? (
+          <>
 
         <View style={styles.sectionHeader}>
           <View>
@@ -1055,51 +1113,6 @@ export default function ProfileScreen() {
           ))}
         </View>
 
-        <View style={styles.sectionHeader}>
-          <View>
-            <Text style={styles.sectionEyebrow}>LATEST CLEARS</Text>
-            <Text style={styles.sectionTitle}>Recent activity</Text>
-          </View>
-        </View>
-
-        <View style={styles.activityList}>
-          {!loading && recentActivity.length === 0 ? (
-            <View style={styles.emptyActivityCard}>
-              <MaterialCommunityIcons name="calendar-blank" size={25} color="#707894" />
-              <Text style={styles.emptyActivityText}>No completed quests recorded yet.</Text>
-            </View>
-          ) : null}
-
-          {recentActivity.map((day) => {
-            const date = formatActivityDate(day.dateKey);
-
-            return (
-              <View key={day.dateKey} style={styles.activityCard}>
-                <View style={styles.activityDateBadge}>
-                  <Text style={styles.activityDateMonth}>{date.month}</Text>
-                  <Text style={styles.activityDateDay}>{date.day}</Text>
-                </View>
-                <View style={styles.activityBody}>
-                  <Text style={styles.activityTitle}>
-                    {day.completedCount} {day.completedCount === 1 ? 'quest' : 'quests'} cleared
-                  </Text>
-                  <View style={styles.activityRewardRow}>
-                    <Text style={styles.activityReward}>+{formatNumber(day.xpEarned)} EXP</Text>
-                    <View style={styles.activityDot} />
-                    <Text style={styles.activityReward}>
-                      +{formatNumber(day.statXpEarned)} Stat XP
-                    </Text>
-                    <View style={styles.activityDot} />
-                    <Text style={styles.activityReward}>
-                      +{formatNumber(day.energyEarned)} Energy
-                    </Text>
-                  </View>
-                </View>
-              </View>
-            );
-          })}
-        </View>
-
           </>
         ) : null}
 
@@ -1181,7 +1194,7 @@ const styles = StyleSheet.create({
   profileViewTabs: {
     width: '100%',
     maxWidth: 520,
-    minHeight: 48,
+    minHeight: 62,
     alignSelf: 'center',
     flexDirection: 'row',
     gap: 6,
@@ -1195,12 +1208,12 @@ const styles = StyleSheet.create({
   profileViewTab: {
     flex: 1,
     minWidth: 0,
-    minHeight: 36,
-    flexDirection: 'row',
+    minHeight: 50,
+    flexDirection: 'column',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 5,
-    paddingHorizontal: 7,
+    gap: 2,
+    paddingHorizontal: 3,
     borderRadius: 6,
   },
   profileViewTabSelected: {
@@ -1209,7 +1222,7 @@ const styles = StyleSheet.create({
   profileViewTabText: {
     minWidth: 0,
     color: '#838CA5',
-    fontSize: 10,
+    fontSize: 8,
     fontWeight: '900',
   },
   profileViewTabTextSelected: { color: '#071018' },

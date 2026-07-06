@@ -14,12 +14,19 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import {
+  getHabitHistoryFilters,
   getHabitHistoryMonth,
+  getHabitHistoryYear,
   getLifetimeHabitHistory,
+  type HabitHistoryFilter,
   type HabitHistoryMonth,
+  type HabitHistoryYear,
   type LifetimeHabitHistory,
 } from '@/src/database/activity-history-repository';
 import { getLocalDateKey, type HabitAttribute } from '@/src/database/habit-repository';
+import { YearlyHistoryView } from '@/src/history/yearly-history-view';
+
+type HistoryView = 'month' | 'year';
 
 const EMPTY_LIFETIME: LifetimeHabitHistory = {
   firstDate: null,
@@ -120,16 +127,37 @@ export default function ActivityHistoryScreen() {
   const insets = useSafeAreaInsets();
   const todayKey = getLocalDateKey();
   const currentMonthKey = todayKey.slice(0, 7);
+  const currentYear = Number(todayKey.slice(0, 4));
+  const [view, setView] = useState<HistoryView>('month');
   const [monthKey, setMonthKey] = useState(currentMonthKey);
+  const [year, setYear] = useState(currentYear);
   const [selectedDate, setSelectedDate] = useState(todayKey);
+  const [selectedHabitId, setSelectedHabitId] = useState<number | null>(null);
+  const [filters, setFilters] = useState<HabitHistoryFilter[]>([]);
   const [lifetime, setLifetime] = useState<LifetimeHabitHistory>(EMPTY_LIFETIME);
   const [history, setHistory] = useState<HabitHistoryMonth | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [yearHistory, setYearHistory] = useState<HabitHistoryYear | null>(null);
+  const [monthLoading, setMonthLoading] = useState(true);
+  const [yearLoading, setYearLoading] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
     let active = true;
-    void getLifetimeHabitHistory(db)
+    void getHabitHistoryFilters(db)
+      .then((result) => {
+        if (active) setFilters(result);
+      })
+      .catch(() => {
+        if (active) setError('Habit filters could not be loaded.');
+      });
+    return () => {
+      active = false;
+    };
+  }, [db]);
+
+  useEffect(() => {
+    let active = true;
+    void getLifetimeHabitHistory(db, selectedHabitId)
       .then((result) => {
         if (active) setLifetime(result);
       })
@@ -139,13 +167,14 @@ export default function ActivityHistoryScreen() {
     return () => {
       active = false;
     };
-  }, [db]);
+  }, [db, selectedHabitId]);
 
   useEffect(() => {
     let active = true;
-    setLoading(true);
+    if (view !== 'month') return;
+    setMonthLoading(true);
     setError('');
-    void getHabitHistoryMonth(db, monthKey)
+    void getHabitHistoryMonth(db, monthKey, selectedHabitId)
       .then((result) => {
         if (!active) return;
         setHistory(result);
@@ -159,14 +188,36 @@ export default function ActivityHistoryScreen() {
         if (active) setError('Habit history could not be loaded.');
       })
       .finally(() => {
-        if (active) setLoading(false);
+        if (active) setMonthLoading(false);
       });
     return () => {
       active = false;
     };
-  }, [currentMonthKey, db, monthKey, todayKey]);
+  }, [currentMonthKey, db, monthKey, selectedHabitId, todayKey, view]);
+
+  useEffect(() => {
+    let active = true;
+    if (view !== 'year') return;
+    setYearLoading(true);
+    setError('');
+    void getHabitHistoryYear(db, year, todayKey, selectedHabitId)
+      .then((result) => {
+        if (active) setYearHistory(result);
+      })
+      .catch(() => {
+        if (active) setError('Yearly habit history could not be loaded.');
+      })
+      .finally(() => {
+        if (active) setYearLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [db, selectedHabitId, todayKey, view, year]);
 
   const firstMonthKey = lifetime.firstDate?.slice(0, 7) ?? currentMonthKey;
+  const firstYear = Number(firstMonthKey.slice(0, 4));
+  const selectedFilter = filters.find((filter) => filter.habitId === selectedHabitId) ?? null;
   const calendarRows = useMemo(() => getCalendarRows(monthKey), [monthKey]);
   const activityByDate = useMemo(
     () => new Map(history?.days.map((day) => [day.dateKey, day]) ?? []),
@@ -179,6 +230,13 @@ export default function ActivityHistoryScreen() {
   const selectedDay = activityByDate.get(selectedDate);
   const canMoveBack = monthKey > firstMonthKey;
   const canMoveForward = monthKey < currentMonthKey;
+  const canMoveYearBack = year > firstYear;
+  const canMoveYearForward = year < currentYear;
+
+  useEffect(() => {
+    setMonthKey((current) => current < firstMonthKey ? firstMonthKey : current);
+    setYear((current) => current < firstYear ? firstYear : current);
+  }, [firstMonthKey, firstYear]);
 
   const moveMonth = (amount: number) => {
     const candidate = shiftMonth(monthKey, amount);
@@ -188,6 +246,22 @@ export default function ActivityHistoryScreen() {
         ? currentMonthKey
         : candidate;
     setMonthKey(next);
+  };
+
+  const moveYear = (amount: number) => {
+    setYear((current) => Math.max(firstYear, Math.min(currentYear, current + amount)));
+  };
+
+  const openMonthFromYear = (nextMonthKey: string) => {
+    setMonthKey(nextMonthKey > currentMonthKey ? currentMonthKey : nextMonthKey);
+    setView('month');
+    setMonthLoading(true);
+  };
+
+  const selectHabit = (habitId: number | null) => {
+    setSelectedHabitId(habitId);
+    if (view === 'month') setMonthLoading(true);
+    else setYearLoading(true);
   };
 
   return (
@@ -221,7 +295,9 @@ export default function ActivityHistoryScreen() {
         start={{ x: 0, y: 0 }}
         style={styles.lifetimePanel}>
         <View style={styles.lifetimeMain}>
-          <Text style={styles.panelLabel}>LIFETIME COMPLETIONS</Text>
+          <Text numberOfLines={1} style={styles.panelLabel}>
+            {selectedFilter ? selectedFilter.title.toUpperCase() : 'LIFETIME COMPLETIONS'}
+          </Text>
           <Text style={styles.lifetimeValue}>{formatNumber(lifetime.totalCompletions)}</Text>
           <Text style={styles.firstRecord}>
             {lifetime.firstDate ? `Since ${formatShortDate(lifetime.firstDate)}` : 'No records yet'}
@@ -235,7 +311,78 @@ export default function ActivityHistoryScreen() {
         </View>
       </LinearGradient>
 
-      <View style={styles.monthToolbar}>
+      <View accessibilityRole="tablist" style={styles.viewControl}>
+        {(['month', 'year'] as const).map((option) => {
+          const selected = view === option;
+          return (
+            <Pressable
+              accessibilityRole="tab"
+              accessibilityState={{ selected }}
+              key={option}
+              onPress={() => {
+                setView(option);
+                if (option === 'month') setMonthLoading(true);
+                else setYearLoading(true);
+                if (option === 'year') setYear(Number(monthKey.slice(0, 4)));
+              }}
+              style={[styles.viewOption, selected && styles.viewOptionSelected]}>
+              <MaterialCommunityIcons
+                color={selected ? '#071018' : '#7E879F'}
+                name={option === 'month' ? 'calendar-month-outline' : 'calendar-range-outline'}
+                size={17}
+              />
+              <Text style={[styles.viewOptionText, selected && styles.viewOptionTextSelected]}>
+                {option === 'month' ? 'Month' : 'Year'}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+
+      <View style={styles.filterSection}>
+        <View style={styles.filterLabelRow}>
+          <MaterialCommunityIcons color="#8B94AA" name="filter-variant" size={16} />
+          <Text style={styles.filterLabel}>HABIT FILTER</Text>
+        </View>
+        <ScrollView
+          contentContainerStyle={styles.filterList}
+          horizontal
+          showsHorizontalScrollIndicator={false}>
+          <Pressable
+            accessibilityState={{ selected: selectedHabitId === null }}
+            onPress={() => selectHabit(null)}
+            style={[styles.filterOption, selectedHabitId === null && styles.filterOptionSelected]}>
+            <MaterialCommunityIcons
+              color={selectedHabitId === null ? '#071018' : '#818AA2'}
+              name="view-grid-outline"
+              size={15}
+            />
+            <Text style={[styles.filterOptionText, selectedHabitId === null && styles.filterOptionTextSelected]}>
+              All habits
+            </Text>
+          </Pressable>
+          {filters.map((filter) => {
+            const selected = selectedHabitId === filter.habitId;
+            return (
+              <Pressable
+                accessibilityState={{ selected }}
+                key={filter.habitId}
+                onPress={() => selectHabit(filter.habitId)}
+                style={[styles.filterOption, selected && styles.filterOptionSelected]}>
+                <Text numberOfLines={1} style={[styles.filterOptionText, selected && styles.filterOptionTextSelected]}>
+                  {filter.title}
+                </Text>
+                <Text style={[styles.filterCount, selected && styles.filterOptionTextSelected]}>
+                  {filter.totalCompletions}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
+      </View>
+
+      {view === 'month' ? (
+        <View style={styles.monthToolbar}>
         <View style={styles.monthNavigation}>
           <Pressable
             accessibilityLabel="Previous year"
@@ -291,9 +438,36 @@ export default function ActivityHistoryScreen() {
             <MaterialCommunityIcons color="#AEB6CF" name="chevron-double-right" size={20} />
           </Pressable>
         </View>
-      </View>
+        </View>
+      ) : (
+        <View style={styles.yearToolbar}>
+          <Pressable
+            accessibilityLabel="Previous year"
+            disabled={!canMoveYearBack}
+            onPress={() => moveYear(-1)}
+            style={({ pressed }) => [
+              styles.navigationButton,
+              !canMoveYearBack && styles.buttonDisabled,
+              pressed && canMoveYearBack && styles.buttonPressed,
+            ]}>
+            <MaterialCommunityIcons color="#AEB6CF" name="chevron-left" size={21} />
+          </Pressable>
+          <Text style={styles.yearTitle}>{year}</Text>
+          <Pressable
+            accessibilityLabel="Next year"
+            disabled={!canMoveYearForward}
+            onPress={() => moveYear(1)}
+            style={({ pressed }) => [
+              styles.navigationButton,
+              !canMoveYearForward && styles.buttonDisabled,
+              pressed && canMoveYearForward && styles.buttonPressed,
+            ]}>
+            <MaterialCommunityIcons color="#AEB6CF" name="chevron-right" size={21} />
+          </Pressable>
+        </View>
+      )}
 
-      {loading ? (
+      {(view === 'month' ? monthLoading : yearLoading) ? (
         <View style={styles.loadingState}>
           <ActivityIndicator color="#7EE7FF" />
         </View>
@@ -302,6 +476,13 @@ export default function ActivityHistoryScreen() {
           <MaterialCommunityIcons color="#FF8A98" name="alert-circle-outline" size={22} />
           <Text style={styles.errorText}>{error}</Text>
         </View>
+      ) : view === 'year' && yearHistory ? (
+        <YearlyHistoryView
+          history={yearHistory}
+          onSelectHabit={(habitId) => selectHabit(habitId)}
+          onSelectMonth={openMonthFromYear}
+          todayKey={todayKey}
+        />
       ) : (
         <>
           <View style={styles.monthSummary}>
@@ -435,7 +616,23 @@ const styles = StyleSheet.create({
   sideValue: { color: '#FFD166', fontSize: 23, fontWeight: '900', fontVariant: ['tabular-nums'] },
   sideLabel: { color: '#969FB7', fontSize: 8, fontWeight: '900', marginTop: 1 },
   sideReward: { color: '#75D7EC', fontSize: 10, fontWeight: '800', marginTop: 13 },
+  viewControl: { height: 44, flexDirection: 'row', gap: 4, padding: 4, borderRadius: 8, backgroundColor: '#0D111C', borderWidth: 1, borderColor: '#252B3D' },
+  viewOption: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, borderRadius: 6 },
+  viewOptionSelected: { backgroundColor: '#7CDFF2' },
+  viewOptionText: { color: '#7E879F', fontSize: 10, fontWeight: '900' },
+  viewOptionTextSelected: { color: '#071018' },
+  filterSection: { gap: 8 },
+  filterLabelRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  filterLabel: { color: '#8B94AA', fontSize: 8, fontWeight: '900' },
+  filterList: { gap: 7, paddingRight: 12 },
+  filterOption: { maxWidth: 210, height: 36, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingHorizontal: 10, borderRadius: 8, backgroundColor: '#101420', borderWidth: 1, borderColor: '#2B3147' },
+  filterOptionSelected: { backgroundColor: '#7CDFF2', borderColor: '#7CDFF2' },
+  filterOptionText: { flexShrink: 1, color: '#818AA2', fontSize: 9, fontWeight: '900' },
+  filterOptionTextSelected: { color: '#071018' },
+  filterCount: { color: '#FFD166', fontSize: 8, fontWeight: '900', fontVariant: ['tabular-nums'] },
   monthToolbar: { minHeight: 44, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+  yearToolbar: { minHeight: 44, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
+  yearTitle: { flex: 1, color: '#ECEAF7', fontSize: 19, fontWeight: '900', textAlign: 'center', fontVariant: ['tabular-nums'] },
   monthNavigation: { flexDirection: 'row', gap: 5 },
   navigationButton: { width: 34, height: 34, borderRadius: 8, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#2B3147', backgroundColor: '#101420' },
   monthTitle: { flex: 1, color: '#ECEAF7', fontSize: 16, fontWeight: '900', textAlign: 'center', minWidth: 0 },

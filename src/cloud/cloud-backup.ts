@@ -41,6 +41,7 @@ const SYNC_TABLES = [
   'stat_point_allocations',
   'stat_recalibration_events',
   'reawakening_quest_events',
+  'dungeon_bestiary_entries',
   'dungeon_battle_sessions',
 ] as const;
 

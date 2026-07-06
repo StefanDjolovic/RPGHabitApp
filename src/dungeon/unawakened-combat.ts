@@ -183,8 +183,9 @@ export function getEnemyIntent(
   turnNumber: number,
   enemyPower = 0,
   dungeonKey = 'ashen-ruins',
+  intentOffset = 0,
 ): EnemyIntent {
-  const safeTurn = Math.max(1, Math.floor(turnNumber));
+  const safeTurn = Math.max(1, Math.floor(turnNumber) + Math.floor(intentOffset));
   const cycle = INTENT_CYCLES[getDungeonDefinition(dungeonKey).combatTheme];
   const definition = cycle[(safeTurn - 1) % cycle.length];
   const baseDamage = definition.type === 'heavy' ? 17 : definition.type === 'attack' ? 9 : 0;
@@ -244,6 +245,7 @@ export function resolveCombatAction(
   passiveSkillKeys: string[] = [],
   enemyName = 'Cinder Warden',
   dungeonKey = 'ashen-ruins',
+  enemyIntentOffset = 0,
 ): CombatResolution {
   if (snapshot.playerHp <= 0 || snapshot.enemyHp <= 0) {
     throw new Error('This battle has already ended.');
@@ -459,7 +461,7 @@ export function resolveCombatAction(
     };
   }
 
-  const intent = getEnemyIntent(snapshot.turnNumber, stats.enemyPower, dungeonKey);
+  const intent = getEnemyIntent(snapshot.turnNumber, stats.enemyPower, dungeonKey, enemyIntentOffset);
   if (hasCombatStatus(enemyStatuses, 'stun')) {
     entries.push({ message: `Stun interrupts ${enemyName}'s action.`, tone: 'system' });
   } else {

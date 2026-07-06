@@ -2,7 +2,7 @@ import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, type Href, useFocusEffect } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -39,6 +39,9 @@ const initialOverview: DungeonOverview = {
     active: false,
   })),
   activeDungeonKey: null,
+  bestiary: [],
+  bestiaryDiscovered: 0,
+  bestiaryTotal: 0,
 };
 
 export default function DungeonScreen() {
@@ -46,6 +49,7 @@ export default function DungeonScreen() {
   const [overview, setOverview] = useState<DungeonOverview>(initialOverview);
   const [loading, setLoading] = useState(true);
   const [enteringDungeonKey, setEnteringDungeonKey] = useState<string | null>(null);
+  const [selectedBestiaryKey, setSelectedBestiaryKey] = useState<string | null>(null);
 
   const loadDungeon = useCallback(async () => {
     try {
@@ -60,6 +64,21 @@ export default function DungeonScreen() {
     useCallback(() => {
       void loadDungeon();
     }, [loadDungeon]),
+  );
+
+  useEffect(() => {
+    if (selectedBestiaryKey || overview.bestiary.length === 0) return;
+    const firstDiscovered = overview.bestiary.find((entry) => entry.discovered);
+    setSelectedBestiaryKey((firstDiscovered ?? overview.bestiary[0]).enemy.key);
+  }, [overview.bestiary, selectedBestiaryKey]);
+
+  const selectedBestiary = useMemo(
+    () =>
+      overview.bestiary.find((entry) => entry.enemy.key === selectedBestiaryKey) ??
+      overview.bestiary.find((entry) => entry.discovered) ??
+      overview.bestiary[0] ??
+      null,
+    [overview.bestiary, selectedBestiaryKey],
   );
 
   const enterDungeon = async (dungeonKey: string) => {
@@ -134,6 +153,106 @@ export default function DungeonScreen() {
             />
           </View>
         </LinearGradient>
+
+        {overview.bestiary.length > 0 ? (
+          <>
+            <View style={styles.sectionHeader}>
+              <View>
+                <Text style={styles.sectionEyebrow}>BESTIARY</Text>
+                <Text style={styles.sectionTitle}>Enemy intel</Text>
+              </View>
+              <View style={styles.bestiaryCountBadge}>
+                <Text style={styles.bestiaryCountText}>
+                  {overview.bestiaryDiscovered}/{overview.bestiaryTotal}
+                </Text>
+              </View>
+            </View>
+
+            <View style={styles.bestiaryPanel}>
+              {selectedBestiary ? (
+                <View style={styles.bestiaryDetail}>
+                  <View
+                    style={[
+                      styles.bestiaryDetailIcon,
+                      selectedBestiary.discovered && {
+                        borderColor: `${selectedBestiary.enemy.accent}77`,
+                      },
+                    ]}>
+                    <MaterialCommunityIcons
+                      color={selectedBestiary.discovered ? selectedBestiary.enemy.accent : '#6E758B'}
+                      name={selectedBestiary.discovered ? selectedBestiary.enemy.icon : 'lock-outline'}
+                      size={26}
+                    />
+                  </View>
+                  <View style={styles.bestiaryDetailBody}>
+                    <Text
+                      style={[
+                        styles.bestiaryRole,
+                        selectedBestiary.discovered && { color: selectedBestiary.enemy.accent },
+                      ]}>
+                      {selectedBestiary.enemy.roleLabel.toUpperCase()} - {selectedBestiary.enemy.title}
+                    </Text>
+                    <Text style={styles.bestiaryName}>
+                      {selectedBestiary.discovered ? selectedBestiary.enemy.name : 'Undiscovered enemy'}
+                    </Text>
+                    <Text style={styles.bestiaryDescription}>
+                      {selectedBestiary.discovered
+                        ? selectedBestiary.enemy.tactic
+                        : 'Enter this gate route to reveal its combat pattern.'}
+                    </Text>
+                    <View style={styles.bestiaryTags}>
+                      <Text style={styles.bestiaryTag}>
+                        {selectedBestiary.discovered
+                          ? selectedBestiary.enemy.combatStyle
+                          : selectedBestiary.enemy.roleLabel}
+                      </Text>
+                      <Text style={styles.bestiaryTag}>
+                        {selectedBestiary.discovered
+                          ? selectedBestiary.enemy.weakness
+                          : selectedBestiary.enemy.dungeonKey}
+                      </Text>
+                      {selectedBestiary.discovered ? (
+                        <Text style={styles.bestiaryTag}>{selectedBestiary.defeats} defeats</Text>
+                      ) : null}
+                    </View>
+                  </View>
+                </View>
+              ) : null}
+
+              <View style={styles.bestiaryGrid}>
+                {overview.bestiary.map((entry) => {
+                  const selected = selectedBestiary?.enemy.key === entry.enemy.key;
+                  return (
+                    <Pressable
+                      accessibilityLabel={entry.discovered ? entry.enemy.name : `${entry.enemy.roleLabel} locked`}
+                      key={entry.enemy.key}
+                      onPress={() => setSelectedBestiaryKey(entry.enemy.key)}
+                      style={({ pressed }) => [
+                        styles.bestiaryTile,
+                        selected && styles.bestiaryTileSelected,
+                        entry.discovered && { borderColor: `${entry.enemy.accent}66` },
+                        pressed && styles.todayLinkPressed,
+                      ]}>
+                      <MaterialCommunityIcons
+                        color={entry.discovered ? entry.enemy.accent : '#596175'}
+                        name={entry.discovered ? entry.enemy.icon : 'lock-outline'}
+                        size={18}
+                      />
+                      <Text
+                        numberOfLines={1}
+                        style={[
+                          styles.bestiaryTileText,
+                          entry.discovered && { color: '#ECEAF7' },
+                        ]}>
+                        {entry.discovered ? entry.enemy.name : entry.enemy.roleLabel}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </View>
+          </>
+        ) : null}
 
         <View style={styles.sectionHeader}>
           <View>
@@ -395,10 +514,87 @@ const styles = StyleSheet.create({
     marginTop: 18,
   },
   energyFill: { height: '100%', borderRadius: 4 },
-  sectionHeader: { marginBottom: 12 },
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    marginBottom: 12,
+  },
   sectionHeaderSecondary: { marginTop: 22, marginBottom: 12 },
   sectionEyebrow: { color: '#9E8EFF', fontSize: 9, fontWeight: '900', letterSpacing: 1.7 },
   sectionTitle: { color: '#F1EFFF', fontSize: 19, fontWeight: '800', marginTop: 4 },
+  bestiaryCountBadge: {
+    minWidth: 58,
+    height: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 11,
+    backgroundColor: 'rgba(126, 231, 255, 0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(126, 231, 255, 0.24)',
+  },
+  bestiaryCountText: { color: '#8DEAFF', fontSize: 11, fontWeight: '900' },
+  bestiaryPanel: {
+    gap: 12,
+    padding: 13,
+    borderRadius: 18,
+    backgroundColor: 'rgba(9, 13, 27, 0.9)',
+    borderWidth: 1,
+    borderColor: '#252D46',
+    marginBottom: 24,
+  },
+  bestiaryDetail: {
+    minHeight: 112,
+    flexDirection: 'row',
+    gap: 12,
+    padding: 12,
+    borderRadius: 15,
+    backgroundColor: 'rgba(16, 20, 36, 0.94)',
+    borderWidth: 1,
+    borderColor: '#29314A',
+  },
+  bestiaryDetailIcon: {
+    width: 50,
+    height: 50,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 14,
+    backgroundColor: 'rgba(8, 11, 24, 0.75)',
+    borderWidth: 1,
+    borderColor: '#303850',
+  },
+  bestiaryDetailBody: { flex: 1, minWidth: 0 },
+  bestiaryRole: { color: '#8E96AD', fontSize: 8, fontWeight: '900', letterSpacing: 1 },
+  bestiaryName: { color: '#F1EEFF', fontSize: 15, fontWeight: '900', marginTop: 3 },
+  bestiaryDescription: { color: '#838CA7', fontSize: 10, lineHeight: 15, fontWeight: '700', marginTop: 5 },
+  bestiaryTags: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 9 },
+  bestiaryTag: {
+    minHeight: 23,
+    paddingHorizontal: 8,
+    paddingTop: 5,
+    borderRadius: 7,
+    color: '#AAB2C7',
+    fontSize: 8,
+    fontWeight: '900',
+    backgroundColor: 'rgba(126, 133, 170, 0.12)',
+    overflow: 'hidden',
+  },
+  bestiaryGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 7 },
+  bestiaryTile: {
+    width: '31%',
+    minHeight: 62,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    padding: 8,
+    borderRadius: 12,
+    backgroundColor: 'rgba(13, 17, 30, 0.96)',
+    borderWidth: 1,
+    borderColor: '#252B3F',
+  },
+  bestiaryTileSelected: { backgroundColor: 'rgba(32, 38, 61, 0.98)', borderColor: '#8DEAFF' },
+  bestiaryTileText: { maxWidth: '100%', color: '#687185', fontSize: 8, fontWeight: '900' },
   gateList: { gap: 12 },
   gateCard: {
     borderRadius: 19,

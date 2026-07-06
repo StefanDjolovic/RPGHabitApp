@@ -1,6 +1,6 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 
-const DATABASE_VERSION = 40;
+const DATABASE_VERSION = 41;
 
 export async function migrateDatabase(db: SQLiteDatabase) {
   await db.execAsync('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
@@ -1186,6 +1186,26 @@ export async function migrateDatabase(db: SQLiteDatabase) {
 
       CREATE INDEX IF NOT EXISTS idx_shop_purchase_offer_date
         ON shop_purchase_events(offer_key, purchased_at);
+    `);
+  }
+
+  if (currentVersion < 41) {
+    await db.execAsync(`
+      ALTER TABLE dungeon_battle_sessions
+        ADD COLUMN boss_phase_active INTEGER NOT NULL DEFAULT 0
+        CHECK (boss_phase_active IN (0, 1));
+
+      CREATE TABLE IF NOT EXISTS dungeon_bestiary_entries (
+        enemy_key TEXT PRIMARY KEY,
+        dungeon_key TEXT NOT NULL,
+        enemy_role TEXT NOT NULL CHECK (enemy_role IN ('scout', 'elite', 'boss')),
+        defeats INTEGER NOT NULL DEFAULT 0 CHECK (defeats >= 0),
+        first_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        last_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_dungeon_bestiary_dungeon
+        ON dungeon_bestiary_entries(dungeon_key, enemy_role);
     `);
   }
 

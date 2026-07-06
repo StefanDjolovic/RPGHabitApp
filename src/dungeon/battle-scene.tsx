@@ -448,8 +448,8 @@ export function BattleScene({
       </View>
 
       <Animated.View style={[styles.enemyActor, enemyStyle]}>
-        <View style={[styles.enemyCore, { borderColor: `${battle.dungeon.accent}99` }]}>
-          <MaterialCommunityIcons color={battle.dungeon.accent} name={battle.dungeon.icon} size={47} />
+        <View style={[styles.enemyCore, { borderColor: `${battle.enemy.accent}99` }]}>
+          <MaterialCommunityIcons color={battle.enemy.accent} name={battle.enemy.icon} size={47} />
           <Animated.View style={[styles.enemyFlash, enemyFlashStyle]} />
         </View>
         <Text numberOfLines={1} style={styles.actorLabel}>TARGET</Text>

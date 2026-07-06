@@ -14,6 +14,13 @@ import {
   type DungeonDefinition,
 } from '@/src/dungeon/dungeon-catalog';
 import {
+  getAllDungeonEnemies,
+  getDungeonEnemy,
+  getDungeonEnemyRole,
+  type DungeonEnemyDefinition,
+  type DungeonEnemyRole,
+} from '@/src/dungeon/enemy-bestiary';
+import {
   getClassCombatProfile,
   type ClassCombatProfile,
 } from '@/src/dungeon/class-combat';
@@ -76,6 +83,9 @@ export type DungeonOverview = {
   recentRuns: DungeonRun[];
   dungeons: DungeonAvailability[];
   activeDungeonKey: string | null;
+  bestiary: DungeonBestiaryEntry[];
+  bestiaryDiscovered: number;
+  bestiaryTotal: number;
 };
 
 export type DungeonAvailability = {
@@ -93,12 +103,14 @@ export type DungeonBattle = {
   difficulty: string;
   bossName: string;
   dungeon: DungeonDefinition;
+  enemy: DungeonEnemyDefinition;
   enemyName: string;
   roomIndex: number;
   roomType: DungeonRoomType;
   routeKey: DungeonPath | null;
   roomsCleared: number;
   interimGold: number;
+  bossPhaseActive: boolean;
   classKey: string;
   className: string;
   combatProfile: ClassCombatProfile;
@@ -110,6 +122,14 @@ export type DungeonBattle = {
   stats: UnawakenedCombatStats;
   enemyIntent: EnemyIntent;
   potionCount: number;
+};
+
+export type DungeonBestiaryEntry = {
+  enemy: DungeonEnemyDefinition;
+  discovered: boolean;
+  defeats: number;
+  firstSeenAt: string | null;
+  lastSeenAt: string | null;
 };
 
 export type DungeonBattleActionResult = {
@@ -126,6 +146,14 @@ export type DungeonBattleActionResult = {
 type TotalRow = { total: number };
 type DungeonAttemptRow = { dungeonKey: string; total: number };
 type DungeonRunRow = Omit<DungeonRun, 'rewardName' | 'className'>;
+type DungeonBestiaryRow = {
+  enemyKey: string;
+  dungeonKey: string;
+  enemyRole: DungeonEnemyRole;
+  defeats: number;
+  firstSeenAt: string;
+  lastSeenAt: string;
+};
 
 type DungeonBattleSessionRow = {
   clientRunId: string;
@@ -162,6 +190,7 @@ type DungeonBattleSessionRow = {
   bossMaxEnemyHp: number;
   turnsElapsed: number;
   interimGold: number;
+  bossPhaseActive: number;
 };
 
 const sessionSelect = `SELECT
@@ -198,7 +227,8 @@ const sessionSelect = `SELECT
   enemy_name AS enemyName,
   boss_max_enemy_hp AS bossMaxEnemyHp,
   turns_elapsed AS turnsElapsed,
-  interim_gold AS interimGold
+  interim_gold AS interimGold,
+  boss_phase_active AS bossPhaseActive
 FROM dungeon_battle_sessions
 WHERE id = 1`;
 
@@ -295,13 +325,18 @@ function getSessionSkillKeys(
 }
 
 function getSessionStats(row: DungeonBattleSessionRow): UnawakenedCombatStats {
+  const enemyRole = getDungeonEnemyRole(row.roomType);
+  const enemy = enemyRole ? getDungeonEnemy(row.dungeonKey, enemyRole) : null;
+  const phasePowerBonus =
+    enemy?.phase && row.bossPhaseActive === 1 ? enemy.phase.powerBonus : 0;
+
   return {
     maxPlayerHp: row.maxPlayerHp,
     maxEnemyHp: row.maxEnemyHp,
     basicDamage: row.basicDamage,
     skillDamage: row.skillDamage,
     potionHealing: row.potionHealing,
-    enemyPower: row.enemyPower,
+    enemyPower: row.enemyPower + (enemy?.powerBonus ?? 0) + phasePowerBonus,
     defense: row.defense,
   };
 }
@@ -318,6 +353,83 @@ function getSessionSnapshot(row: DungeonBattleSessionRow): CombatSnapshot {
     summons: parseSummons(row.summons),
     log: parseCombatLog(row.combatLog),
   };
+}
+
+function getSessionEnemy(row: DungeonBattleSessionRow) {
+  const role = getDungeonEnemyRole(row.roomType);
+  return role ? getDungeonEnemy(row.dungeonKey, role) : getDungeonEnemy(row.dungeonKey, 'scout');
+}
+
+function getSessionIntentOffset(row: DungeonBattleSessionRow) {
+  const enemy = getSessionEnemy(row);
+  const phaseOffset =
+    enemy.phase && row.bossPhaseActive === 1 ? enemy.phase.intentOffsetBonus : 0;
+  return enemy.intentOffset + phaseOffset;
+}
+
+function getSessionEnemyIntent(
+  row: DungeonBattleSessionRow,
+  snapshot: CombatSnapshot,
+  stats: UnawakenedCombatStats,
+) {
+  return getEnemyIntent(
+    snapshot.turnNumber,
+    stats.enemyPower,
+    row.dungeonKey,
+    getSessionIntentOffset(row),
+  );
+}
+
+function appendSessionLog(
+  log: CombatLogEntry[],
+  entries: Omit<CombatLogEntry, 'id'>[],
+  idPrefix: string,
+) {
+  const nextEntries = entries.map((entry, index) => ({
+    ...entry,
+    id: `${idPrefix}-${index}-${entry.tone}`,
+  }));
+  return [...log, ...nextEntries].slice(-8);
+}
+
+async function recordBestiaryEncounter(
+  txn: SQLiteDatabase,
+  dungeonKey: string,
+  role: DungeonEnemyRole,
+  defeated: boolean,
+) {
+  const enemy = getDungeonEnemy(dungeonKey, role);
+  await txn.runAsync(
+    `INSERT INTO dungeon_bestiary_entries (
+       enemy_key,
+       dungeon_key,
+       enemy_role,
+       defeats,
+       first_seen_at,
+       last_seen_at
+     ) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+     ON CONFLICT(enemy_key) DO UPDATE SET
+       defeats = defeats + excluded.defeats,
+       last_seen_at = CURRENT_TIMESTAMP`,
+    enemy.key,
+    enemy.dungeonKey,
+    enemy.role,
+    defeated ? 1 : 0,
+  );
+}
+
+function toBestiaryEntries(rows: DungeonBestiaryRow[]): DungeonBestiaryEntry[] {
+  const rowMap = new Map(rows.map((row) => [row.enemyKey, row]));
+  return getAllDungeonEnemies().map((enemy) => {
+    const row = rowMap.get(enemy.key);
+    return {
+      enemy,
+      discovered: Boolean(row),
+      defeats: Math.max(0, row?.defeats ?? 0),
+      firstSeenAt: row?.firstSeenAt ?? null,
+      lastSeenAt: row?.lastSeenAt ?? null,
+    };
+  });
 }
 
 async function getDungeonEnergyAvailable(db: SQLiteDatabase) {
@@ -383,7 +495,7 @@ async function getRunById(db: SQLiteDatabase, runId: number) {
 
 export async function getDungeonOverview(db: SQLiteDatabase): Promise<DungeonOverview> {
   const firstDungeon = getDungeonDefinition('ashen-ruins');
-  const [energyAvailable, clearsRow, attemptRows, activeRow, runRows, rankRow] = await Promise.all([
+  const [energyAvailable, clearsRow, attemptRows, activeRow, runRows, rankRow, bestiaryRows] = await Promise.all([
     getDungeonEnergyAvailable(db),
     db.getFirstAsync<TotalRow>(
       `SELECT COUNT(*) AS total
@@ -427,6 +539,16 @@ export async function getDungeonOverview(db: SQLiteDatabase): Promise<DungeonOve
     db.getFirstAsync<{ rankKey: string }>(
       'SELECT current_rank_key AS rankKey FROM player_rank_state WHERE id = 1',
     ),
+    db.getAllAsync<DungeonBestiaryRow>(
+      `SELECT
+         enemy_key AS enemyKey,
+         dungeon_key AS dungeonKey,
+         enemy_role AS enemyRole,
+         defeats,
+         first_seen_at AS firstSeenAt,
+         last_seen_at AS lastSeenAt
+       FROM dungeon_bestiary_entries`,
+    ),
   ]);
   const attemptMap = new Map(attemptRows.map((row) => [row.dungeonKey, row.total]));
   const hasActiveBattle = activeRow !== null;
@@ -444,6 +566,8 @@ export async function getDungeonOverview(db: SQLiteDatabase): Promise<DungeonOve
     };
   });
   const firstAvailability = availability.find((entry) => entry.dungeon.key === firstDungeon.key);
+  const bestiary = toBestiaryEntries(bestiaryRows);
+  const bestiaryDiscovered = bestiary.filter((entry) => entry.discovered).length;
 
   return {
     energyAvailable,
@@ -454,6 +578,9 @@ export async function getDungeonOverview(db: SQLiteDatabase): Promise<DungeonOve
     recentRuns: runRows.map(toDungeonRun),
     dungeons: availability,
     activeDungeonKey: activeRow?.dungeonKey ?? null,
+    bestiary,
+    bestiaryDiscovered,
+    bestiaryTotal: bestiary.length,
   };
 }
 
@@ -477,6 +604,7 @@ export async function getActiveDungeonBattle(
   );
   const combatProfile = activeSkillProfiles[0] ?? getClassCombatProfile(row.classKey);
   const dungeon = getDungeonDefinition(row.dungeonKey);
+  const enemy = getSessionEnemy(row);
 
   return {
     dungeonKey: row.dungeonKey,
@@ -484,12 +612,14 @@ export async function getActiveDungeonBattle(
     difficulty: row.difficulty,
     bossName: dungeon.bossName,
     dungeon,
+    enemy,
     enemyName: row.enemyName,
     roomIndex: row.roomIndex,
     roomType: row.roomType,
     routeKey: row.routeKey,
     roomsCleared: row.roomsCleared,
     interimGold: row.interimGold,
+    bossPhaseActive: row.bossPhaseActive === 1,
     classKey: row.classKey,
     className: combatProfile.className,
     combatProfile,
@@ -499,7 +629,7 @@ export async function getActiveDungeonBattle(
     isTrialEntry: row.energyCost === 0,
     snapshot,
     stats,
-    enemyIntent: getEnemyIntent(snapshot.turnNumber, stats.enemyPower, row.dungeonKey),
+    enemyIntent: getSessionEnemyIntent(row, snapshot, stats),
     potionCount: Math.max(0, potionRow?.quantity ?? 0),
   };
 }
@@ -564,13 +694,14 @@ export async function beginDungeonBattle(
       enemyPower: baseStats.enemyPower + dungeon.enemyPowerBonus,
     };
     const bossMaxEnemyHp = stats.maxEnemyHp;
-    const scoutMaxEnemyHp = Math.max(36, Math.round(bossMaxEnemyHp * 0.62));
+    const scoutEnemy = getDungeonEnemy(dungeon.key, 'scout');
+    const scoutMaxEnemyHp = Math.max(36, Math.round(bossMaxEnemyHp * scoutEnemy.hpMultiplier));
     const snapshot: CombatSnapshot = {
       ...createCombatSnapshot(stats, combatProfile),
       enemyHp: scoutMaxEnemyHp,
       log: [{
         id: 'system-entry',
-        message: `${dungeon.scoutName} guards the first fork.`,
+        message: `${scoutEnemy.name} guards the first fork. ${scoutEnemy.tactic}`,
         tone: 'system',
       }],
     };
@@ -638,11 +769,12 @@ export async function beginDungeonBattle(
       'combat',
       null,
       0,
-      dungeon.scoutName,
+      scoutEnemy.name,
       bossMaxEnemyHp,
       0,
       0,
     );
+    await recordBestiaryEncounter(txn, dungeon.key, 'scout', false);
   };
 
   if (process.env.EXPO_OS === 'web') {
@@ -697,11 +829,12 @@ async function prepareDungeonEncounter(
   roomsCleared: number,
   leadMessage?: string,
 ) {
-  const dungeon = getDungeonDefinition(row.dungeonKey);
-  const enemyName = roomType === 'elite' ? dungeon.eliteName : dungeon.bossName;
+  const enemyRole = roomType === 'elite' ? 'elite' : 'boss';
+  const enemy = getDungeonEnemy(row.dungeonKey, enemyRole);
+  const enemyName = enemy.name;
   const maxEnemyHp = roomType === 'elite'
-    ? Math.max(48, Math.round(row.bossMaxEnemyHp * 0.88))
-    : row.bossMaxEnemyHp;
+    ? Math.max(48, Math.round(row.bossMaxEnemyHp * enemy.hpMultiplier))
+    : Math.max(64, Math.round(row.bossMaxEnemyHp * enemy.hpMultiplier));
   const roomIndex = roomType === 'elite' ? 3 : 4;
   const log: CombatLogEntry[] = [
     ...(leadMessage ? [{
@@ -712,8 +845,8 @@ async function prepareDungeonEncounter(
     {
       id: `room-${roomIndex}-entry`,
       message: roomType === 'elite'
-        ? `${dungeon.eliteName} blocks the risky passage.`
-        : `${dungeon.bossName} descends before the final gate.`,
+        ? `${enemy.name} blocks the risky passage. ${enemy.tactic}`
+        : `${enemy.name} descends before the final gate. ${enemy.tactic}`,
       tone: 'system',
     },
   ];
@@ -728,6 +861,7 @@ async function prepareDungeonEncounter(
          max_enemy_hp = ?,
          turn_number = 1,
          skill_cooldown = 0,
+         boss_phase_active = 0,
          player_statuses = '[]',
          enemy_statuses = '[]',
          combat_log = ?,
@@ -741,6 +875,7 @@ async function prepareDungeonEncounter(
     maxEnemyHp,
     JSON.stringify(log),
   );
+  await recordBestiaryEncounter(txn, row.dungeonKey, enemyRole, false);
 }
 
 export async function chooseDungeonPath(db: SQLiteDatabase, path: DungeonPath) {
@@ -1159,7 +1294,23 @@ export async function performDungeonBattleAction(
       passiveSkillKeys,
       row.enemyName,
       row.dungeonKey,
+      getSessionIntentOffset(row),
     );
+    const bossEnemy = row.roomType === 'boss' ? getDungeonEnemy(row.dungeonKey, 'boss') : null;
+    const shouldTriggerBossPhase = Boolean(
+      bossEnemy?.phase &&
+        row.bossPhaseActive !== 1 &&
+        resolution.outcome === 'active' &&
+        resolution.snapshot.enemyHp <= Math.floor(row.maxEnemyHp * bossEnemy.phase.thresholdRatio),
+    );
+    const bossPhaseActive = row.bossPhaseActive === 1 || shouldTriggerBossPhase;
+    if (shouldTriggerBossPhase && bossEnemy?.phase) {
+      resolution.snapshot.log = appendSessionLog(
+        resolution.snapshot.log,
+        [{ message: bossEnemy.phase.message, tone: 'enemy' }],
+        'boss-phase',
+      );
+    }
     feedback = {
       playerDamage: resolution.playerDamage,
       enemyDamage: resolution.enemyDamage,
@@ -1178,6 +1329,7 @@ export async function performDungeonBattleAction(
              player_statuses = ?,
              enemy_statuses = ?,
              summons = ?,
+             boss_phase_active = ?,
              damage_taken = damage_taken + ?,
              combat_log = ?,
              updated_at = CURRENT_TIMESTAMP
@@ -1190,6 +1342,7 @@ export async function performDungeonBattleAction(
         JSON.stringify(resolution.snapshot.playerStatuses),
         JSON.stringify(resolution.snapshot.enemyStatuses),
         JSON.stringify(resolution.snapshot.summons),
+        bossPhaseActive ? 1 : 0,
         resolution.enemyDamage,
         JSON.stringify(resolution.snapshot.log),
       );
@@ -1207,6 +1360,7 @@ export async function performDungeonBattleAction(
       enemyStatuses: JSON.stringify(resolution.snapshot.enemyStatuses),
       summons: JSON.stringify(resolution.snapshot.summons),
       damageTaken: row.damageTaken + resolution.enemyDamage,
+      bossPhaseActive: bossPhaseActive ? 1 : 0,
     };
 
     if (resolution.outcome === 'failed') {
@@ -1215,6 +1369,7 @@ export async function performDungeonBattleAction(
     }
 
     if (row.roomType === 'combat') {
+      await recordBestiaryEncounter(txn, row.dungeonKey, 'scout', true);
       await recordDungeonRoomEvent(txn, row, 1, 'combat', 'cleared');
       await txn.runAsync(
         `UPDATE dungeon_battle_sessions
@@ -1250,6 +1405,7 @@ export async function performDungeonBattleAction(
 
     if (row.roomType === 'elite') {
       const dungeon = getDungeonDefinition(row.dungeonKey);
+      await recordBestiaryEncounter(txn, row.dungeonKey, 'elite', true);
       await grantGold(
         txn,
         4,
@@ -1309,6 +1465,7 @@ export async function performDungeonBattleAction(
     }
 
     const clearedRooms = Math.min(4, Math.max(1, row.roomsCleared + 1));
+    await recordBestiaryEncounter(txn, row.dungeonKey, 'boss', true);
     await recordDungeonRoomEvent(txn, row, 4, 'boss', 'cleared');
     completedRunId = await finalizeDungeonBattle(
       txn,

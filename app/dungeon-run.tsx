@@ -572,13 +572,27 @@ export default function DungeonRunScreen() {
               speed={animationSpeed}
             />
             <Text style={styles.enemyRank}>
-              {battle.roomType === 'boss'
+              {battle.bossPhaseActive && battle.enemy.phase
+                ? battle.enemy.phase.name.toUpperCase()
+                : battle.roomType === 'boss'
                 ? `${battle.dungeon.rank.toUpperCase()} BOSS`
                 : battle.roomType === 'elite'
                   ? 'ELITE ENCOUNTER'
                   : 'NORMAL ENCOUNTER'}
             </Text>
             <Text style={styles.enemyName}>{battle.enemyName}</Text>
+            <View style={styles.enemyIntelRow}>
+              <View style={[styles.enemyIntelChip, { borderColor: `${battle.enemy.accent}66` }]}>
+                <MaterialCommunityIcons color={battle.enemy.accent} name={battle.enemy.icon} size={12} />
+                <Text style={[styles.enemyIntelText, { color: battle.enemy.accent }]}>
+                  {battle.enemy.combatStyle}
+                </Text>
+              </View>
+              <View style={styles.enemyIntelChip}>
+                <MaterialCommunityIcons color="#AAB2C7" name="target-account" size={12} />
+                <Text style={styles.enemyIntelText}>{battle.enemy.weakness}</Text>
+              </View>
+            </View>
             <View style={styles.hpHeader}>
               <Text style={styles.hpLabel}>ENEMY HP</Text>
               <Text style={styles.hpValue}>
@@ -586,7 +600,7 @@ export default function DungeonRunScreen() {
               </Text>
             </View>
             <HealthBar
-              color="#FF786D"
+              color={battle.enemy.accent}
               current={battle.snapshot.enemyHp}
               maximum={battle.stats.maxEnemyHp}
               reduceMotion={reduceMotion}
@@ -995,6 +1009,27 @@ const styles = StyleSheet.create({
   },
   enemyRank: { color: '#D98579', fontSize: 8, fontWeight: '900', letterSpacing: 1.5, marginTop: 13 },
   enemyName: { color: '#FFF1EE', fontSize: 23, fontWeight: '900', marginTop: 3 },
+  enemyIntelRow: {
+    width: '100%',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    gap: 6,
+    marginTop: 9,
+  },
+  enemyIntelChip: {
+    minHeight: 26,
+    maxWidth: '100%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 8,
+    borderRadius: 7,
+    backgroundColor: '#151827',
+    borderWidth: 1,
+    borderColor: '#31374C',
+  },
+  enemyIntelText: { color: '#AAB2C7', fontSize: 8, fontWeight: '900' },
   hpHeader: {
     width: '100%',
     flexDirection: 'row',

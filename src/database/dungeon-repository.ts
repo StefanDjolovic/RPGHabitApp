@@ -23,6 +23,11 @@ import {
   type CombatStatusType,
 } from '@/src/dungeon/combat-statuses';
 import {
+  isFinalGateAction,
+  isSanctuaryAction,
+  type DungeonInterludeAction,
+} from '@/src/dungeon/expedition-events';
+import {
   createCombatSnapshot,
   getEnemyIntent,
   getUnawakenedCombatStats,
@@ -690,6 +695,7 @@ async function prepareDungeonEncounter(
   row: DungeonBattleSessionRow,
   roomType: 'elite' | 'boss',
   roomsCleared: number,
+  leadMessage?: string,
 ) {
   const dungeon = getDungeonDefinition(row.dungeonKey);
   const enemyName = roomType === 'elite' ? dungeon.eliteName : dungeon.bossName;
@@ -697,13 +703,20 @@ async function prepareDungeonEncounter(
     ? Math.max(48, Math.round(row.bossMaxEnemyHp * 0.88))
     : row.bossMaxEnemyHp;
   const roomIndex = roomType === 'elite' ? 3 : 4;
-  const log: CombatLogEntry[] = [{
-    id: `room-${roomIndex}-entry`,
-    message: roomType === 'elite'
-      ? `${dungeon.eliteName} blocks the risky passage.`
-      : `${dungeon.bossName} descends before the final gate.`,
-    tone: 'system',
-  }];
+  const log: CombatLogEntry[] = [
+    ...(leadMessage ? [{
+      id: `room-${roomIndex}-preparation`,
+      message: leadMessage,
+      tone: 'system' as const,
+    }] : []),
+    {
+      id: `room-${roomIndex}-entry`,
+      message: roomType === 'elite'
+        ? `${dungeon.eliteName} blocks the risky passage.`
+        : `${dungeon.bossName} descends before the final gate.`,
+      tone: 'system',
+    },
+  ];
 
   await txn.runAsync(
     `UPDATE dungeon_battle_sessions
@@ -739,10 +752,6 @@ export async function chooseDungeonPath(db: SQLiteDatabase, path: DungeonPath) {
 
     if (path === 'safe') {
       const dungeon = getDungeonDefinition(row.dungeonKey);
-      const healing = Math.min(
-        Math.ceil(row.maxPlayerHp * 0.35),
-        row.maxPlayerHp - row.playerHp,
-      );
       await txn.runAsync(
         `UPDATE dungeon_battle_sessions
          SET route_key = 'safe',
@@ -750,21 +759,25 @@ export async function chooseDungeonPath(db: SQLiteDatabase, path: DungeonPath) {
              room_type = 'event',
              rooms_cleared = 2,
              enemy_name = ?,
-             player_hp = player_hp + ?,
              player_statuses = '[]',
              enemy_statuses = '[]',
              combat_log = ?,
              updated_at = CURRENT_TIMESTAMP
          WHERE id = 1`,
         dungeon.eventName,
-        healing,
         JSON.stringify([{
-          id: 'safe-rest',
-          message: `The Rest Room restores ${healing} HP.`,
+          id: 'sanctuary-choice',
+          message: 'The sanctuary offers rest, a shrine and a suspicious hidden cache.',
           tone: 'system',
         }]),
       );
-      await recordDungeonRoomEvent(txn, { ...row, routeKey: 'safe' }, 2, 'rest', 'resolved');
+      await recordDungeonRoomEvent(
+        txn,
+        { ...row, routeKey: 'safe' },
+        2,
+        'safe-route',
+        'resolved',
+      );
       return;
     }
 
@@ -814,41 +827,210 @@ export async function chooseDungeonPath(db: SQLiteDatabase, path: DungeonPath) {
   return getActiveDungeonBattle(db);
 }
 
-export async function continueDungeonRoute(db: SQLiteDatabase) {
-  const continueRoute = async (txn: SQLiteDatabase) => {
+export async function resolveDungeonInterlude(
+  db: SQLiteDatabase,
+  action: DungeonInterludeAction,
+) {
+  const resolveInterlude = async (txn: SQLiteDatabase) => {
     const row = await txn.getFirstAsync<DungeonBattleSessionRow>(sessionSelect);
     if (!row || (row.roomType !== 'event' && row.roomType !== 'boss_ready')) {
-      throw new Error('There is no dungeon room to continue.');
+      throw new Error('There is no expedition decision to resolve.');
     }
 
     if (row.roomType === 'event') {
-      await grantGold(
-        txn,
-        2,
-        'dungeon_event',
-        row.clientRunId,
-        `dungeon-event-gold-${row.clientRunId}`,
+      if (!isSanctuaryAction(action)) throw new Error('This sanctuary action is not available.');
+
+      if (action === 'rest') {
+        const healing = Math.min(
+          Math.ceil(row.maxPlayerHp * 0.4),
+          row.maxPlayerHp - row.playerHp,
+        );
+        await txn.runAsync(
+          `UPDATE dungeon_battle_sessions
+           SET player_hp = player_hp + ?,
+               player_statuses = '[]',
+               rooms_cleared = 3,
+               updated_at = CURRENT_TIMESTAMP
+           WHERE id = 1`,
+          healing,
+        );
+        await recordDungeonRoomEvent(txn, row, 3, 'camp', 'resolved');
+        await prepareDungeonEncounter(
+          txn,
+          row,
+          'boss',
+          3,
+          `Camp restores ${healing} HP and clears every harmful effect.`,
+        );
+        return;
+      }
+
+      if (action === 'invoke-shrine') {
+        const basicBonus = Math.max(2, Math.ceil(row.basicDamage * 0.12));
+        const skillBonus = Math.max(2, Math.ceil(row.skillDamage * 0.15));
+        await txn.runAsync(
+          `UPDATE dungeon_battle_sessions
+           SET basic_damage = basic_damage + ?,
+               skill_damage = skill_damage + ?,
+               equipment_defense = equipment_defense + 2,
+               rooms_cleared = 3,
+               updated_at = CURRENT_TIMESTAMP
+           WHERE id = 1`,
+          basicBonus,
+          skillBonus,
+        );
+        await recordDungeonRoomEvent(txn, row, 3, 'shrine', 'resolved');
+        await prepareDungeonEncounter(
+          txn,
+          row,
+          'boss',
+          3,
+          `The shrine grants +${basicBonus} Attack, +${skillBonus} Skill Power and +2 Defense.`,
+        );
+        return;
+      }
+
+      const roll = await txn.getFirstAsync<{ value: number }>(
+        'SELECT abs(random() % 100) AS value',
+      );
+      const cacheFound = (roll?.value ?? 0) < 65;
+      if (cacheFound) {
+        const dungeon = getDungeonDefinition(row.dungeonKey);
+        await grantGold(
+          txn,
+          5,
+          'dungeon_event',
+          row.clientRunId,
+          `dungeon-cache-gold-${row.clientRunId}`,
+        );
+        await grantInventoryItem(
+          txn,
+          dungeon.treasureItemKey,
+          1,
+          'dungeon_event',
+          row.clientRunId,
+          `dungeon-cache-item-${row.clientRunId}`,
+        );
+        await txn.runAsync(
+          `UPDATE dungeon_battle_sessions
+           SET interim_gold = interim_gold + 5,
+               rooms_cleared = 3,
+               updated_at = CURRENT_TIMESTAMP
+           WHERE id = 1`,
+        );
+        await recordDungeonRoomEvent(
+          txn,
+          row,
+          3,
+          'hidden-cache',
+          'resolved',
+          5,
+          dungeon.treasureItemKey,
+          1,
+        );
+        await prepareDungeonEncounter(
+          txn,
+          row,
+          'boss',
+          3,
+          `The hidden cache yields 5 Gold and 1 ${getItemDefinition(dungeon.treasureItemKey).name}.`,
+        );
+        return;
+      }
+
+      const trapDamage = Math.min(
+        Math.max(1, Math.ceil(row.maxPlayerHp * 0.15)),
+        Math.max(0, row.playerHp - 1),
       );
       await txn.runAsync(
         `UPDATE dungeon_battle_sessions
-         SET interim_gold = interim_gold + 2,
+         SET player_hp = player_hp - ?,
+             damage_taken = damage_taken + ?,
              rooms_cleared = 3,
              updated_at = CURRENT_TIMESTAMP
          WHERE id = 1`,
+        trapDamage,
+        trapDamage,
       );
-      const eventRow = { ...row, interimGold: row.interimGold + 2 };
-      await recordDungeonRoomEvent(txn, eventRow, 3, 'event', 'resolved', 2);
-      await prepareDungeonEncounter(txn, eventRow, 'boss', 3);
+      await recordDungeonRoomEvent(txn, row, 3, 'hidden-trap', 'resolved');
+      await prepareDungeonEncounter(
+        txn,
+        row,
+        'boss',
+        3,
+        `The cache was trapped. You lose ${trapDamage} HP before the boss.`,
+      );
       return;
     }
 
-    await prepareDungeonEncounter(txn, row, 'boss', row.roomsCleared);
+    if (!isFinalGateAction(action)) throw new Error('This final gate action is not available.');
+    if (action === 'field-dressing') {
+      const healing = Math.min(
+        Math.ceil(row.maxPlayerHp * 0.2),
+        row.maxPlayerHp - row.playerHp,
+      );
+      await txn.runAsync(
+        `UPDATE dungeon_battle_sessions
+         SET player_hp = player_hp + ?,
+             player_statuses = '[]',
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = 1`,
+        healing,
+      );
+      await recordDungeonRoomEvent(txn, row, 3, 'field-dressing', 'resolved');
+      await prepareDungeonEncounter(
+        txn,
+        row,
+        'boss',
+        row.roomsCleared,
+        `Field dressing restores ${healing} HP before the final chamber.`,
+      );
+      return;
+    }
+
+    if (action === 'blood-oath') {
+      const hpCost = Math.min(
+        Math.max(1, Math.ceil(row.maxPlayerHp * 0.15)),
+        Math.max(0, row.playerHp - 1),
+      );
+      const basicBonus = Math.max(2, Math.ceil(row.basicDamage * 0.2));
+      const skillBonus = Math.max(2, Math.ceil(row.skillDamage * 0.2));
+      await txn.runAsync(
+        `UPDATE dungeon_battle_sessions
+         SET player_hp = player_hp - ?,
+             basic_damage = basic_damage + ?,
+             skill_damage = skill_damage + ?,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = 1`,
+        hpCost,
+        basicBonus,
+        skillBonus,
+      );
+      await recordDungeonRoomEvent(txn, row, 3, 'blood-oath', 'resolved');
+      await prepareDungeonEncounter(
+        txn,
+        row,
+        'boss',
+        row.roomsCleared,
+        `The Blood Oath costs ${hpCost} HP and grants +${basicBonus} Attack and +${skillBonus} Skill Power.`,
+      );
+      return;
+    }
+
+    await recordDungeonRoomEvent(txn, row, 3, 'final-gate', 'resolved');
+    await prepareDungeonEncounter(
+      txn,
+      row,
+      'boss',
+      row.roomsCleared,
+      'You open the final gate without changing your current setup.',
+    );
   };
 
   if (process.env.EXPO_OS === 'web') {
-    await db.withTransactionAsync(() => continueRoute(db));
+    await db.withTransactionAsync(() => resolveInterlude(db));
   } else {
-    await db.withExclusiveTransactionAsync(continueRoute);
+    await db.withExclusiveTransactionAsync(resolveInterlude);
   }
   return getActiveDungeonBattle(db);
 }

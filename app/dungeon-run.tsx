@@ -21,10 +21,10 @@ import Animated, {
 
 import {
   chooseDungeonPath,
-  continueDungeonRoute,
   fleeDungeonBattle,
   getActiveDungeonBattle,
   performDungeonBattleAction,
+  resolveDungeonInterlude,
   type DungeonBattle,
   type DungeonPath,
   type DungeonRun,
@@ -39,6 +39,11 @@ import {
   combatStatusCatalog,
   type CombatStatus,
 } from '@/src/dungeon/combat-statuses';
+import {
+  DungeonExpeditionStatus,
+  DungeonInterlude,
+} from '@/src/dungeon/expedition-interlude';
+import type { DungeonInterludeAction } from '@/src/dungeon/expedition-events';
 import type { CombatAction } from '@/src/dungeon/unawakened-combat';
 import { playImpactHaptic, playNotificationHaptic } from '@/src/settings/haptic-feedback';
 import {
@@ -130,14 +135,14 @@ function CombatStatusRow({ statuses }: { statuses: CombatStatus[] }) {
 function DungeonRouteProgress({ battle }: { battle: DungeonBattle }) {
   const routeLabels = [
     'Combat',
-    battle.routeKey === 'safe' ? 'Rest' : battle.routeKey === 'risky' ? 'Treasure' : 'Fork',
-    battle.routeKey === 'safe' ? 'Event' : battle.routeKey === 'risky' ? 'Elite' : 'Unknown',
+    battle.routeKey === 'safe' ? 'Passage' : battle.routeKey === 'risky' ? 'Treasure' : 'Fork',
+    battle.routeKey === 'safe' ? 'Sanctuary' : battle.routeKey === 'risky' ? 'Elite' : 'Unknown',
     'Boss',
   ];
   const routeIcons: (keyof typeof MaterialCommunityIcons.glyphMap)[] = [
     'sword',
-    battle.routeKey === 'safe' ? 'campfire' : battle.routeKey === 'risky' ? 'treasure-chest' : 'source-fork',
-    battle.routeKey === 'safe' ? 'star-four-points-outline' : 'skull-crossbones-outline',
+    battle.routeKey === 'safe' ? 'shield-check-outline' : battle.routeKey === 'risky' ? 'treasure-chest' : 'source-fork',
+    battle.routeKey === 'safe' ? 'compass-rose' : 'skull-crossbones-outline',
     'crown-outline',
   ];
 
@@ -190,6 +195,7 @@ export default function DungeonRunScreen() {
   const [completedRun, setCompletedRun] = useState<DungeonRun | null>(null);
   const [loading, setLoading] = useState(true);
   const [acting, setActing] = useState(false);
+  const [workingInterlude, setWorkingInterlude] = useState<DungeonInterludeAction | null>(null);
   const [errorMessage, setErrorMessage] = useState('');
   const [animationEvent, setAnimationEvent] = useState<BattleAnimationEvent | null>(null);
   const [animationSpeed, setAnimationSpeed] = useState<BattleAnimationSpeed>(1);
@@ -387,15 +393,18 @@ export default function DungeonRunScreen() {
     }
   };
 
-  const continueRoute = async () => {
+  const resolveInterlude = async (action: DungeonInterludeAction) => {
     if (acting) return;
     setActing(true);
+    setWorkingInterlude(action);
     setErrorMessage('');
     try {
-      setBattle(await continueDungeonRoute(db));
+      setBattle(await resolveDungeonInterlude(db, action));
+      void playNotificationHaptic(action === 'blood-oath' ? 'warning' : 'success');
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'The next room could not be opened.');
+      setErrorMessage(error instanceof Error ? error.message : 'The expedition action failed.');
     } finally {
+      setWorkingInterlude(null);
       setActing(false);
     }
   };
@@ -491,6 +500,7 @@ export default function DungeonRunScreen() {
       {battle ? (
         <>
           <DungeonRouteProgress battle={battle} />
+          <DungeonExpeditionStatus battle={battle} />
           {battle.roomType === 'path_choice' ? (
             <View style={styles.pathPanel}>
               <View style={styles.interludeIcon}>
@@ -511,8 +521,8 @@ export default function DungeonRunScreen() {
                   </View>
                   <View style={styles.pathOptionBody}>
                     <Text style={styles.pathOptionEyebrow}>SAFE PATH</Text>
-                    <Text style={styles.pathOptionTitle}>Rest and Event</Text>
-                    <Text style={styles.pathOptionDetail}>Restore 35% HP before the final encounter.</Text>
+                    <Text style={styles.pathOptionTitle}>Sanctuary Choices</Text>
+                    <Text style={styles.pathOptionDetail}>Choose recovery, a combat blessing or a hidden cache.</Text>
                   </View>
                   <MaterialCommunityIcons color="#8790A6" name="chevron-right" size={21} />
                 </Pressable>
@@ -541,45 +551,13 @@ export default function DungeonRunScreen() {
               {errorMessage ? <Text selectable style={styles.interludeError}>{errorMessage}</Text> : null}
             </View>
           ) : battle.roomType === 'event' || battle.roomType === 'boss_ready' ? (
-            <View style={styles.pathPanel}>
-              <View style={styles.interludeIcon}>
-                <MaterialCommunityIcons
-                  color={battle.roomType === 'event' ? '#68E1A8' : '#FFD166'}
-                  name={battle.roomType === 'event' ? 'star-four-points-outline' : 'sword-cross'}
-                  size={38}
-                />
-              </View>
-              <Text style={styles.resultEyebrow}>
-                {battle.roomType === 'event' ? battle.enemyName.toUpperCase() : 'ELITE CLEARED'}
-              </Text>
-              <Text style={styles.resultTitle}>
-                {battle.roomType === 'event' ? 'A quiet cache remains' : 'The final gate opens'}
-              </Text>
-              <Text style={styles.resultDescription}>
-                {battle.roomType === 'event'
-                  ? 'The Rest Room restored your health. The shrine holds 2 Gold before the boss.'
-                  : `The Elite reward is secured. ${battle.interimGold} Gold and found materials remain yours even after defeat.`}
-              </Text>
-              <Pressable
-                disabled={acting}
-                onPress={() => void continueRoute()}
-                style={({ pressed }) => [styles.returnButton, pressed && styles.actionButtonPressed]}>
-                {acting ? (
-                  <ActivityIndicator color="#071018" />
-                ) : (
-                  <MaterialCommunityIcons color="#071018" name="gate" size={19} />
-                )}
-                <Text style={styles.returnButtonText}>Enter Boss Chamber</Text>
-              </Pressable>
-              <Pressable
-                disabled={acting}
-                onPress={confirmFlee}
-                style={({ pressed }) => [styles.interludeFleeButton, pressed && styles.buttonPressed]}>
-                <MaterialCommunityIcons color="#C87C96" name="exit-run" size={16} />
-                <Text style={styles.fleeText}>Leave Run</Text>
-              </Pressable>
-              {errorMessage ? <Text selectable style={styles.interludeError}>{errorMessage}</Text> : null}
-            </View>
+            <DungeonInterlude
+              battle={battle}
+              errorMessage={errorMessage}
+              onChoose={(action) => void resolveInterlude(action)}
+              onFlee={confirmFlee}
+              workingAction={workingInterlude}
+            />
           ) : (
             <>
           <LinearGradient

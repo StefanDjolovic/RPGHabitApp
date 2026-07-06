@@ -3,44 +3,10 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 
 import { useAuth } from '@/src/auth/auth-context';
-import { secureSessionStorage } from '@/src/auth/secure-session-storage';
-
-const DATABASE_OWNER_KEY = 'habit-rpg.database-owner';
-const LEGACY_DATABASE_NAME = 'habit-rpg.db';
-const GUEST_DATABASE_NAME = 'habit-rpg-guest.db';
-
-type ResolvedDatabase = {
-  identity: string;
-  name: string;
-};
-
-function accountDatabaseName(userId: string) {
-  const safeUserId = userId.replace(/[^a-zA-Z0-9-]/g, '');
-  if (!safeUserId) throw new Error('Account identifier is invalid.');
-  return `habit-rpg-${safeUserId}.db`;
-}
-
-async function resolveDatabase(userId: string | null): Promise<ResolvedDatabase> {
-  const ownerId = await secureSessionStorage.getItem(DATABASE_OWNER_KEY);
-  const identity = userId ?? 'guest';
-
-  if (!userId) {
-    return {
-      identity,
-      name: ownerId ? GUEST_DATABASE_NAME : LEGACY_DATABASE_NAME,
-    };
-  }
-
-  if (!ownerId) {
-    await secureSessionStorage.setItem(DATABASE_OWNER_KEY, userId);
-    return { identity, name: LEGACY_DATABASE_NAME };
-  }
-
-  return {
-    identity,
-    name: ownerId === userId ? LEGACY_DATABASE_NAME : accountDatabaseName(userId),
-  };
-}
+import {
+  resolveAccountDatabase,
+  type ResolvedAccountDatabase,
+} from '@/src/database/account-database-lifecycle';
 
 export function AccountDatabaseProvider({
   children,
@@ -51,7 +17,7 @@ export function AccountDatabaseProvider({
 }) {
   const { loading: authLoading, user } = useAuth();
   const identity = user?.id ?? 'guest';
-  const [resolved, setResolved] = useState<ResolvedDatabase | null>(null);
+  const [resolved, setResolved] = useState<ResolvedAccountDatabase | null>(null);
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -59,7 +25,7 @@ export function AccountDatabaseProvider({
     let active = true;
     setError('');
 
-    void resolveDatabase(user?.id ?? null)
+    void resolveAccountDatabase(user?.id ?? null)
       .then((database) => {
         if (active) setResolved(database);
       })

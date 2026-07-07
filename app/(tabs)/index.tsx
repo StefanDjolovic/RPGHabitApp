@@ -61,6 +61,12 @@ import {
   RECOVERY_QUEST_REWARD,
   type RecoveryQuestStatus,
 } from '@/src/progression/recovery-quest';
+import {
+  claimHabitMission,
+  getHabitMissionBoard,
+  type HabitMission,
+  type HabitMissionBoard,
+} from '@/src/database/mission-repository';
 import { getItemDefinition } from '@/src/inventory/item-catalog';
 import { getHabitAppearance } from '@/src/habits/habit-appearance';
 import { syncHabitReminderFromDatabase } from '@/src/notifications/habit-reminders';
@@ -113,6 +119,96 @@ const initialDailyClearStatus: DailyClearStatus = {
   rewardQuantity: null,
 };
 
+const initialMissionBoard: HabitMissionBoard = {
+  todayKey: '',
+  weekStartKey: '',
+  daily: [],
+  weekly: [],
+};
+
+function MissionCard({
+  mission,
+  claiming,
+  onClaim,
+}: {
+  mission: HabitMission;
+  claiming: boolean;
+  onClaim: (missionKey: string) => void;
+}) {
+  const progressRatio = mission.target > 0 ? mission.progress / mission.target : 0;
+  const locked = !mission.complete || claiming;
+  const rewardText = [
+    `+${mission.reward.xp} EXP`,
+    `+${mission.reward.statXp} ${formatAttribute(mission.reward.attribute)}`,
+    mission.reward.energy > 0 ? `+${mission.reward.energy} Energy` : null,
+    mission.reward.gold > 0 ? `+${mission.reward.gold} Gold` : null,
+  ].filter(Boolean).join('  |  ');
+
+  return (
+    <View style={[styles.missionCard, mission.claimed && styles.missionCardClaimed]}>
+      <View style={[styles.missionIcon, { borderColor: `${mission.accent}66` }]}>
+        <MaterialCommunityIcons
+          color={mission.claimed ? '#071018' : mission.accent}
+          name={mission.claimed ? 'check-bold' : mission.icon}
+          size={20}
+        />
+      </View>
+      <View style={styles.missionBody}>
+        <View style={styles.missionTitleRow}>
+          <View style={styles.missionTitleBlock}>
+            <Text style={[styles.missionCadence, { color: mission.accent }]}>
+              {mission.cadence.toUpperCase()}
+            </Text>
+            <Text style={styles.missionTitle}>{mission.title}</Text>
+          </View>
+          <Text style={styles.missionProgressText}>
+            {mission.progress}/{mission.target}
+          </Text>
+        </View>
+        <Text style={styles.missionDetail}>{mission.detail}</Text>
+        <View style={styles.missionTrack}>
+          <View
+            style={[
+              styles.missionFill,
+              { backgroundColor: mission.accent, width: `${progressRatio * 100}%` },
+            ]}
+          />
+        </View>
+        <View style={styles.missionFooter}>
+          <Text numberOfLines={1} style={styles.missionReward}>{rewardText}</Text>
+          {mission.claimed ? (
+            <View style={styles.missionClaimedBadge}>
+              <Text style={styles.missionClaimedText}>Claimed</Text>
+            </View>
+          ) : (
+            <Pressable
+              accessibilityLabel={`Claim ${mission.title}`}
+              disabled={locked}
+              onPress={() => onClaim(mission.key)}
+              style={({ pressed }) => [
+                styles.missionClaimButton,
+                locked && styles.missionClaimButtonLocked,
+                pressed && !locked && styles.missionClaimButtonPressed,
+              ]}>
+              {claiming ? (
+                <ActivityIndicator color="#071018" size="small" />
+              ) : (
+                <Text
+                  style={[
+                    styles.missionClaimText,
+                    locked && styles.missionClaimTextLocked,
+                  ]}>
+                  Claim
+                </Text>
+              )}
+            </Pressable>
+          )}
+        </View>
+      </View>
+    </View>
+  );
+}
+
 export default function TodayScreen() {
   const db = useSQLiteContext();
   const [habits, setHabits] = useState<Habit[]>([]);
@@ -125,7 +221,9 @@ export default function TodayScreen() {
   const [recoveryStatus, setRecoveryStatus] = useState<RecoveryQuestStatus>(initialRecoveryStatus);
   const [dailyClearStatus, setDailyClearStatus] =
     useState<DailyClearStatus>(initialDailyClearStatus);
+  const [missionBoard, setMissionBoard] = useState<HabitMissionBoard>(initialMissionBoard);
   const [claimingDailyClear, setClaimingDailyClear] = useState(false);
+  const [claimingMissionKey, setClaimingMissionKey] = useState<string | null>(null);
   const [completingRecovery, setCompletingRecovery] = useState(false);
   const [updatingHabitId, setUpdatingHabitId] = useState<number | null>(null);
   const [updatingBossQuest, setUpdatingBossQuest] = useState(false);
@@ -182,6 +280,9 @@ export default function TodayScreen() {
   const bossMilestoneReward = bossMilestone
     ? rewardByDifficulty[bossMilestone.difficulty]
     : null;
+  const missions = [...missionBoard.daily, ...missionBoard.weekly];
+  const missionReadyCount = missions.filter((mission) => mission.complete && !mission.claimed).length;
+  const missionClaimedCount = missions.filter((mission) => mission.claimed).length;
 
   const loadTodayData = useCallback(async () => {
     try {
@@ -194,6 +295,7 @@ export default function TodayScreen() {
         streak,
         recovery,
         dailyClear,
+        missions,
       ] = await Promise.all([
         getTodayHabits(db),
         getActiveBossQuest(db),
@@ -203,6 +305,7 @@ export default function TodayScreen() {
         getActivityStreak(db),
         getRecoveryQuestStatus(db),
         getDailyClearStatus(db),
+        getHabitMissionBoard(db),
       ]);
       setHabits(todayHabits);
       setBossQuest(activeBoss);
@@ -212,6 +315,7 @@ export default function TodayScreen() {
       setActivityStreak(streak);
       setRecoveryStatus(recovery);
       setDailyClearStatus(dailyClear);
+      setMissionBoard(missions);
       syncNotificationState();
     } finally {
       setLoading(false);
@@ -246,16 +350,18 @@ export default function TodayScreen() {
       if (habit.cadence === 'one-time') {
         await syncHabitReminderFromDatabase(db, id).catch(() => false);
       }
-      const [progressSummary, streak, recovery, dailyClear] = await Promise.all([
+      const [progressSummary, streak, recovery, dailyClear, missions] = await Promise.all([
         getPlayerProgress(db),
         getActivityStreak(db),
         getRecoveryQuestStatus(db),
         getDailyClearStatus(db),
+        getHabitMissionBoard(db),
       ]);
       setPlayerProgress(progressSummary);
       setActivityStreak(streak);
       setRecoveryStatus(recovery);
       setDailyClearStatus(dailyClear);
+      setMissionBoard(missions);
       syncNotificationState();
     } catch {
       setHabits((current) =>
@@ -295,16 +401,18 @@ export default function TodayScreen() {
             : item,
         ),
       );
-      const [progressSummary, streak, recovery, dailyClear] = await Promise.all([
+      const [progressSummary, streak, recovery, dailyClear, missions] = await Promise.all([
         getPlayerProgress(db),
         getActivityStreak(db),
         getRecoveryQuestStatus(db),
         getDailyClearStatus(db),
+        getHabitMissionBoard(db),
       ]);
       setPlayerProgress(progressSummary);
       setActivityStreak(streak);
       setRecoveryStatus(recovery);
       setDailyClearStatus(dailyClear);
+      setMissionBoard(missions);
       syncNotificationState();
     } catch {
       setHabits((current) =>
@@ -350,16 +458,18 @@ export default function TodayScreen() {
             : item,
         ),
       );
-      const [progressSummary, streak, recovery, dailyClear] = await Promise.all([
+      const [progressSummary, streak, recovery, dailyClear, missions] = await Promise.all([
         getPlayerProgress(db),
         getActivityStreak(db),
         getRecoveryQuestStatus(db),
         getDailyClearStatus(db),
+        getHabitMissionBoard(db),
       ]);
       setPlayerProgress(progressSummary);
       setActivityStreak(streak);
       setRecoveryStatus(recovery);
       setDailyClearStatus(dailyClear);
+      setMissionBoard(missions);
       syncNotificationState();
     } catch {
       setHabits((current) =>
@@ -404,16 +514,18 @@ export default function TodayScreen() {
               : item,
           ),
         );
-        const [progressSummary, streak, recovery, dailyClear] = await Promise.all([
+        const [progressSummary, streak, recovery, dailyClear, missions] = await Promise.all([
           getPlayerProgress(db),
           getActivityStreak(db),
           getRecoveryQuestStatus(db),
           getDailyClearStatus(db),
+          getHabitMissionBoard(db),
         ]);
         setPlayerProgress(progressSummary);
         setActivityStreak(streak);
         setRecoveryStatus(recovery);
         setDailyClearStatus(dailyClear);
+        setMissionBoard(missions);
         syncNotificationState();
       } catch {
         setHabits((current) =>
@@ -445,16 +557,18 @@ export default function TodayScreen() {
 
     try {
       await resetTimedHabitForToday(db, habit.id);
-      const [progressSummary, streak, recovery, dailyClear] = await Promise.all([
+      const [progressSummary, streak, recovery, dailyClear, missions] = await Promise.all([
         getPlayerProgress(db),
         getActivityStreak(db),
         getRecoveryQuestStatus(db),
         getDailyClearStatus(db),
+        getHabitMissionBoard(db),
       ]);
       setPlayerProgress(progressSummary);
       setActivityStreak(streak);
       setRecoveryStatus(recovery);
       setDailyClearStatus(dailyClear);
+      setMissionBoard(missions);
       syncNotificationState();
     } catch {
       setHabits((current) =>
@@ -542,6 +656,27 @@ export default function TodayScreen() {
       setDailyClearStatus(status);
     } finally {
       setClaimingDailyClear(false);
+    }
+  };
+
+  const claimMission = async (missionKey: string) => {
+    if (claimingMissionKey) return;
+
+    setClaimingMissionKey(missionKey);
+    try {
+      const nextMissionBoard = await claimHabitMission(db, missionKey);
+      const [progressSummary, dailyClear] = await Promise.all([
+        getPlayerProgress(db),
+        getDailyClearStatus(db),
+      ]);
+      setMissionBoard(nextMissionBoard);
+      setPlayerProgress(progressSummary);
+      setDailyClearStatus(dailyClear);
+      syncNotificationState();
+    } catch {
+      Alert.alert('Mission not claimed', 'The mission reward could not be saved. Please try again.');
+    } finally {
+      setClaimingMissionKey(null);
     }
   };
 
@@ -693,6 +828,41 @@ export default function TodayScreen() {
               <MaterialCommunityIcons name="arrow-right" size={19} color="#071018" />
             </Pressable>
           </LinearGradient>
+        ) : null}
+
+        {missions.length > 0 ? (
+          <View style={styles.missionBoard}>
+            <View style={styles.missionBoardHeader}>
+              <View>
+                <Text style={styles.sectionEyebrow}>MISSION BOARD</Text>
+                <Text style={styles.sectionTitle}>Daily and weekly targets</Text>
+              </View>
+              <View style={styles.missionSummaryBadge}>
+                <Text style={styles.missionSummaryValue}>{missionReadyCount}</Text>
+                <Text style={styles.missionSummaryLabel}>
+                  {missionReadyCount === 1 ? 'ready' : 'ready'}
+                </Text>
+              </View>
+            </View>
+
+            <View style={styles.missionList}>
+              {missions.map((mission) => (
+                <MissionCard
+                  claiming={claimingMissionKey === mission.key}
+                  key={`${mission.periodStart}-${mission.key}`}
+                  mission={mission}
+                  onClaim={(key) => void claimMission(key)}
+                />
+              ))}
+            </View>
+
+            <View style={styles.missionBoardFooter}>
+              <MaterialCommunityIcons name="check-circle-outline" size={14} color="#7D859B" />
+              <Text style={styles.missionBoardFooterText}>
+                {missionClaimedCount}/{missions.length} rewards claimed for the active periods.
+              </Text>
+            </View>
+          </View>
         ) : null}
 
         <View style={styles.sectionHeader}>
@@ -1250,6 +1420,85 @@ const styles = StyleSheet.create({
     backgroundColor: '#8DEAFF',
   },
   awakeningButtonPressed: { opacity: 0.72, transform: [{ scale: 0.98 }] },
+  missionBoard: { gap: 10, marginBottom: 24 },
+  missionBoardHeader: {
+    minHeight: 42,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  missionSummaryBadge: {
+    width: 50,
+    height: 42,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 8,
+    backgroundColor: '#111827',
+    borderWidth: 1,
+    borderColor: '#2D4154',
+  },
+  missionSummaryValue: { color: '#8DEAFF', fontSize: 15, fontWeight: '900', fontVariant: ['tabular-nums'] },
+  missionSummaryLabel: { color: '#778298', fontSize: 7, fontWeight: '900', marginTop: 1 },
+  missionList: { gap: 8 },
+  missionCard: {
+    minHeight: 116,
+    flexDirection: 'row',
+    gap: 11,
+    padding: 12,
+    borderRadius: 8,
+    backgroundColor: 'rgba(13, 17, 32, 0.92)',
+    borderWidth: 1,
+    borderColor: '#252C42',
+  },
+  missionCardClaimed: { backgroundColor: 'rgba(12, 32, 31, 0.86)', borderColor: '#2D5B50' },
+  missionIcon: {
+    width: 42,
+    height: 42,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 8,
+    backgroundColor: '#111827',
+    borderWidth: 1,
+  },
+  missionBody: { flex: 1, minWidth: 0, gap: 6 },
+  missionTitleRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 },
+  missionTitleBlock: { flex: 1, minWidth: 0 },
+  missionCadence: { fontSize: 7, fontWeight: '900', letterSpacing: 1.1 },
+  missionTitle: { color: '#EEF1FA', fontSize: 13, fontWeight: '900', marginTop: 2 },
+  missionProgressText: { color: '#C8D0E6', fontSize: 11, fontWeight: '900', fontVariant: ['tabular-nums'] },
+  missionDetail: { color: '#858EA6', fontSize: 9, lineHeight: 13, fontWeight: '700' },
+  missionTrack: { height: 5, borderRadius: 3, overflow: 'hidden', backgroundColor: '#090D19' },
+  missionFill: { height: '100%', borderRadius: 3 },
+  missionFooter: { minHeight: 34, flexDirection: 'row', alignItems: 'center', gap: 8 },
+  missionReward: { flex: 1, color: '#AEB7CC', fontSize: 8, fontWeight: '800' },
+  missionClaimButton: {
+    width: 70,
+    height: 31,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 8,
+    backgroundColor: '#8DEAFF',
+    borderWidth: 1,
+    borderColor: '#A8F0FF',
+  },
+  missionClaimButtonLocked: { backgroundColor: '#151A2A', borderColor: '#2B3146' },
+  missionClaimButtonPressed: { opacity: 0.78, transform: [{ scale: 0.98 }] },
+  missionClaimText: { color: '#071018', fontSize: 10, fontWeight: '900' },
+  missionClaimTextLocked: { color: '#68708D' },
+  missionClaimedBadge: {
+    height: 31,
+    minWidth: 70,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 8,
+    backgroundColor: 'rgba(127, 231, 169, 0.14)',
+    borderWidth: 1,
+    borderColor: '#4D9E71',
+  },
+  missionClaimedText: { color: '#8DECB4', fontSize: 9, fontWeight: '900' },
+  missionBoardFooter: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 2 },
+  missionBoardFooterText: { flex: 1, color: '#737B94', fontSize: 9, fontWeight: '700' },
   sectionHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',

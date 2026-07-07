@@ -92,7 +92,8 @@ async function setAdminXpTotal(db: SQLiteDatabase, completionId: number, targetT
     `SELECT
        COALESCE((SELECT SUM(amount) FROM xp_events WHERE client_event_id != ?), 0) +
        COALESCE((SELECT SUM(xp_amount) FROM boss_quest_reward_events), 0) +
-       COALESCE((SELECT SUM(xp_amount) FROM recovery_quest_events), 0) AS total`,
+       COALESCE((SELECT SUM(xp_amount) FROM recovery_quest_events), 0) +
+       COALESCE((SELECT SUM(xp_amount) FROM habit_mission_claims), 0) AS total`,
     adminXpEventId,
   );
   const adjustment = Math.trunc(targetTotal - (external?.total ?? 0));
@@ -124,9 +125,11 @@ async function setAdminAttributeTotals(
            WHERE attribute = ? AND client_event_id != ?
          ), 0) +
          COALESCE((SELECT SUM(stat_xp_amount) FROM boss_quest_reward_events WHERE attribute = ?), 0) +
-         COALESCE((SELECT SUM(stat_xp_amount) FROM recovery_quest_events WHERE attribute = ?), 0) AS total`,
+         COALESCE((SELECT SUM(stat_xp_amount) FROM recovery_quest_events WHERE attribute = ?), 0) +
+         COALESCE((SELECT SUM(stat_xp_amount) FROM habit_mission_claims WHERE attribute = ?), 0) AS total`,
       attribute,
       eventId,
+      attribute,
       attribute,
       attribute,
     );
@@ -152,7 +155,8 @@ async function refillAdminEnergy(db: SQLiteDatabase, completionId: number) {
       `SELECT
          COALESCE((SELECT SUM(amount) FROM energy_events WHERE client_event_id != ?), 0) +
          COALESCE((SELECT SUM(energy_amount) FROM boss_quest_reward_events), 0) +
-         COALESCE((SELECT SUM(energy_amount) FROM recovery_quest_events), 0) AS total`,
+         COALESCE((SELECT SUM(energy_amount) FROM recovery_quest_events), 0) +
+         COALESCE((SELECT SUM(energy_amount) FROM habit_mission_claims), 0) AS total`,
       adminEnergyEventId,
     ),
     db.getFirstAsync<{ total: number }>(

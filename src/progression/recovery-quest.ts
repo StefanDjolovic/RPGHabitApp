@@ -173,7 +173,13 @@ export async function completeRecoveryQuest(db: SQLiteDatabase) {
            SELECT SUM(energy_amount)
            FROM recovery_quest_events
            WHERE event_date = ?
+         ), 0) +
+         COALESCE((
+           SELECT SUM(energy_amount)
+           FROM habit_mission_claims
+           WHERE event_date = ?
          ), 0) AS total`,
+        today,
         today,
         today,
         today,

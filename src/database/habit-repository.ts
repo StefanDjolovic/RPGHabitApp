@@ -531,6 +531,17 @@ export async function getRecentActivityDays(
          SUM(energy_amount) AS energyEarned
        FROM recovery_quest_events
        GROUP BY event_date
+
+       UNION ALL
+
+       SELECT
+         event_date AS dateKey,
+         COUNT(*) AS completedCount,
+         SUM(xp_amount) AS xpEarned,
+         SUM(stat_xp_amount) AS statXpEarned,
+         SUM(energy_amount) AS energyEarned
+       FROM habit_mission_claims
+       GROUP BY event_date
      )
      SELECT
        dateKey,
@@ -604,6 +615,17 @@ export async function getActivityCalendarDays(
          SUM(stat_xp_amount) AS statXpEarned,
          SUM(energy_amount) AS energyEarned
        FROM recovery_quest_events
+       GROUP BY event_date
+
+       UNION ALL
+
+       SELECT
+         event_date AS dateKey,
+         COUNT(*) AS completedCount,
+         SUM(xp_amount) AS xpEarned,
+         SUM(stat_xp_amount) AS statXpEarned,
+         SUM(energy_amount) AS energyEarned
+       FROM habit_mission_claims
        GROUP BY event_date
      )
      SELECT
@@ -1120,11 +1142,17 @@ async function applyHabitCompletionTransition(
              FROM boss_quest_reward_events
              WHERE event_date = ?
            ), 0) +
-           COALESCE((
-             SELECT SUM(energy_amount)
-             FROM recovery_quest_events
-             WHERE event_date = ?
-           ), 0) AS total`,
+          COALESCE((
+            SELECT SUM(energy_amount)
+            FROM recovery_quest_events
+            WHERE event_date = ?
+          ), 0) +
+          COALESCE((
+            SELECT SUM(energy_amount)
+            FROM habit_mission_claims
+            WHERE event_date = ?
+          ), 0) AS total`,
+        completionDate,
         completionDate,
         completionDate,
         completionDate,

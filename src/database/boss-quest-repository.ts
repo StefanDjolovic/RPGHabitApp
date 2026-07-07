@@ -197,7 +197,7 @@ export async function completeCurrentBossMilestone(db: SQLiteDatabase, bossQuest
     if (!milestone) throw new Error('Active Boss Quest phase not found.');
 
     const reward = rewardByDifficulty[milestone.difficulty];
-    const [habitEnergy, bossEnergy, recoveryEnergy] = await Promise.all([
+    const [habitEnergy, bossEnergy, recoveryEnergy, missionEnergy] = await Promise.all([
       txn.getFirstAsync<{ total: number }>(
         `SELECT COALESCE(SUM(ee.amount), 0) AS total
          FROM energy_events ee
@@ -217,11 +217,18 @@ export async function completeCurrentBossMilestone(db: SQLiteDatabase, bossQuest
          WHERE event_date = ?`,
         today,
       ),
+      txn.getFirstAsync<{ total: number }>(
+        `SELECT COALESCE(SUM(energy_amount), 0) AS total
+         FROM habit_mission_claims
+         WHERE event_date = ?`,
+        today,
+      ),
     ]);
     const todayEnergy =
       Math.max(0, habitEnergy?.total ?? 0) +
       Math.max(0, bossEnergy?.total ?? 0) +
-      Math.max(0, recoveryEnergy?.total ?? 0);
+      Math.max(0, recoveryEnergy?.total ?? 0) +
+      Math.max(0, missionEnergy?.total ?? 0);
     const energyAmount = Math.min(
       reward.energy,
       Math.max(0, MAX_DAILY_DUNGEON_ENERGY - todayEnergy),

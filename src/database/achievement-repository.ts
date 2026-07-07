@@ -132,7 +132,8 @@ export async function getAchievementSummary(
       `SELECT
          COALESCE((SELECT SUM(amount) FROM xp_events), 0) +
          COALESCE((SELECT SUM(xp_amount) FROM boss_quest_reward_events), 0) +
-         COALESCE((SELECT SUM(xp_amount) FROM recovery_quest_events), 0) AS total`,
+         COALESCE((SELECT SUM(xp_amount) FROM recovery_quest_events), 0) +
+         COALESCE((SELECT SUM(xp_amount) FROM habit_mission_claims), 0) AS total`,
     ),
   ]);
 

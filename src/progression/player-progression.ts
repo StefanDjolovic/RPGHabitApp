@@ -129,7 +129,8 @@ export async function getPlayerProgress(db: SQLiteDatabase): Promise<PlayerProgr
       `SELECT
          COALESCE((SELECT SUM(amount) FROM xp_events), 0) +
          COALESCE((SELECT SUM(xp_amount) FROM boss_quest_reward_events), 0) +
-         COALESCE((SELECT SUM(xp_amount) FROM recovery_quest_events), 0) AS total`,
+         COALESCE((SELECT SUM(xp_amount) FROM recovery_quest_events), 0) +
+         COALESCE((SELECT SUM(xp_amount) FROM habit_mission_claims), 0) AS total`,
     ),
     db.getFirstAsync<{ rankKey: string }>(
       'SELECT current_rank_key AS rankKey FROM player_rank_state WHERE id = 1',
@@ -138,7 +139,8 @@ export async function getPlayerProgress(db: SQLiteDatabase): Promise<PlayerProgr
       `SELECT
          COALESCE((SELECT SUM(amount) FROM energy_events), 0) +
          COALESCE((SELECT SUM(energy_amount) FROM boss_quest_reward_events), 0) +
-         COALESCE((SELECT SUM(energy_amount) FROM recovery_quest_events), 0) AS total`,
+         COALESCE((SELECT SUM(energy_amount) FROM recovery_quest_events), 0) +
+         COALESCE((SELECT SUM(energy_amount) FROM habit_mission_claims), 0) AS total`,
     ),
     db.getFirstAsync<TotalRow>('SELECT COALESCE(SUM(energy_cost), 0) AS total FROM dungeon_runs'),
     db.getFirstAsync<TotalRow>(
@@ -158,7 +160,13 @@ export async function getPlayerProgress(db: SQLiteDatabase): Promise<PlayerProgr
            SELECT SUM(energy_amount)
            FROM recovery_quest_events
            WHERE event_date = ?
+         ), 0) +
+         COALESCE((
+           SELECT SUM(energy_amount)
+           FROM habit_mission_claims
+           WHERE event_date = ?
          ), 0) AS total`,
+      todayKey,
       todayKey,
       todayKey,
       todayKey,
@@ -174,6 +182,9 @@ export async function getPlayerProgress(db: SQLiteDatabase): Promise<PlayerProgr
          UNION ALL
          SELECT attribute, stat_xp_amount AS amount
          FROM recovery_quest_events
+         UNION ALL
+         SELECT attribute, stat_xp_amount AS amount
+         FROM habit_mission_claims
        )
        GROUP BY attribute`,
     ),

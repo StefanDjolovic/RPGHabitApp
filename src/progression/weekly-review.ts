@@ -204,7 +204,14 @@ export async function getWeeklyReview(db: SQLiteDatabase): Promise<WeeklyReview>
            SELECT SUM(xp_amount)
            FROM recovery_quest_events
            WHERE event_date BETWEEN ? AND ?
+         ), 0) +
+         COALESCE((
+           SELECT SUM(xp_amount)
+           FROM habit_mission_claims
+           WHERE event_date BETWEEN ? AND ?
          ), 0) AS total`,
+      weekStart,
+      today,
       weekStart,
       today,
       weekStart,

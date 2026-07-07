@@ -442,7 +442,8 @@ async function getDungeonEnergyAvailable(db: SQLiteDatabase) {
       `SELECT
          COALESCE((SELECT SUM(amount) FROM energy_events), 0) +
          COALESCE((SELECT SUM(energy_amount) FROM boss_quest_reward_events), 0) +
-         COALESCE((SELECT SUM(energy_amount) FROM recovery_quest_events), 0) AS total`,
+         COALESCE((SELECT SUM(energy_amount) FROM recovery_quest_events), 0) +
+         COALESCE((SELECT SUM(energy_amount) FROM habit_mission_claims), 0) AS total`,
     ),
     db.getFirstAsync<TotalRow>('SELECT COALESCE(SUM(energy_cost), 0) AS total FROM dungeon_runs'),
     db.getFirstAsync<TotalRow>(

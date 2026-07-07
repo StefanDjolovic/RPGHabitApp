@@ -113,6 +113,14 @@ export async function getCharacterChronicle(db: SQLiteDatabase): Promise<Chronic
            3 AS sourceOrder,
            id AS eventSequence
          FROM recovery_quest_events
+         UNION ALL
+         SELECT
+           client_event_id AS eventId,
+           claimed_at AS occurredAt,
+           xp_amount AS amount,
+           4 AS sourceOrder,
+           id AS eventSequence
+         FROM habit_mission_claims
        )
        ORDER BY occurredAt ASC, sourceOrder ASC, eventSequence ASC`,
     ),

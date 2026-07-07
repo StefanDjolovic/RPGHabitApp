@@ -1,6 +1,6 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 
-const DATABASE_VERSION = 41;
+const DATABASE_VERSION = 42;
 
 export async function migrateDatabase(db: SQLiteDatabase) {
   await db.execAsync('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
@@ -1206,6 +1206,33 @@ export async function migrateDatabase(db: SQLiteDatabase) {
 
       CREATE INDEX IF NOT EXISTS idx_dungeon_bestiary_dungeon
         ON dungeon_bestiary_entries(dungeon_key, enemy_role);
+    `);
+  }
+
+  if (currentVersion < 42) {
+    await db.execAsync(`
+      CREATE TABLE IF NOT EXISTS habit_mission_claims (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        client_event_id TEXT NOT NULL UNIQUE,
+        mission_key TEXT NOT NULL,
+        cadence TEXT NOT NULL CHECK (cadence IN ('daily', 'weekly')),
+        period_start TEXT NOT NULL,
+        period_end TEXT NOT NULL,
+        event_date TEXT NOT NULL,
+        title TEXT NOT NULL,
+        attribute TEXT NOT NULL CHECK (
+          attribute IN ('strength', 'intelligence', 'discipline', 'vitality', 'creativity')
+        ),
+        xp_amount INTEGER NOT NULL CHECK (xp_amount >= 0),
+        stat_xp_amount INTEGER NOT NULL CHECK (stat_xp_amount >= 0),
+        energy_amount INTEGER NOT NULL CHECK (energy_amount >= 0),
+        gold_amount INTEGER NOT NULL CHECK (gold_amount >= 0),
+        claimed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE (mission_key, period_start)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_habit_mission_claims_period
+        ON habit_mission_claims(cadence, period_start, claimed_at);
     `);
   }
 

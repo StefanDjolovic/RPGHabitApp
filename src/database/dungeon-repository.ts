@@ -71,6 +71,10 @@ export type DungeonRun = {
   routeKey: DungeonPath | null;
   roomsCleared: number;
   interimGold: number;
+  playerHpRemaining: number | null;
+  maxPlayerHp: number | null;
+  damageTaken: number | null;
+  turnsTaken: number | null;
   completedAt: string;
 };
 
@@ -480,6 +484,10 @@ async function getRunById(db: SQLiteDatabase, runId: number) {
        route_key AS routeKey,
        rooms_cleared AS roomsCleared,
        interim_gold AS interimGold,
+       player_hp_remaining AS playerHpRemaining,
+       max_player_hp AS maxPlayerHp,
+       damage_taken AS damageTaken,
+       turns_taken AS turnsTaken,
        COALESCE((
          SELECT SUM(ge.amount)
          FROM gold_events ge
@@ -526,6 +534,10 @@ export async function getDungeonOverview(db: SQLiteDatabase): Promise<DungeonOve
          route_key AS routeKey,
          rooms_cleared AS roomsCleared,
          interim_gold AS interimGold,
+         player_hp_remaining AS playerHpRemaining,
+         max_player_hp AS maxPlayerHp,
+         damage_taken AS damageTaken,
+         turns_taken AS turnsTaken,
          COALESCE((
            SELECT SUM(ge.amount)
            FROM gold_events ge

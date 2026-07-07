@@ -14,8 +14,12 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, {
+  FadeInDown,
+  ZoomIn,
   useAnimatedStyle,
   useSharedValue,
+  withSequence,
+  withSpring,
   withTiming,
 } from 'react-native-reanimated';
 
@@ -45,6 +49,7 @@ import {
 } from '@/src/dungeon/expedition-interlude';
 import type { DungeonInterludeAction } from '@/src/dungeon/expedition-events';
 import type { CombatAction } from '@/src/dungeon/unawakened-combat';
+import { getItemDefinition, rarityMeta } from '@/src/inventory/item-catalog';
 import { playImpactHaptic, playNotificationHaptic } from '@/src/settings/haptic-feedback';
 import {
   getRuntimeUserSettings,
@@ -177,6 +182,200 @@ function DungeonRouteProgress({ battle }: { battle: DungeonBattle }) {
           </View>
         );
       })}
+    </View>
+  );
+}
+
+function DungeonRewardReveal({
+  outcome,
+  run,
+  reduceMotion,
+}: {
+  outcome: BattleOutcome;
+  run: DungeonRun | null;
+  reduceMotion: boolean;
+}) {
+  const cleared = outcome === 'cleared';
+  const fled = outcome === 'fled';
+  const rewardItem = run?.rewardItemKey ? getItemDefinition(run.rewardItemKey) : null;
+  const rarity = rewardItem ? rarityMeta[rewardItem.rarity] : null;
+  const hpRatio = run?.playerHpRemaining && run.maxPlayerHp
+    ? Math.max(0, Math.min(1, run.playerHpRemaining / run.maxPlayerHp))
+    : 0;
+  const chestScale = useSharedValue(reduceMotion ? 1 : 0.92);
+  const glowScale = useSharedValue(reduceMotion ? 1 : 0.72);
+  const glowOpacity = useSharedValue(reduceMotion ? 0.22 : 0);
+
+  useEffect(() => {
+    if (reduceMotion) {
+      chestScale.value = 1;
+      glowScale.value = 1;
+      glowOpacity.value = cleared ? 0.22 : 0.1;
+      return;
+    }
+
+    chestScale.value = withSequence(
+      withTiming(1.08, { duration: 220 }),
+      withSpring(1, { damping: 12, stiffness: 180 }),
+    );
+    glowScale.value = withTiming(1, { duration: 420 });
+    glowOpacity.value = withSequence(
+      withTiming(cleared ? 0.34 : 0.14, { duration: 240 }),
+      withTiming(cleared ? 0.22 : 0.1, { duration: 380 }),
+    );
+  }, [chestScale, cleared, glowOpacity, glowScale, reduceMotion]);
+
+  const chestStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: chestScale.value }],
+  }));
+  const glowStyle = useAnimatedStyle(() => ({
+    opacity: glowOpacity.value,
+    transform: [{ scale: glowScale.value }],
+  }));
+  const routeLabel = run?.routeKey
+    ? run.routeKey === 'safe'
+      ? 'Safe route'
+      : 'Risky route'
+    : 'Route unknown';
+  const rewardCards = [
+    ...(rewardItem && cleared
+      ? [{
+          key: 'item',
+          label: rarity?.label.toUpperCase() ?? 'ITEM',
+          value: `${run?.rewardQuantity ?? 1}x ${rewardItem.name}`,
+          detail: rewardItem.slot,
+          icon: rewardItem.icon,
+          accent: rarity?.color ?? '#FFD27A',
+        }]
+      : []),
+    ...((run?.goldEarned ?? 0) > 0
+      ? [{
+          key: 'gold',
+          label: cleared ? 'GOLD EARNED' : 'SECURED GOLD',
+          value: `${run?.goldEarned ?? 0} Gold`,
+          detail: run?.interimGold ? `${run.interimGold} found before the boss` : 'Stored in Inventory',
+          icon: 'gold' as const,
+          accent: '#FFD166',
+        }]
+      : []),
+    ...((run?.masteryXpEarned ?? 0) > 0
+      ? [{
+          key: 'mastery',
+          label: 'CLASS MASTERY',
+          value: `+${run?.masteryXpEarned ?? 0} XP`,
+          detail: run?.className ?? 'Class training',
+          icon: 'arm-flex-outline' as const,
+          accent: '#8DEAFF',
+        }]
+      : []),
+    {
+      key: 'bestiary',
+      label: cleared ? 'BESTIARY UPDATED' : 'RUN RECORDED',
+      value: cleared ? 'Enemy data saved' : 'Attempt logged',
+      detail: cleared ? 'Defeats and discoveries are tracked' : 'Progress still counts for history',
+      icon: cleared ? 'book-open-page-variant' as const : 'history' as const,
+      accent: cleared ? '#B898FF' : '#8E96AD',
+    },
+  ];
+
+  return (
+    <View style={styles.resultPanel}>
+      <LinearGradient
+        colors={cleared ? ['#35210E', '#151222', '#08101C'] : ['#25141C', '#10131F', '#080B13']}
+        end={{ x: 1, y: 1 }}
+        start={{ x: 0, y: 0 }}
+        style={styles.rewardHero}>
+        <Animated.View style={[styles.rewardGlow, glowStyle]} />
+        <Animated.View
+          entering={reduceMotion ? undefined : ZoomIn.springify().damping(13)}
+          style={[
+            styles.rewardChest,
+            cleared ? styles.rewardChestVictory : styles.rewardChestEnded,
+            chestStyle,
+          ]}>
+          <MaterialCommunityIcons
+            color={cleared ? '#FFD27A' : '#E78AA5'}
+            name={cleared ? 'treasure-chest' : fled ? 'exit-run' : 'shield-off-outline'}
+            size={48}
+          />
+        </Animated.View>
+        <Text style={styles.resultEyebrow}>
+          {cleared ? 'GATE CLEARED' : fled ? 'TACTICAL RETREAT' : 'RUN ENDED'}
+        </Text>
+        <Text style={styles.resultTitle}>
+          {cleared
+            ? 'Dungeon rewards claimed'
+            : fled
+              ? 'You escaped with what you secured'
+              : 'The gate guardian prevailed'}
+        </Text>
+        <Text style={styles.resultDescription}>
+          {cleared
+            ? 'The final chest has been opened and every reward is now stored.'
+            : 'No final chest was opened, but safe progress from the run was preserved.'}
+        </Text>
+      </LinearGradient>
+
+      <View style={styles.rewardGrid}>
+        {rewardCards.map((reward, index) => (
+          <Animated.View
+            entering={reduceMotion ? undefined : FadeInDown.delay(index * 70).duration(220)}
+            key={reward.key}
+            style={[styles.rewardCard, { borderColor: `${reward.accent}55` }]}>
+            <View style={[styles.rewardCardIcon, { backgroundColor: `${reward.accent}18` }]}>
+              <MaterialCommunityIcons color={reward.accent} name={reward.icon} size={22} />
+            </View>
+            <View style={styles.rewardCardBody}>
+              <Text style={[styles.rewardCardLabel, { color: reward.accent }]}>{reward.label}</Text>
+              <Text numberOfLines={2} style={styles.rewardCardValue}>{reward.value}</Text>
+              <Text numberOfLines={1} style={styles.rewardCardDetail}>{reward.detail}</Text>
+            </View>
+          </Animated.View>
+        ))}
+      </View>
+
+      <View style={styles.rewardStatsPanel}>
+        <Text style={styles.sectionEyebrow}>RUN SUMMARY</Text>
+        <View style={styles.rewardStatsGrid}>
+          <View style={styles.rewardStatTile}>
+            <Text style={styles.rewardStatValue}>{routeLabel}</Text>
+            <Text style={styles.rewardStatLabel}>Route</Text>
+          </View>
+          <View style={styles.rewardStatTile}>
+            <Text style={styles.rewardStatValue}>{run?.roomsCleared ?? 0}/4</Text>
+            <Text style={styles.rewardStatLabel}>Rooms</Text>
+          </View>
+          <View style={styles.rewardStatTile}>
+            <Text style={styles.rewardStatValue}>{run?.turnsTaken ?? '-'}</Text>
+            <Text style={styles.rewardStatLabel}>Turns</Text>
+          </View>
+          <View style={styles.rewardStatTile}>
+            <Text style={styles.rewardStatValue}>{run?.damageTaken ?? '-'}</Text>
+            <Text style={styles.rewardStatLabel}>Damage</Text>
+          </View>
+        </View>
+
+        {run?.playerHpRemaining !== null && run?.maxPlayerHp ? (
+          <View style={styles.rewardHpBlock}>
+            <View style={styles.rewardHpHeader}>
+              <Text style={styles.rewardHpLabel}>HUNTER HP REMAINING</Text>
+              <Text style={styles.rewardHpValue}>
+                {run.playerHpRemaining} / {run.maxPlayerHp}
+              </Text>
+            </View>
+            <View style={styles.rewardHpTrack}>
+              <View style={[styles.rewardHpFill, { width: `${hpRatio * 100}%` }]} />
+            </View>
+          </View>
+        ) : null}
+      </View>
+
+      <Pressable
+        onPress={() => router.back()}
+        style={({ pressed }) => [styles.returnButton, pressed && styles.actionButtonPressed]}>
+        <MaterialCommunityIcons name="gate" size={19} color="#071018" />
+        <Text style={styles.returnButtonText}>Return to Dungeon</Text>
+      </Pressable>
     </View>
   );
 }
@@ -793,42 +992,11 @@ export default function DungeonRunScreen() {
           )}
         </>
       ) : (
-        <View style={styles.resultPanel}>
-          <View
-            style={[
-              styles.resultIcon,
-              outcome === 'cleared' ? styles.resultIconVictory : styles.resultIconDefeat,
-            ]}>
-            <MaterialCommunityIcons
-              name={outcome === 'cleared' ? 'treasure-chest' : 'shield-off-outline'}
-              size={44}
-              color={outcome === 'cleared' ? '#FFD27A' : '#E78AA5'}
-            />
-          </View>
-          <Text style={styles.resultEyebrow}>
-            {outcome === 'cleared' ? 'GATE CLEARED' : 'RUN ENDED'}
-          </Text>
-          <Text style={styles.resultTitle}>
-            {outcome === 'cleared'
-              ? 'Dungeon boss defeated'
-              : outcome === 'fled'
-                ? 'You escaped the gate'
-                : 'The gate guardian prevailed'}
-          </Text>
-          <Text style={styles.resultDescription}>
-            {outcome === 'cleared'
-              ? completedRun?.rewardName
-                ? `${completedRun.rewardQuantity ?? 1}x ${completedRun.rewardName}, ${completedRun.goldEarned} Gold and ${completedRun.masteryXpEarned} ${completedRun.className} Mastery XP were earned.`
-                : `The final chest and ${completedRun?.masteryXpEarned ?? 0} Class Mastery XP were earned.`
-              : `Your habits, Player EXP, stats and streaks remain unchanged.${(completedRun?.goldEarned ?? 0) > 0 ? ` ${completedRun?.goldEarned} found Gold remains in Inventory.` : ''} ${completedRun?.masteryXpEarned ?? 0} ${completedRun?.className ?? 'Class'} Mastery XP was earned for the attempt.`}
-          </Text>
-          <Pressable
-            onPress={() => router.back()}
-            style={({ pressed }) => [styles.returnButton, pressed && styles.actionButtonPressed]}>
-            <MaterialCommunityIcons name="gate" size={19} color="#071018" />
-            <Text style={styles.returnButtonText}>Return to Dungeon</Text>
-          </Pressable>
-        </View>
+        <DungeonRewardReveal
+          outcome={outcome}
+          reduceMotion={reduceMotion}
+          run={completedRun}
+        />
       )}
     </ScrollView>
   );
@@ -1188,28 +1356,89 @@ const styles = StyleSheet.create({
   fleeText: { color: '#C87C96', fontSize: 10, fontWeight: '900' },
   resultPanel: {
     flex: 1,
-    minHeight: 560,
+    minHeight: 620,
+    justifyContent: 'center',
+    gap: 12,
+  },
+  rewardHero: {
+    minHeight: 245,
     alignItems: 'center',
     justifyContent: 'center',
-    padding: 24,
+    padding: 22,
     borderRadius: 8,
-    backgroundColor: '#0C101B',
+    overflow: 'hidden',
     borderWidth: 1,
-    borderColor: '#272D40',
+    borderColor: '#433454',
   },
-  resultIcon: {
-    width: 90,
-    height: 90,
+  rewardGlow: {
+    position: 'absolute',
+    width: 220,
+    height: 220,
+    borderRadius: 110,
+    backgroundColor: '#FFD27A',
+  },
+  rewardChest: {
+    width: 92,
+    height: 92,
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: 45,
+    borderRadius: 46,
     borderWidth: 1,
   },
-  resultIconVictory: { backgroundColor: '#2B2417', borderColor: '#665632' },
-  resultIconDefeat: { backgroundColor: '#291721', borderColor: '#643147' },
+  rewardChestVictory: { backgroundColor: '#2B2417', borderColor: '#665632' },
+  rewardChestEnded: { backgroundColor: '#291721', borderColor: '#643147' },
   resultEyebrow: { color: '#9982ED', fontSize: 9, fontWeight: '900', letterSpacing: 1.6, marginTop: 20 },
   resultTitle: { color: '#F3F0FA', fontSize: 23, fontWeight: '900', textAlign: 'center', marginTop: 5 },
   resultDescription: { color: '#858DA4', fontSize: 11, lineHeight: 17, fontWeight: '700', textAlign: 'center', marginTop: 10 },
+  rewardGrid: { gap: 9 },
+  rewardCard: {
+    minHeight: 78,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 11,
+    padding: 12,
+    borderRadius: 8,
+    backgroundColor: '#0C101B',
+    borderWidth: 1,
+  },
+  rewardCardIcon: {
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 8,
+  },
+  rewardCardBody: { flex: 1, minWidth: 0 },
+  rewardCardLabel: { fontSize: 8, fontWeight: '900', letterSpacing: 1.1 },
+  rewardCardValue: { color: '#F2F0FA', fontSize: 13, lineHeight: 17, fontWeight: '900', marginTop: 2 },
+  rewardCardDetail: { color: '#7D859B', fontSize: 9, fontWeight: '800', marginTop: 3 },
+  rewardStatsPanel: {
+    gap: 10,
+    padding: 12,
+    borderRadius: 8,
+    backgroundColor: '#0B0E18',
+    borderWidth: 1,
+    borderColor: '#24293A',
+  },
+  rewardStatsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  rewardStatTile: {
+    width: '48.5%',
+    minHeight: 58,
+    justifyContent: 'center',
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    backgroundColor: '#111522',
+    borderWidth: 1,
+    borderColor: '#2A3042',
+  },
+  rewardStatValue: { color: '#ECEAF7', fontSize: 12, fontWeight: '900' },
+  rewardStatLabel: { color: '#737B94', fontSize: 8, fontWeight: '900', marginTop: 4 },
+  rewardHpBlock: { gap: 6, paddingTop: 2 },
+  rewardHpHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
+  rewardHpLabel: { color: '#8F96AA', fontSize: 8, fontWeight: '900', letterSpacing: 1.1 },
+  rewardHpValue: { color: '#D9DCE8', fontSize: 10, fontWeight: '900', fontVariant: ['tabular-nums'] },
+  rewardHpTrack: { height: 8, borderRadius: 4, overflow: 'hidden', backgroundColor: '#191D2B' },
+  rewardHpFill: { height: '100%', borderRadius: 4, backgroundColor: '#62DFFF' },
   returnButton: {
     height: 48,
     flexDirection: 'row',
